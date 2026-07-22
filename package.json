@@ -5,7 +5,10 @@
   "private": true,
   "scripts": {
     "start": "node ./tools/serve.js",
-    "dev": "node ./tools/serve.js"
+    "dev": "node ./tools/serve.js",
+    "build:app": "bash ./tools/build-app.sh",
+    "build": "bash ./tools/build-app.sh",
+    "build:dmg": "bash ./tools/build-dmg.sh"
   },
   "engines": {
     "node": ">=18"

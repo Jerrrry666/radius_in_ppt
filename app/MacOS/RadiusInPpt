@@ -1,0 +1,127 @@
+#!/bin/bash
+#
+# RadiusInPpt — .app 启动脚本
+#
+# 行为：
+#   1. 找到 .app/Contents/Resources/
+#   2. 检查 node
+#   3. 检查端口 3000 是否已被占用
+#   4. 后台启动 node server
+#   5. 弹引导对话框（osascript），让用户选下一步
+#   6. 根据用户选择：打开 PowerPoint / 在 Finder 中显示 manifest.xml
+#   7. 持续监控 server 进程（用户可点 .app 再次进入对话框）
+#
+set -u
+
+# ---------- 1. 路径 ----------
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RES_DIR="$APP_DIR/Resources"
+MANIFEST="$RES_DIR/manifest.xml"
+SERVER_JS="$RES_DIR/tools/serve.js"
+LOG_FILE="/tmp/radius_in_ppt.log"
+PID_FILE="/tmp/radius_in_ppt.pid"
+
+# ---------- 2. 检查 node ----------
+if ! command -v node >/dev/null 2>&1; then
+  osascript <<'EOF' 2>/dev/null || true
+display dialog "需要先安装 Node.js 18+ 才能运行 R 角调整。
+
+访问 https://nodejs.org/ 下载安装 LTS 版本。" buttons {"打开 Node.js 官网"} default button "打开 Node.js 官网" with title "R 角调整" with icon stop
+EOF
+  open "https://nodejs.org/" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+# ---------- 3. 检查端口 ----------
+is_port_in_use() {
+  lsof -ti tcp:3000 -sTCP:LISTEN >/dev/null 2>&1
+}
+
+# 清理已死进程（上次崩溃可能留 stale pid）
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && ! kill -0 "$OLD_PID" 2>/dev/null; then
+    rm -f "$PID_FILE"
+  fi
+fi
+
+if is_port_in_use; then
+  RUNNING_PID=$(lsof -ti tcp:3000 -sTCP:LISTEN | head -1)
+  cat <<EOF
+[RadiusInPpt] server 已经在端口 3000 上运行（PID $RUNNING_PID）
+EOF
+  EXISTING_MODE=1
+else
+  EXISTING_MODE=0
+fi
+
+# ---------- 4. 启动 server ----------
+start_server() {
+  cd "$RES_DIR" || exit 1
+  nohup node "$SERVER_JS" >> "$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  sleep 2
+  if is_port_in_use; then
+    echo "[RadiusInPpt] server 启动成功 (PID $(cat "$PID_FILE"))"
+    return 0
+  else
+    echo "[RadiusInPpt] server 启动失败，日志：$LOG_FILE"
+    return 1
+  fi
+}
+
+if [ "$EXISTING_MODE" = "0" ]; then
+  if ! start_server; then
+    osascript <<'EOF' 2>/dev/null
+display dialog "启动 server 失败，请查看 /tmp/radius_in_ppt.log" buttons {"好的"} default button "好的" with title "R 角调整" with icon stop
+EOF
+    exit 1
+  fi
+fi
+
+# ---------- 5. 弹引导对话框 ----------
+# 这里用 osascript 阻塞，等用户操作
+DIALOG_RESULT=$(osascript <<EOF
+set theResult to ""
+try
+  set theChoice to button returned of (display dialog "✅ R 角调整 server 已启动
+
+接下来在 PowerPoint 中:
+1. 顶部菜单「插入」 → 「我的加载项」
+2. 选「开发人员加载项」 标签
+3. 点「从文件添加」 → 选 manifest.xml
+4. PowerPoint 顶部会出现「R 角调整」tab
+
+之后每次使用直接双击本 App。" buttons {"打开 PowerPoint", "在 Finder 中显示 manifest.xml", "完成"} default button "打开 PowerPoint" with title "R 角调整")
+  set theResult to theChoice
+on error
+  set theResult to "完成"
+end try
+return theResult
+EOF
+)
+
+# ---------- 6. 处理用户选择 ----------
+case "$DIALOG_RESULT" in
+  "打开 PowerPoint")
+    if [ -d "/Applications/Microsoft PowerPoint.app" ]; then
+      open -a "Microsoft PowerPoint"
+    else
+      osascript -e 'tell application "PowerPoint" to activate' 2>/dev/null || open -a "PowerPoint"
+    fi
+    ;;
+  "在 Finder 中显示 manifest.xml")
+    if [ -f "$MANIFEST" ]; then
+      osascript -e "tell application \"Finder\" to reveal POSIX file \"$MANIFEST\"" 2>/dev/null
+      osascript -e 'tell application "Finder" to activate' 2>/dev/null
+    fi
+    ;;
+  *)
+    # "完成" 或取消，什么都不做
+    ;;
+esac
+
+# ---------- 7. 退出 ----------
+# server 继续在后台跑（用户用完 PPT 后可以再次点 .app 弹引导框）
+# 如需停止 server：在 Terminal 里跑 `lsof -ti tcp:3000 | xargs kill`
+exit 0

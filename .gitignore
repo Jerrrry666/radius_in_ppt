@@ -5,6 +5,12 @@
 *.swp
 ._*
 
+# PowerPoint 临时文件
+~$*.pptx
+~$*.ppt
+~$*.xlsx
+~$*.docx
+
 # Node
 node_modules/
 npm-debug.log*
@@ -22,3 +28,8 @@ certs/
 
 # Office 上传包（如果用户以后打 zip 装到 AppSource）
 *.zip
+
+# 构建产物
+dist/
+*.bak.*
+~$*

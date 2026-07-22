@@ -1,26 +1,22 @@
 #!/usr/bin/env node
 /*
- * serve.js — 静态 HTTPS server，给 Office 加载项用
+ * serve.js — 静态 HTTP server，给 Office 加载项用
  *
- * - 监听 https://localhost:3000
+ * - 监听 http://localhost:3000
  * - 根目录 = 项目根（包含 manifest.xml、src/、assets/）
- * - 首次运行自动用 openssl 在 ./certs/ 下生成自签证书
- * - 静态文件 / 简易目录浏览（无 SPA fallback；需要精确路径）
+ * - Office Add-in 对 localhost 允许 HTTP（不要求 HTTPS）
+ * - 零配置：开箱即用
  *
- * 启动：npm start
+ * 启动：npm start   或   node tools/serve.js
  */
 
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const { execSync } = require('child_process');
+const http = require('http');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const HOST = process.env.HOST || 'localhost';
-const CERTS_DIR = path.join(ROOT, 'certs');
-const KEY_FILE = path.join(CERTS_DIR, 'server.key');
-const CRT_FILE = path.join(CERTS_DIR, 'server.crt');
+const HOST = process.env.HOST || '127.0.0.1';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -34,34 +30,10 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.md': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
-function ensureCerts() {
-  if (fs.existsSync(KEY_FILE) && fs.existsSync(CRT_FILE)) {
-    return;
-  }
-  console.log('[serve] 生成自签证书到 ./certs/ ...');
-  fs.mkdirSync(CERTS_DIR, { recursive: true });
-
-  // 用一个 SAN 友好的自签证书（覆盖 localhost / 127.0.0.1 / ::1）
-  const subj = '/CN=localhost';
-  const san = 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1';
-  const cmd = [
-    'openssl', 'req', '-x509', '-nodes',
-    '-newkey', 'rsa:2048',
-    '-keyout', `"${KEY_FILE}"`,
-    '-out', `"${CRT_FILE}"`,
-    '-days', '365',
-    '-subj', `"${subj}"`,
-    '-addext', `"${san}"`,
-  ].join(' ');
-  execSync(cmd, { stdio: 'inherit', shell: true });
-  console.log('[serve] 证书生成完成。\n  ⚠️  首次访问 https://localhost:3000 时浏览器会提示不安全，');
-  console.log('      需要手动「显示详细信息 → 访问此网站」以信任自签证书。');
-}
-
 function safeJoin(root, urlPath) {
-  // 防止 ../
   const p = path.normalize(path.join(root, urlPath));
   if (!p.startsWith(root)) return null;
   return p;
@@ -84,26 +56,24 @@ function serveStatic(req, res) {
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': stat.size,
+      // Office 加载项对缓存敏感，开发期关掉
       'Cache-Control': 'no-store',
     });
     fs.createReadStream(filePath).pipe(res);
   });
 }
 
-function main() {
-  ensureCerts();
-  const server = https.createServer(
-    {
-      key: fs.readFileSync(KEY_FILE),
-      cert: fs.readFileSync(CRT_FILE),
-    },
-    serveStatic
-  );
-  server.listen(PORT, HOST, () => {
-    console.log(`[serve] HTTPS listening on https://${HOST}:${PORT}`);
-    console.log(`[serve] 加载项入口:  https://${HOST}:${PORT}/manifest.xml`);
-    console.log(`[serve] Dialog 入口: https://${HOST}:${PORT}/src/dialog/dialog.html`);
-  });
-}
+const server = http.createServer(serveStatic);
+server.listen(PORT, HOST, () => {
+  console.log(`[serve] HTTP listening on http://${HOST}:${PORT}`);
+  console.log(`[serve] 加载项入口:  http://${HOST}:${PORT}/manifest.xml`);
+  console.log(`[serve] Dialog 入口: http://${HOST}:${PORT}/src/dialog/dialog.html`);
+});
 
-main();
+// 优雅退出（让 .app 启动脚本能干净地 stop）
+['SIGINT', 'SIGTERM'].forEach((sig) => {
+  process.on(sig, () => {
+    console.log(`[serve] received ${sig}, shutting down`);
+    server.close(() => process.exit(0));
+  });
+});
