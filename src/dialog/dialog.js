@@ -1,30 +1,26 @@
 /*
- * dialog.js — R 角调整 Dialog
+ * dialog.js — R 角调整 Dialog（纯 UI，所有解析/写回走 server）
  *
- * 路线（绕开 Mac PowerPoint 不支持 getSelectedDataAsync(Shape)）：
- *   1. 用 Office.context.document.getFileAsync("compressed") 拿 .pptx 压缩包
- *   2. JSZip 解压
- *   3. 解析所有 slide*.xml，列出所有圆角矩形
- *   4. 用户多选 + 输入 R 角
- *   5. 改 XML + 重新打包
- *   6. setFileAsync 写回
+ * 工作流：
+ *   1. 打开 dialog → fetch /api/scan → 拿到所有圆角矩形
+ *   2. 用户多选 + 输入 R 角
+ *   3. 点「应用 R 角」→ fetch /api/apply → server 改 XML + 写回磁盘
+ *   4. Mac PowerPoint 检测到 .pptx 改动，弹"是否重新载入"提示
  *
- * "锁定"用 localStorage 存 { "slideNum|shapeId": { radiusCm, locked } }。
+ * 完全在 client 端的：localStorage 锁、UI 状态。
  */
 
 (function () {
   const $ = (id) => document.getElementById(id);
 
-  // 当前文档的所有圆角矩形
-  let allShapes = [];
-  // 用户选中的 key set: "slideNum|shapeId"
-  let selectedKeys = new Set();
-  // 当前 .pptx 压缩包（JSZip 实例）
-  let currentZip = null;
+  let allShapes = [];        // 从 server 拿到的所有圆角矩形
+  let selectedKeys = new Set();  // 用户选中的 "slideNum|id"
+
+  const SERVER = 'http://localhost:3000';
 
   Office.onReady(() => {
     bindEvents();
-    scanDocument();
+    scan();
   });
 
   function bindEvents() {
@@ -33,95 +29,45 @@
     $('reapply-btn').addEventListener('click', onReapply);
     $('select-all-btn').addEventListener('click', () => toggleAll(true));
     $('deselect-all-btn').addEventListener('click', () => toggleAll(false));
-    $('rescan-btn').addEventListener('click', scanDocument);
+    $('rescan-btn').addEventListener('click', scan);
     $('radius-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') onApply();
     });
   }
 
-  // ---------------- 扫描文档 ----------------
+  // ---------------- 扫描 ----------------
 
-  async function scanDocument() {
+  async function scan() {
     setStatus('扫描中…', '正在读取 .pptx...', 'status-empty');
     $('list-count').textContent = '...';
     $('shape-list').innerHTML = '<div class="empty-list">扫描文档中…</div>';
     selectedKeys.clear();
 
     try {
-      const zip = await getPptxAsZip();
-      currentZip = zip;
-      const shapes = RadiusCore.parseRoundedRects(zip);
-      allShapes = shapes;
+      const res = await fetch(`${SERVER}/api/scan`);
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      allShapes = data.shapes || [];
 
-      if (shapes.length === 0) {
+      if (allShapes.length === 0) {
         setStatus('未找到圆角矩形', '这个文档里没有任何圆角矩形', 'status-warn');
         $('list-count').textContent = '0 个';
         $('shape-list').innerHTML = '<div class="empty-list">没有圆角矩形</div>';
         return;
       }
 
-      setStatus('已找到圆角矩形', `${shapes.length} 个`, 'status-ok');
-      $('list-count').textContent = `${shapes.length} 个`;
-      renderShapeList(shapes);
-      updateCurrentRadius();
-      updateLockButton();
-
-      // 默认全选
-      toggleAll(true);
+      setStatus('已找到圆角矩形', `${allShapes.length} 个`, 'status-ok');
+      $('list-count').textContent = `${allShapes.length} 个`;
+      renderShapeList(allShapes);
+      toggleAll(true);  // 默认全选
     } catch (err) {
       console.error('[R 角调整] 扫描失败:', err);
       setStatus('扫描失败', err.message || String(err), 'status-warn');
-      $('shape-list').innerHTML = `<div class="empty-list">扫描失败：${escapeHtml(err.message || String(err))}</div>`;
+      $('shape-list').innerHTML = `<div class="empty-list">扫描失败：${escapeHtml(err.message || String(err))}<br/><small style="color:#888">检查 server 是否在 3000 端口运行</small></div>`;
     }
-  }
-
-  /**
-   * 用 Office.js 拿 .pptx 压缩包，转成 JSZip 实例。
-   * Mac PowerPoint 上 getFileAsync("compressed") 是支持的。
-   */
-  async function getPptxAsZip() {
-    if (!Office.context.document.getFileAsync) {
-      throw new Error('当前 Office 版本不支持 getFileAsync');
-    }
-    return new Promise((resolve, reject) => {
-      Office.context.document.getFileAsync(
-        Office.FileType.Compressed,
-        { sliceSize: 4 * 1024 * 1024 },  // 4MB
-        (result) => {
-          if (result.status === Office.AsyncResultStatus.Failed) {
-            reject(new Error('getFileAsync 失败: ' + (result.error?.message || 'unknown')));
-            return;
-          }
-          const file = result.value;
-          const slices = file.sliceCount;
-          const slicePromises = [];
-          for (let i = 0; i < slices; i++) {
-            slicePromises.push(new Promise((res, rej) => {
-              file.getSliceAsync(i, (sliceResult) => {
-                if (sliceResult.status === Office.AsyncResultStatus.Failed) {
-                  rej(new Error('getSliceAsync 失败: ' + (sliceResult.error?.message || 'unknown')));
-                  return;
-                }
-                res(sliceResult.value.data);  // base64 string
-              });
-            }));
-          }
-          Promise.all(slicePromises).then((dataArray) => {
-            file.closeAsync();
-            // 拼接 base64
-            const base64 = dataArray.join('');
-            // base64 -> Uint8Array
-            const binStr = atob(base64);
-            const bytes = new Uint8Array(binStr.length);
-            for (let i = 0; i < binStr.length; i++) {
-              bytes[i] = binStr.charCodeAt(i);
-            }
-            // JSZip 解析
-            JSZip.loadAsync(bytes).then(resolve).catch(reject);
-          }).catch(reject);
-        }
-      );
-    });
   }
 
   // ---------------- 列表渲染 ----------------
@@ -130,7 +76,7 @@
     const list = $('shape-list');
     list.innerHTML = '';
     for (const s of shapes) {
-      const key = RadiusCore.getLockKey(s.slideNum, s.id);
+      const key = `${s.slideNum}|${s.id}`;
       const row = document.createElement('div');
       row.className = 'shape-row';
       row.dataset.key = key;
@@ -186,7 +132,7 @@
   }
 
   function updateCurrentRadius() {
-    const sel = allShapes.filter((s) => selectedKeys.has(RadiusCore.getLockKey(s.slideNum, s.id)));
+    const sel = allShapes.filter((s) => selectedKeys.has(`${s.slideNum}|${s.id}`));
     const node = $('current-radius');
     if (sel.length === 0) {
       node.textContent = '—';
@@ -222,7 +168,10 @@
     }
     btn.disabled = false;
     const locks = RadiusCore.loadLocks();
-    const lockedCount = [...selectedKeys].filter((k) => locks[k] && locks[k].locked).length;
+    let lockedCount = 0;
+    for (const k of selectedKeys) {
+      if (locks[k] && locks[k].locked) lockedCount++;
+    }
     if (lockedCount === 0) {
       btn.classList.remove('is-locked');
       label.textContent = '锁定 R 角';
@@ -253,46 +202,39 @@
       showToast('请输入有效的 R 角数值（≥ 0）');
       return;
     }
-    if (!currentZip) {
-      showToast('请先点击「重新扫描」');
-      return;
+
+    // 构造 items
+    const items = [];
+    for (const k of selectedKeys) {
+      const [slideNum, id] = k.split('|');
+      items.push({ slideNum: parseInt(slideNum, 10), id, cm });
     }
 
     try {
-      // 1. 改所有选中的 shape（在 zip 里改 XML）
-      const targets = allShapes.filter((s) => selectedKeys.has(RadiusCore.getLockKey(s.slideNum, s.id)));
-      // 按 slideFile 分组
-      const byFile = {};
-      for (const t of targets) {
-        if (!byFile[t.slideFile]) byFile[t.slideFile] = [];
-        byFile[t.slideFile].push(t);
+      const res = await fetch(`${SERVER}/api/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shapes: items }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `HTTP ${res.status}`);
       }
-      for (const [file, items] of Object.entries(byFile)) {
-        let xml = await currentZip.file(file).async('string');
-        for (const it of items) {
-          const newVal = RadiusCore.cmToVal(cm, it.shortSideEmu);
-          xml = RadiusCore.modifyShapeAdj(xml, it.id, newVal);
-        }
-        currentZip.file(file, xml);
-      }
+      const result = await res.json();
+      showToast(`已更新 ${result.modified} 个圆角矩形为 ${cm.toFixed(2)} 厘米。Mac PowerPoint 会弹"是否重新载入"，点「是」即可。`);
 
-      // 2. 写回 Office
-      await writeZipBack(currentZip);
-
-      // 3. 更新本地锁定表（如果选中的有锁定）
+      // 更新 localStorage 锁定表（如果选中的有锁定）
       const locks = RadiusCore.loadLocks();
-      for (const t of targets) {
-        const k = RadiusCore.getLockKey(t.slideNum, t.id);
+      for (const it of items) {
+        const k = `${it.slideNum}|${it.id}`;
         if (locks[k] && locks[k].locked) {
           locks[k] = { radiusCm: cm, locked: true };
         }
       }
       RadiusCore.saveLocks(locks);
 
-      showToast(`已更新 ${targets.length} 个圆角矩形为 ${cm.toFixed(2)} 厘米`);
-
-      // 4. 重新扫描刷新 UI
-      await scanDocument();
+      // 重新扫描
+      await scan();
     } catch (err) {
       console.error('[R 角调整] 应用失败:', err);
       showToast('应用失败：' + (err.message || err));
@@ -310,14 +252,11 @@
     let n = 0;
     for (const k of selectedKeys) {
       if (wantLock) {
-        // 从 allShapes 拿当前 R 角
-        const s = allShapes.find((x) => RadiusCore.getLockKey(x.slideNum, x.id) === k);
+        const s = allShapes.find((x) => `${x.slideNum}|${x.id}` === k);
         if (!s) continue;
         locks[k] = { radiusCm: s.currentCm, locked: true };
       } else {
-        if (locks[k]) {
-          delete locks[k];
-        }
+        if (locks[k]) delete locks[k];
       }
       n++;
     }
@@ -340,7 +279,7 @@
         missing++;
         continue;
       }
-      const s = allShapes.find((x) => RadiusCore.getLockKey(x.slideNum, x.id) === k);
+      const s = allShapes.find((x) => `${x.slideNum}|${x.id}` === k);
       if (!s) {
         missing++;
         continue;
@@ -353,41 +292,6 @@
     } else {
       showToast(`${applied} 个有锁定，已填入 R 角值。请点「应用 R 角」写入。`);
     }
-  }
-
-  // ---------------- 写回 .pptx ----------------
-
-  /**
-   * 把改完的 JSZip 重新打包成 base64，POST 到本地 server 写回磁盘。
-   * Mac PowerPoint 检测到 .pptx 文件被外部修改会弹"是否重新载入"提示。
-   */
-  async function writeZipBack(zip) {
-    const b64 = await zip.generateAsync({
-      type: 'base64',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    });
-    // 拿 .pptx 路径（从 server 的 /api/pptx-path 拿）
-    const pathRes = await fetch('http://localhost:3000/api/pptx-path');
-    if (!pathRes.ok) {
-      throw new Error('拿 .pptx 路径失败（需要先双击 R 角调整.app）');
-    }
-    const pathData = await pathRes.json();
-    const pptxPath = pathData.path;
-    if (!pptxPath) throw new Error('没拿到 .pptx 路径');
-
-    // POST 写回
-    const saveRes = await fetch(`http://localhost:3000/api/save-pptx?path=${encodeURIComponent(pptxPath)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: b64,
-    });
-    if (!saveRes.ok) {
-      const errText = await saveRes.text();
-      throw new Error('写回失败: ' + errText);
-    }
-    const saveData = await saveRes.json();
-    return saveData;
   }
 
   // ---------------- Toast ----------------
@@ -403,7 +307,7 @@
     el.textContent = msg;
     el.classList.add('show');
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
   }
 
   function escapeHtml(s) {
