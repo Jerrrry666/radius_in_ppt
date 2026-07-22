@@ -2,8 +2,11 @@
 #
 # build-dmg.sh — 把 .app 打包成 .dmg 用于分发
 #
-# 依赖：hdiutil（macOS 自带）、npm run build:app
+# 如果 .app 未签名，会自动调用 sign-and-notarize.sh 签名+公证
+# （需要 AC_SIGNING_IDENTITY 和 AC_NOTARY_PROFILE 环境变量）
+#
 # 产物：./dist/RadiusInPpt-1.0.0.dmg
+# 依赖：hdiutil（macOS 自带）、xcrun notarytool（Xcode CLT 自带）
 #
 set -eo pipefail
 
@@ -11,16 +14,26 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 if [ ! -d "$ROOT/dist/RadiusInPpt.app" ]; then
-  echo "[dmg] .app 不存在，先跑 npm run build:app"
+  echo "[dmg] .app 不存在，先跑 build-app.sh"
   bash "$ROOT/tools/build-app.sh"
 fi
 
 APP="$ROOT/dist/RadiusInPpt.app"
+
+# ---------------- 自动签名（如未签名）----------------
+if ! codesign --verify --deep --strict "$APP" 2>/dev/null; then
+  echo "[dmg] .app 未签名，调用 sign-and-notarize.sh"
+  bash "$ROOT/tools/sign-and-notarize.sh"
+else
+  echo "[dmg] .app 已签名，跳过"
+fi
+
+# ---------------- 打 dmg ----------------
 DMG_DIR="$ROOT/dist/dmg-staging"
 DMG_PATH="$ROOT/dist/RadiusInPpt-1.0.0.dmg"
 
 echo "[dmg] staging: $DMG_DIR"
-rm -rf "$DMG_DIR" "$DMG_DIR.bak.*" 2>/dev/null || true
+rm -rf "$DMG_DIR" "$DMG_DIR.bak."* 2>/dev/null || true
 mkdir -p "$DMG_DIR"
 cp -R "$APP" "$DMG_DIR/"
 
@@ -28,7 +41,7 @@ cp -R "$APP" "$DMG_DIR/"
 ln -sf /Applications "$DMG_DIR/Applications"
 
 echo "[dmg] creating: $DMG_PATH"
-rm -f "$DMG_PATH" "$DMG_PATH.bak.*" 2>/dev/null || true
+rm -f "$DMG_PATH" "$DMG_PATH.bak."* 2>/dev/null || true
 
 # -fs HFS+ 兼容老 Mac；-ov 不覆盖
 hdiutil create \
@@ -42,4 +55,4 @@ hdiutil create \
 rm -rf "$DMG_DIR" 2>/dev/null || true
 
 echo "[dmg] done: $DMG_PATH"
-echo "分发给其他用户：双击 dmg → 拖入 /Applications 即可"
+echo "分发给其他用户：双击 dmg → 拖入 /Applications 即可（Gatekeeper 不再拦）"

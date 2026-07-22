@@ -261,8 +261,13 @@ git -c credential.helper="!f() { echo username=x-access-token; echo password=$GH
   - 选项 B：lock 存到一个隐藏的 .pptx slide 里（用户看不到但跟着文件走）
 - [x] **lock 之后改变形状大小**：✅ 用 setInterval 500ms 轮询 + 3 次稳定检测实现"拖完松手自动重应用"
 - [ ] **多选混合**（圆角矩形 + 普通矩形）：现在 UI 标记非圆角 + disable apply，已经可用
-- [ ] **打包 .dmg**：`tools/build-dmg.sh` 还没实装
-- [ ] **代码签名**：.app 没签名，Gatekeeper 每次拦（右键打开只拦一次）
+- [x] **打包 .dmg**：`tools/build-dmg.sh` 实装完成
+- [x] **代码签名 + 公证**：`tools/sign-and-notarize.sh` 实装完成
+  - 需要 Apple Developer Program 会员（$99/年）+ Developer ID Application 证书
+  - 签名用 hardened runtime（`--options=runtime`），公证走 `xcrun notarytool`
+  - 一次性 store credentials：`xcrun notarytool store-credentials "AC_PROFILE" --apple-id ... --password ... --team-id ...`
+  - 完整流程详见 `tools/sign-and-notarize.sh` 头部注释
+  - 签完直接 `bash tools/build-dmg.sh` 出 .dmg（已集成自动签名检测）
 
 ## 9. 调试技巧
 
