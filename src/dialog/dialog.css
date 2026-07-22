@@ -142,51 +142,47 @@ body {
   font-weight: 500;
 }
 
-/* 历史记录 chips */
-.history-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.history-label {
-  font-size: 11px;
-  color: #8a8886;
-  flex-shrink: 0;
-  padding-top: 4px;
-}
-
-.history-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  flex: 1;
-}
-
-.history-chip {
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 12px;
-  background: #ffffff;
+/* 历史记录：跟 unit-toggle 一样的分段按钮 */
+.history-toggle {
+  display: inline-flex;
   border: 1px solid #c8c6c4;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #ffffff;
+  align-self: flex-start;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.history-btn {
+  border: none;
+  background: transparent;
+  font-size: 11px;
   color: #201f1e;
+  padding: 4px 10px;
   cursor: pointer;
   font-family: inherit;
   font-variant-numeric: tabular-nums;
-  transition: background 0.08s, border-color 0.08s;
+  user-select: none;
+  white-space: nowrap;
 }
 
-.history-chip:hover {
-  background: #e7f3ff;
-  border-color: #0078d4;
+.history-btn:not(:last-child) {
+  border-right: 1px solid #c8c6c4;
+}
+
+.history-btn:hover:not(:disabled) {
+  background: #f3f2f1;
   color: #0078d4;
 }
 
-.history-empty {
-  font-size: 11px;
+.history-btn:active:not(:disabled) {
+  background: #e7f3ff;
+}
+
+.history-btn:disabled {
   color: #a19f9d;
-  font-style: italic;
-  padding-top: 4px;
+  cursor: default;
 }
 
 #radius-input {

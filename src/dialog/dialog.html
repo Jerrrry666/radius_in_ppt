@@ -61,11 +61,9 @@
         />
         <span id="unit-label" class="unit">厘米</span>
       </div>
-      <div class="history-row">
-        <span class="history-label">最近 5 次</span>
-        <div id="history-chips" class="history-chips">
-          <span class="history-empty">应用后会自动记录</span>
-        </div>
+      <div id="history-toggle" class="history-toggle" role="group" aria-label="最近 5 次">
+        <!-- 由 renderHistory 动态生成 -->
+        <button type="button" class="history-btn" disabled>（暂无记录）</button>
       </div>
     </section>
 

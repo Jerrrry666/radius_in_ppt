@@ -551,24 +551,29 @@
   // ---------------- 渲染 ----------------
 
   function renderHistory(history) {
-    const box = $('history-chips');
+    const box = $('history-toggle');
     if (!box) return;
+    box.innerHTML = '';
     if (!history || history.length === 0) {
-      box.innerHTML = '<span class="history-empty">应用后会自动记录</span>';
+      const empty = document.createElement('button');
+      empty.type = 'button';
+      empty.className = 'history-btn';
+      empty.disabled = true;
+      empty.textContent = '（暂无记录）';
+      box.appendChild(empty);
       return;
     }
-    box.innerHTML = '';
     for (const h of history) {
       const btn = document.createElement('button');
-      btn.className = 'history-chip';
       btn.type = 'button';
+      btn.className = 'history-btn';
       btn.dataset.value = String(h.value);
       btn.dataset.unit = h.unit;
       const label = h.unit === '%'
         ? `${Number.isInteger(h.value) ? h.value : h.value.toFixed(1)}%`
         : `${h.value.toFixed(2)} cm`;
       btn.textContent = label;
-      btn.title = `${label}（点击填入）`;
+      btn.title = `${label}（点击填入输入框）`;
       btn.addEventListener('click', () => onHistoryChipClick(h.value, h.unit));
       box.appendChild(btn);
     }
