@@ -554,27 +554,27 @@
     const box = $('history-toggle');
     if (!box) return;
     box.innerHTML = '';
-    if (!history || history.length === 0) {
-      const empty = document.createElement('button');
-      empty.type = 'button';
-      empty.className = 'history-btn';
-      empty.disabled = true;
-      empty.textContent = '（暂无记录）';
-      box.appendChild(empty);
-      return;
-    }
-    for (const h of history) {
+    const list = Array.isArray(history) ? history : [];
+    // 始终显示 5 个槽位：前 N 个是真实记录，后 (5-N) 个是 disabled 占位
+    for (let i = 0; i < MAX_HISTORY; i++) {
+      const h = list[i];
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'history-btn';
-      btn.dataset.value = String(h.value);
-      btn.dataset.unit = h.unit;
-      const label = h.unit === '%'
-        ? `${Number.isInteger(h.value) ? h.value : h.value.toFixed(1)}%`
-        : `${h.value.toFixed(2)} cm`;
-      btn.textContent = label;
-      btn.title = `${label}（点击填入输入框）`;
-      btn.addEventListener('click', () => onHistoryChipClick(h.value, h.unit));
+      if (h) {
+        btn.dataset.value = String(h.value);
+        btn.dataset.unit = h.unit;
+        const label = h.unit === '%'
+          ? `${Number.isInteger(h.value) ? h.value : h.value.toFixed(1)}%`
+          : `${h.value.toFixed(2)} cm`;
+        btn.textContent = label;
+        btn.title = `${label}（点击填入输入框）`;
+        btn.addEventListener('click', () => onHistoryChipClick(h.value, h.unit));
+      } else {
+        btn.disabled = true;
+        btn.textContent = '—';
+        btn.title = '尚无记录';
+      }
       box.appendChild(btn);
     }
   }
