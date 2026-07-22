@@ -262,12 +262,13 @@ git -c credential.helper="!f() { echo username=x-access-token; echo password=$GH
 - [x] **lock 之后改变形状大小**：✅ 用 setInterval 500ms 轮询 + 3 次稳定检测实现"拖完松手自动重应用"
 - [ ] **多选混合**（圆角矩形 + 普通矩形）：现在 UI 标记非圆角 + disable apply，已经可用
 - [x] **打包 .dmg**：`tools/build-dmg.sh` 实装完成
-- [x] **代码签名 + 公证**：`tools/sign-and-notarize.sh` 实装完成
+- [ ] **代码签名 + 公证**：`tools/sign-and-notarize.sh` 已写好（待用户有 Apple Developer 账号时启用）
   - 需要 Apple Developer Program 会员（$99/年）+ Developer ID Application 证书
   - 签名用 hardened runtime（`--options=runtime`），公证走 `xcrun notarytool`
   - 一次性 store credentials：`xcrun notarytool store-credentials "AC_PROFILE" --apple-id ... --password ... --team-id ...`
   - 完整流程详见 `tools/sign-and-notarize.sh` 头部注释
-  - 签完直接 `bash tools/build-dmg.sh` 出 .dmg（已集成自动签名检测）
+  - 启用后 `bash tools/build-dmg.sh` 会自动签名+公证+打包
+  - 当前状态：未启用（无 Developer 账号），.dmg 分发时用户首次需右键 → 打开
 
 ## 9. 调试技巧
 
