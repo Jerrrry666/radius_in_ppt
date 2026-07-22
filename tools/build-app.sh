@@ -1,10 +1,13 @@
 #!/bin/bash
 #
-# build-app.sh — 把项目打包成 macOS .app
+# build-app.sh — 把项目打包成 macOS .app（Office Add-in 路线）
 #
 # 产物：./dist/RadiusInPpt.app
-# 入口：双击 .app → 启动 Swift 菜单栏 app（NSStatusItem）
-#       顶部菜单栏出现图标，点开有菜单
+# 入口：双击 .app → 启动 bash 脚本
+#   1. 启动 http://localhost:3000 server（serve.js）
+#   2. 复制 manifest.xml 到 ~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef
+#   3. 弹引导框：完全退出 PowerPoint (Cmd+Q) → 重新打开
+#      → PowerPoint 顶部出现「R 角调整」tab
 #
 set -eo pipefail
 
@@ -35,7 +38,7 @@ mkdir -p "$DIST"
 echo "[build] creating .app bundle structure"
 mkdir -p "$MACOS_DIR" "$RES_DIR"
 
-# 1. Info.plist（LSUIElement=true → 不在 Dock 显示）
+# 1. Info.plist
 echo "[build] writing Info.plist"
 cat > "$CONTENTS/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,13 +53,12 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleSignature</key><string>????</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>10.15</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>R 角调整需要控制 PowerPoint 来读取和修改你选中的圆角矩形。</string>
+  <string>R 角调整需要控制 PowerPoint（关闭后重新打开）以加载 R 角调整加载项。</string>
 </dict>
 </plist>
 EOF
@@ -64,20 +66,20 @@ EOF
 # 2. PkgInfo
 printf 'APPL????' > "$CONTENTS/PkgInfo"
 
-# 3. 编译 Swift 主程序
-echo "[build] compiling Swift"
-swiftc -O \
-  -target arm64-apple-macosx11.0 \
-  -o "$MACOS_DIR/$APP_NAME" \
-  "$ROOT/menubar/main.swift" 2>&1
+# 3. 启动脚本（bash）
+echo "[build] copying launcher"
+cp "$ROOT/app/MacOS/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
-# 4. 菜单栏图标（template image）
-echo "[build] copying menubar icon"
-cp "$ROOT/menubar/menubar-icon.png" "$RES_DIR/menubar-icon.png"
-cp "$ROOT/menubar/menubar-icon@2x.png" "$RES_DIR/menubar-icon@2x.png" 2>/dev/null || true
+# 4. 拷贝 Office Add-in 资源
+echo "[build] copying Office Add-in resources"
+cp -R "$ROOT/src" "$RES_DIR/"
+cp -R "$ROOT/assets" "$RES_DIR/"
+cp "$ROOT/manifest.xml" "$RES_DIR/"
+mkdir -p "$RES_DIR/tools"
+cp "$ROOT/tools/serve.js" "$RES_DIR/tools/"
 
-# 5. 生成 .icns（用于 Finder 图标）
+# 5. 生成 .icns
 echo "[build] generating AppIcon.icns"
 mkdir -p "$ICONSET_DIR"
 SRC_PNG="$ROOT/assets/icon-128.png"
@@ -103,8 +105,8 @@ echo "[build] done: $APP"
 echo
 echo "用法："
 echo "  1. 双击 $APP（或拖入 /Applications/）"
-echo "  2. macOS 顶部菜单栏会出现 R 角图标"
-echo "  3. 点图标 → 选「调整 R 角...」输入厘米值"
+echo "  2. 完全退出 PowerPoint（Cmd + Q）"
+echo "  3. 重新打开 PowerPoint，顶部 ribbon 出现「R 角调整」tab"
 echo
 echo "⚠️  首次双击未签名 .app 会被 Gatekeeper 拦："
 echo "   右键 $APP → 打开 → 弹窗里点「打开」（仅一次）"

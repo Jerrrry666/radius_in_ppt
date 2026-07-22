@@ -10,6 +10,11 @@
 ~$*.ppt
 ~$*.xlsx
 ~$*.docx
+test.pptx
+*.pptx
+*.ppt
+*.xlsx
+*.docx
 
 # 证书 / key
 certs/
