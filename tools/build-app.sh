@@ -78,7 +78,7 @@ cp -R "$ROOT/assets" "$RES_DIR/"
 cp "$ROOT/manifest.xml" "$RES_DIR/"
 mkdir -p "$RES_DIR/tools"
 cp "$ROOT/tools/serve.js" "$RES_DIR/tools/"
-# 注意：jszip.min.js / package.json / node_modules 已删除（v2.0 起不再需要）
+# 注意：纯 task pane + Office.js 路线，无第三方依赖
 
 # 5. 生成 .icns
 echo "[build] generating AppIcon.icns"

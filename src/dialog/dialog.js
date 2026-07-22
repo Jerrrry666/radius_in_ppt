@@ -1,204 +1,78 @@
 /*
- * dialog.js — R 角调整 Dialog（纯 Office.js 实现）
+ * dialog.js — R 角调整 v1.0（task pane，纯 Office.js）
+ *
+ * UI 形式：PowerPoint 侧边栏（task pane），ribbon 上点按钮展开。
  *
  * 工作流：
- *   1. 打开 dialog → getSelectedShapes() → 显示选中的圆角矩形
- *   2. 用户输入 R 角 → 「应用 R 角」→ adjustments.set(0, newVal)
- *   3. 锁定信息存到 OOXML CustomXmlPart（namespace = LOCK_XML_NS），跟 .pptx 文件走
- *      如果 customXmlParts 在当前平台不可用，降级到 localStorage
- *   4. toast: "已更新 N 个圆角矩形为 X 厘米"
+ *   1. 打开 task pane → getSelectedShapes() → 显示选中的圆角矩形
+ *   2. 用户输入 R 角（cm 或 %）→ 「应用 R 角」→ adjustments.set(0, newVal)
+ *   3. 「锁定 R 角」→ 写 shape.tags（OOXML <p:tagLst>），跟 .pptx 文件走
+ *   4. history 槽位 = 本次 session 内用户主动应用过的 R 角（纯内存）
  *
- * 监听 PPT 选区变化：DocumentSelectionChanged 事件 → 自动 refresh
+ * Mac LTSC (Office 2021, build 16.111) 实测要点：
+ *   - `customProperties` / `customXmlParts` 在 task pane 都不可用 → 锁用 shape.tags
+ *   - `adjustments.get(0)` 返回 ClientResult 代理，直接 .value 读（不要 .load）
+ *   - `shape.adjustments.get(0).value` 是 0~1 比例（不是 OOXML 0~50000）
+ *   - Office.js PowerPoint 没有 shape change 事件 → lock 自动重应用靠 setInterval 轮询
+ *
+ * 监听 PPT 选区变化：DocumentSelectionChanged → 自动 refresh
  * 多页 PPT：getSelectedShapes() 只返回当前页选中的形状，切页后选区变化 → 自动 refresh
- *
- * 锁定 R 角 + 自动重应用：
- *   - 选区里有 locked 形状时，启动 setInterval 轮询（10ms）
- *   - 若连续 4 次尺寸无变化（≈40ms 稳定）→ 视为用户松手 → 反算 adj 写回
- *   - 拖拽中尺寸在变 → 跳过 apply，避免和拖拽手感冲突
- *   - 注：Office.js PowerPoint 没有 shape change 事件（详见 AGENTS.md 4 节），
- *         这是当前的 API 限制下的最优解
  */
 
 (function () {
   const $ = (id) => document.getElementById(id);
-  const PT_PER_CM = 28.3464567;       // 1 cm = 28.3464567 pt
-  // Mac LTSC Office.js: adjustments.get(0).value 返回 0~1 的小数（占短边比例）
-  // OOXML 原始是 0~50000（0~50%），但 Office.js 在 Mac dialog 上下文里 normalize 成 0~1 了
+  const PT_PER_CM = 28.3464567;        // 1 cm = 28.3464567 pt
+  // Mac LTSC: adjustments.get(0).value 是 0~1 比例（占短边），不是 OOXML 0~50000
   const ADJ_SCALE = 1;
-  const LOCK_STORAGE_KEY = 'radius_in_ppt_locks_v2';
-  const LOCK_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/locks/v1';
-  const HISTORY_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/history/v1';
   const MAX_HISTORY = 5;
-  // 本次 session 内用户主动应用过的 R 角值，纯内存（关掉 PPT 任务窗格就清空）
-  // 不再用 localStorage 持久化——文件扫描已经能提供 seed history
-  let userHistory = [];
-  let lockBackend = 'unknown';         // 'customXmlPart' | 'localStorage' | 'none'
+  const LOCK_TAG_KEY = 'radiusLock_v1';
 
-  // 单位：'cm' | '%'  （输入/应用用，存储和锁都用 cm 统一）
+  // 本次 session 内用户主动应用过的 R 角值（纯内存）
+  let userHistory = [];
+
+  // 当前选中的形状（refreshSelection 填充）
+  let selectedShapes = [];
+
+  // 当前输入单位：'cm' | '%'
   let currentUnit = 'cm';
 
-  /** 当前选中的形状（refreshSelection 填充） */
-  let selectedShapes = [];  // [{id, name, width, height, currentCm, locked, lockedCm, isRoundRect, adjCount}]
+  // lock monitor 状态：选区里有 locked 形状时启动，10ms 轮询，4 次稳定反算 adj 写回
+  const LOCK_POLL_MS = 10;
+  const LOCK_STABLE_THRESHOLD = 4;
+  let lockMonitor = {
+    timer: null,
+    lastDims: {},    // shapeId -> 'w|h' 字符串
+    stableCount: {}, // shapeId -> 连续稳定次数
+  };
 
-  // ---------------- CustomXmlPart 锁存储（跟随 .pptx 文件） ----------------
-  // Mac dialog 里 customProperties 不可用，改用 Common API 的 customXmlParts：
-  // 写入 .pptx 文件的 customXml 段（OOXML 标准的隐藏 XML 块），换机器/发文件都跟着走
-  // XML 格式：
-  //   <locks xmlns="...">
-  //     <lock shapeId="123" cm="1.28"/>
-  //   </locks>
+  // ---------------- 单位换算 ----------------
 
-  function buildLocksXml(locks) {
-    const entries = Object.entries(locks)
-      .filter(([_, cm]) => cm != null && Number.isFinite(cm) && cm > 0)
-      .map(([id, cm]) => `    <lock shapeId="${escapeXml(id)}" cm="${cm.toFixed(4)}"/>`)
-      .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<locks xmlns="${LOCK_XML_NS}">\n${entries}\n</locks>`;
-  }
-
-  function parseLocksXml(xml) {
-    const locks = {};
-    if (!xml) return locks;
-    try {
-      const doc = new DOMParser().parseFromString(xml, 'text/xml');
-      const nodes = doc.getElementsByTagNameNS(LOCK_XML_NS, 'lock');
-      for (const n of nodes) {
-        const id = n.getAttribute('shapeId');
-        const cm = parseFloat(n.getAttribute('cm'));
-        if (id && Number.isFinite(cm)) locks[id] = cm;
-      }
-    } catch (e) {
-      console.warn('parseLocksXml failed:', e);
+  function getRefShapeMinSideCm() {
+    // % 模式的 100% 参考：用第一个 roundRect 的 minSide
+    for (const s of selectedShapes) {
+      if (s.minSideCm > 0) return s.minSideCm;
     }
-    return locks;
+    return 0;
   }
 
-  function escapeXml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
-    })[c]);
-  }
-
-  function loadLocksCustomXml() {
-    return new Promise((resolve, reject) => {
-      if (!Office.context.document || !Office.context.document.customXmlParts) {
-        reject(new Error('customXmlParts not available'));
-        return;
-      }
-      Office.context.document.customXmlParts.getByNamespaceAsync(
-        LOCK_XML_NS,
-        (result) => {
-          if (result.status !== Office.AsyncResultStatus.Succeeded) {
-            reject(new Error(result.error?.message || 'getByNamespace failed'));
-            return;
-          }
-          if (!result.value || result.value.length === 0) {
-            resolve({});
-            return;
-          }
-          result.value[0].getXmlAsync((xmlResult) => {
-            if (xmlResult.status !== Office.AsyncResultStatus.Succeeded) {
-              reject(new Error(xmlResult.error?.message || 'getXml failed'));
-              return;
-            }
-            resolve(parseLocksXml(xmlResult.value));
-          });
-        }
-      );
-    });
-  }
-
-  function saveLocksCustomXml(locks) {
-    return new Promise((resolve, reject) => {
-      if (!Office.context.document || !Office.context.document.customXmlParts) {
-        reject(new Error('customXmlParts not available'));
-        return;
-      }
-      const xml = buildLocksXml(locks);
-      Office.context.document.customXmlParts.getByNamespaceAsync(
-        LOCK_XML_NS,
-        (result) => {
-          if (result.status !== Office.AsyncResultStatus.Succeeded) {
-            reject(new Error(result.error?.message || 'getByNamespace failed'));
-            return;
-          }
-          if (result.value && result.value.length > 0) {
-            result.value[0].setXmlAsync(xml, (setResult) => {
-              if (setResult.status === Office.AsyncResultStatus.Succeeded) resolve();
-              else reject(new Error(setResult.error?.message || 'setXml failed'));
-            });
-          } else {
-            Office.context.document.customXmlParts.addAsync(xml, (addResult) => {
-              if (addResult.status === Office.AsyncResultStatus.Succeeded) resolve();
-              else reject(new Error(addResult.error?.message || 'addAsync failed'));
-            });
-          }
-        }
-      );
-    });
-  }
-
-  // 统一接口：CustomXmlPart → shapeTags → localStorage
-  async function loadLocks() {
-    try {
-      const locks = await loadLocksCustomXml();
-      if (locks && Object.keys(locks).length > 0) {
-        return { locks, backend: 'customXmlPart' };
-      }
-    } catch (e) {
-      dbgLine(`loadLocks: CustomXmlPart unavailable (${e.message || e})`);
+  function valueToCm(val, unit) {
+    if (unit === '%') {
+      const minSideCm = getRefShapeMinSideCm();
+      return (val / 100) * minSideCm;
     }
-    // 试 shape.tags（Mac LTSC 上的兜底，跟 .pptx 走）
-    const tagResult = await loadLocksViaTags();
-    if (tagResult.ok) {
-      return { locks: tagResult.locks, backend: 'shapeTags' };
-    }
-    // 最后降级 localStorage（关 PPT 就没）
-    return { locks: loadLocksLS(), backend: 'localStorage' };
+    return val;
   }
 
-  async function saveLocks(locks, preferBackend) {
-    // preferBackend 决定优先写哪个（跟读保持一致，避免读写分离）
-    if (preferBackend === 'localStorage') {
-      saveLocksLS(locks);
-      return 'localStorage';
+  function cmToValue(cm, unit) {
+    if (unit === '%') {
+      const minSideCm = getRefShapeMinSideCm();
+      if (minSideCm <= 0) return 0;
+      return (cm / minSideCm) * 100;
     }
-    if (preferBackend === 'shapeTags') {
-      const r = await saveLocksViaTags(locks);
-      if (r.ok) return 'shapeTags';
-      // shape.tags 失败，fallback to localStorage
-      saveLocksLS(locks);
-      return 'localStorage';
-    }
-    // 默认 customXmlPart
-    try {
-      await saveLocksCustomXml(locks);
-      return 'customXmlPart';
-    } catch (e) {
-      // 试 shape.tags
-      dbgLine(`saveLocks: CustomXmlPart failed, try shapeTags`);
-      const r = await saveLocksViaTags(locks);
-      if (r.ok) return 'shapeTags';
-      // 都失败才 localStorage
-      saveLocksLS(locks);
-      return 'localStorage';
-    }
+    return cm;
   }
 
-  // ---------------- localStorage 锁定降级 ----------------
-
-  function loadLocksLS() {
-    try { return JSON.parse(localStorage.getItem(LOCK_STORAGE_KEY) || '{}'); }
-    catch (_) { return {}; }
-  }
-  function saveLocksLS(locks) {
-    try { localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify(locks)); } catch (_) {}
-  }
-
-  // ---------------- shape.tags 锁定（Mac LTSC 兜底，跟 shape 走） ----------------
-  // 存进 OOXML 的 <p:tagLst> 段，每个形状挂自己 lock 的 cm 值
-  // 跨设备、发文件、save .pptx 都能保留
-  const LOCK_TAG_KEY = 'radiusLock_v1';
+  // ---------------- shape.tags 锁（Mac LTSC 唯一可用的持久化方案） ----------------
 
   function loadLocksViaTags() {
     return new Promise((resolve) => {
@@ -210,22 +84,20 @@
           const locks = {};
           for (const sh of sel.items) {
             try {
+              // Mac LTSC: getItem 返回 ClientResult 代理，直接 .value 读
               const tag = sh.tags.getItem(LOCK_TAG_KEY);
               tag.load('value');
               await ctx.sync();
               const cm = parseFloat(tag.value);
               if (Number.isFinite(cm) && cm > 0) {
                 locks[sh.id] = cm;
-                dbgLine(`tag lock: shapeId=${sh.id} cm=${cm}`);
               }
-            } catch (e) {
+            } catch (_) {
               // tag 不存在，跳过
             }
           }
-          dbgLine(`loadLocksViaTags: ${Object.keys(locks).length} locks`);
           resolve({ ok: true, locks });
         } catch (e) {
-          dbgLine(`loadLocksViaTags failed: ${e.message || e}`);
           resolve({ ok: false, error: e });
         }
       });
@@ -244,420 +116,30 @@
             try {
               if (cm == null) {
                 sh.tags.delete(LOCK_TAG_KEY);
-                dbgLine(`tag deleted: shapeId=${sh.id}`);
               } else {
                 sh.tags.add(LOCK_TAG_KEY, String(cm));
-                dbgLine(`tag written: shapeId=${sh.id} cm=${cm}`);
               }
-            } catch (e) {
-              dbgLine(`tag write failed for shapeId=${sh.id}: ${e.message || e}`);
+            } catch (_) {
+              // 单个 shape 写失败不影响其他
             }
           }
           await ctx.sync();
           resolve({ ok: true });
         } catch (e) {
-          dbgLine(`saveLocksViaTags failed: ${e.message || e}`);
           resolve({ ok: false, error: e });
         }
       });
     });
   }
-  function getLockLS(shapeId) {
-    return loadLocksLS()[shapeId] || null;
-  }
-  function setLockLS(shapeId, cm) {
-    const m = loadLocksLS();
-    if (cm === null) delete m[shapeId];
-    else m[shapeId] = cm;
-    saveLocksLS(m);
-  }
 
-  // ---------------- 历史记录（CustomXmlPart，跟 .pptx 文件走） ----------------
-  // 每次「应用 R 角」成功后追加一条；只保留最近 MAX_HISTORY 条
-  // XML 格式：
-  //   <history xmlns="...">
-  //     <entry value="1.28" unit="cm" ts="1720000000"/>
-  //     <entry value="10" unit="%" ts="1720000001"/>
-  //   </history>
-
-  function buildHistoryXml(history) {
-    const entries = history
-      .map((h) => `    <entry value="${h.value}" unit="${escapeXml(h.unit)}" ts="${h.ts}"/>`)
-      .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<history xmlns="${HISTORY_XML_NS}">\n${entries}\n</history>`;
-  }
-
-  function parseHistoryXml(xml) {
-    const history = [];
-    if (!xml) return history;
-    try {
-      const doc = new DOMParser().parseFromString(xml, 'text/xml');
-      const nodes = doc.getElementsByTagNameNS(HISTORY_XML_NS, 'entry');
-      for (const n of nodes) {
-        const value = parseFloat(n.getAttribute('value'));
-        const unit = n.getAttribute('unit') || 'cm';
-        const ts = parseInt(n.getAttribute('ts') || '0', 10);
-        if (Number.isFinite(value)) history.push({ value, unit, ts });
-      }
-    } catch (e) {
-      console.warn('parseHistoryXml failed:', e);
-    }
-    return history;
-  }
-
-  function loadHistoryCustomXml() {
-    return new Promise((resolve, reject) => {
-      if (!Office.context.document || !Office.context.document.customXmlParts) {
-        reject(new Error('customXmlParts not available'));
-        return;
-      }
-      Office.context.document.customXmlParts.getByNamespaceAsync(
-        HISTORY_XML_NS,
-        (result) => {
-          if (result.status !== Office.AsyncResultStatus.Succeeded) {
-            reject(new Error(result.error?.message || 'getByNamespace failed'));
-            return;
-          }
-          if (!result.value || result.value.length === 0) {
-            resolve([]);
-            return;
-          }
-          result.value[0].getXmlAsync((xmlResult) => {
-            if (xmlResult.status !== Office.AsyncResultStatus.Succeeded) {
-              reject(new Error(xmlResult.error?.message || 'getXml failed'));
-              return;
-            }
-            resolve(parseHistoryXml(xmlResult.value));
-          });
-        }
-      );
-    });
-  }
-
-  function saveHistoryCustomXml(history) {
-    return new Promise((resolve, reject) => {
-      if (!Office.context.document || !Office.context.document.customXmlParts) {
-        reject(new Error('customXmlParts not available'));
-        return;
-      }
-      const xml = buildHistoryXml(history);
-      Office.context.document.customXmlParts.getByNamespaceAsync(
-        HISTORY_XML_NS,
-        (result) => {
-          if (result.status !== Office.AsyncResultStatus.Succeeded) {
-            reject(new Error(result.error?.message || 'getByNamespace failed'));
-            return;
-          }
-          if (result.value && result.value.length > 0) {
-            result.value[0].setXmlAsync(xml, (setResult) => {
-              if (setResult.status === Office.AsyncResultStatus.Succeeded) resolve();
-              else reject(new Error(setResult.error?.message || 'setXml failed'));
-            });
-          } else {
-            Office.context.document.customXmlParts.addAsync(xml, (addResult) => {
-              if (addResult.status === Office.AsyncResultStatus.Succeeded) resolve();
-              else reject(new Error(addResult.error?.message || 'addAsync failed'));
-            });
-          }
-        }
-      );
-    });
-  }
-
-  // 加一条历史：同 value+unit 的会移到最前，不重复；只保留 MAX_HISTORY 条
-  function dbgLine(msg) {
-    const dbg = $('history-log');
-    if (!dbg) return;
-    const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    dbg.textContent = `[${ts}] ${msg}\n` + dbg.textContent;
-  }
-
-  async function pushHistory(value, unit) {
-    // history 现在只活在内存（userHistory）+ 文件扫描：localStorage 已被弃用
-    dbgLine(`pushHistory enter: value=${value} unit=${unit} (in-memory)`);
-    const filtered = userHistory.filter((h) => !(h.value === value && h.unit === unit));
-    filtered.unshift({ value, unit, ts: Date.now() });
-    userHistory = filtered.slice(0, MAX_HISTORY);
-    dbgLine(`user history now: ${JSON.stringify(userHistory)}`);
-    return userHistory;
-  }
-
-  // ---------------- 初始化 ----------------
-
-  Office.onReady(() => {
-    dbgLine(`Office.onReady fired. host=${Office.context.host} docMode=${Office.context.document?.mode}`);
-    // 检测 customXmlParts 是否可用（task pane 跟 dialog 的关键区别）
-    const hasCustomXml = !!(Office.context.document && Office.context.document.customXmlParts);
-    dbgLine(`customXmlParts available: ${hasCustomXml}`);
-    bindEvents();
-    refreshSelection();
-    // 监听选区变化：用户在 PPT 里点别的形状、框选、切页 都会触发
-    Office.context.document.addHandlerAsync(
-      Office.EventType.DocumentSelectionChanged,
-      () => refreshSelection()
-    );
-  });
-
-  function bindEvents() {
-    $('apply-btn').addEventListener('click', onApply);
-    $('lock-btn').addEventListener('click', onToggleLock);
-    $('reapply-btn').addEventListener('click', onReapply);
-    $('rescan-btn').addEventListener('click', refreshSelection);
-    $('radius-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') onApply();
-    });
-    // 单位切换
-    document.querySelectorAll('.unit-btn').forEach((btn) => {
-      btn.addEventListener('click', () => onUnitChange(btn.dataset.unit));
-    });
-  }
-
-  // ---------------- 单位换算 ----------------
-  // 存储和形状属性都用 cm 统一，只有 input 和 apply 时按 currentUnit 转换
-  // % 模式：以选区里第一个圆角矩形的 minSideCm 为基准
-
-  function getRefShapeMinSideCm() {
-    // 多选时用第一个 roundRect 的 minSide；
-    // 如果没选或都不是 roundRect，返回 null
-    for (const s of selectedShapes) {
-      if (s.isRoundRect && s.width && s.height) {
-        return Math.min(s.width, s.height) / PT_PER_CM;
-      }
-    }
-    return null;
-  }
-
-  function valueToCm(val, unit) {
-    if (unit === '%') {
-      const minSideCm = getRefShapeMinSideCm();
-      if (minSideCm == null || minSideCm <= 0) return 0;
-      return (val / 100) * minSideCm;
-    }
-    return val;
-  }
-
-  function cmToValue(cm, unit) {
-    if (unit === '%') {
-      const minSideCm = getRefShapeMinSideCm();
-      if (minSideCm == null || minSideCm <= 0) return 0;
-      return (cm / minSideCm) * 100;
-    }
-    return cm;
-  }
-
-  function onUnitChange(newUnit) {
-    if (newUnit === currentUnit) return;
-    const raw = parseFloat($('radius-input').value);
-    if (Number.isFinite(raw) && raw > 0) {
-      // 把当前输入值先转成 cm，再转成新单位的值写回
-      const cm = valueToCm(raw, currentUnit);
-      const newVal = cmToValue(cm, newUnit);
-      $('radius-input').value = newUnit === '%'
-        ? newVal.toFixed(2)
-        : newVal.toFixed(3);
-    }
-    currentUnit = newUnit;
-    document.querySelectorAll('.unit-btn').forEach((b) => {
-      const active = b.dataset.unit === newUnit;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-selected', String(active));
-    });
-    $('unit-label').textContent = newUnit === '%' ? '%' : '厘米';
-    $('radius-input').step = newUnit === '%' ? '0.1' : '0.01';
-    $('radius-input').placeholder = newUnit === '%' ? '10' : '0.30';
-    $('radius-hint').textContent = newUnit === '%'
-      ? '范围 0 ~ 50（占短边 %）。超过 50% 显示为最大圆角。'
-      : '范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。';
-  }
-
-  // ---------------- 读选区 ----------------
-
-  async function refreshSelection() {
-    setStatus('选区', '读选中…', 'status-empty');
-    const debugLines = [];
-    try {
-      // 先从 CustomXmlPart（或 localStorage fallback）读锁，跟随 .pptx 文件
-      const { locks, backend: lb } = await loadLocks();
-      lockBackend = lb;
-
-      await PowerPoint.run(async (ctx) => {
-        const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id,items/name,items/width,items/height,items/adjustments');
-        await ctx.sync();
-
-        selectedShapes = [];
-        for (const sh of sel.items) {
-          const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          // 恢复原版：get(0) 在 Mac LTSC dialog 里返回的是 ClientResult 代理，.value 直接拿
-          const adjCount = sh.adjustments.count;
-          const adjResult = sh.adjustments.get(0);
-          await ctx.sync();
-          const adj = adjResult.value;
-
-          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
-          let currentCm = (isRoundRect && Number.isFinite(adj))
-            ? (adj / ADJ_SCALE) * minSideCm
-            : 0;
-          const lockedCm = locks[sh.id];
-
-          // 自动重应用锁：如果 locked 且当前 cm 跟锁定值漂移了 > 0.005cm，按当前尺寸反算比例写回
-          let reApplied = false;
-          if (lockedCm != null && isRoundRect && minSideCm > 0
-              && Math.abs(currentCm - lockedCm) > 0.005) {
-            const targetCm = Math.min(lockedCm, minSideCm / 2);
-            const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
-            if (Number.isFinite(newAdj)) {
-              sh.adjustments.set(0, newAdj);
-              currentCm = targetCm;   // 写回去之后新的 cm 就是 targetCm
-              reApplied = true;
-            }
-          }
-
-          // 调试：把所有 raw 值都打出来
-          debugLines.push(`Shape id=${sh.id} name="${sh.name}"`);
-          debugLines.push(`  width=${sh.width}pt  height=${sh.height}pt  minSide=${minSideCm.toFixed(2)}cm`);
-          debugLines.push(`  adjustments.count = ${adjCount} (type=${typeof adjCount})`);
-          debugLines.push(`  adjustments.get(0) = ${adjResult} (type=${typeof adjResult})`);
-          debugLines.push(`  adjustments.get(0).value = ${adj} (type=${typeof adj})`);
-          debugLines.push(`  isRoundRect 判定: ${isRoundRect ? 'true' : 'false'}`);
-          if (lockedCm != null) {
-            debugLines.push(`  锁定: ${lockedCm.toFixed(2)}cm${reApplied ? ' (本轮已重应用)' : ''}`);
-          }
-          debugLines.push('');
-
-          selectedShapes.push({
-            id: sh.id,
-            name: sh.name,
-            width: sh.width,
-            height: sh.height,
-            currentAdj: adj,
-            currentCm,
-            isRoundRect,
-            adjCount: adjCount || 0,
-            locked: lockedCm != null,
-            lockedCm: lockedCm == null ? null : lockedCm,
-            reApplied,
-          });
-        }
-      });
-      renderUI();
-      loadAndRenderHistory();
-      const dbg = $('debug-out');
-      if (dbg) dbg.textContent = debugLines.join('\n') || '（无选中）';
-      // 自动重应用锁的提示
-      const reappliedCount = selectedShapes.filter((s) => s.reApplied).length;
-      if (reappliedCount > 0) {
-        showToast(`🔒 自动重应用了 ${reappliedCount} 个锁定的 R 角`);
-      }
-      // 根据当前选区是否有 locked 形状，启动/停止轮询监控
-      const hasLocked = selectedShapes.some((s) => s.locked);
-      if (hasLocked) startLockMonitor();
-      else stopLockMonitor();
-    } catch (err) {
-      setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
-      showToast('读选区失败: ' + (err.message || err));
-      const dbg = $('debug-out');
-      if (dbg) dbg.textContent = '读失败：' + (err.message || err);
-    }
-  }
-
-  // ---------------- 锁定监控（轮询稳定检测） ----------------
-  // 目的：用户拖完形状松手后，自动把 R 角反算回锁定值
-  // 策略：每 10ms poll 一次，若连续 4 次尺寸无变化（≈ 40ms）则视为松手
-  // 期间尺寸在变（拖拽中）→ 跳过 apply，避免和用户的拖动手感冲突
-  // 注意：apply 后不要调 refreshSelection()（会再触发一次完整 getSelectedShapes + sync，
-  //       导致 PowerPoint 选区高亮重画，肉眼看是闪烁），直接改内存里的 currentCm 然后 renderUI
-
-  const LOCK_POLL_MS = 10;
-  const LOCK_STABLE_THRESHOLD = 4;  // 4 * 10ms = 40ms 稳定才 apply
-  let lockMonitor = null;            // { timer, lastDims, stableCount }
-
-  function startLockMonitor() {
-    if (lockMonitor) return;
-    lockMonitor = { timer: null, lastDims: {}, stableCount: {} };
-    lockMonitor.timer = setInterval(monitorTick, LOCK_POLL_MS);
-  }
-
-  function stopLockMonitor() {
-    if (!lockMonitor) return;
-    clearInterval(lockMonitor.timer);
-    lockMonitor = null;
-  }
-
-  async function monitorTick() {
-    // 兜底：如果选区里没有 locked，关闭 monitor
-    const locked = selectedShapes.filter((s) => s.locked);
-    if (locked.length === 0) {
-      stopLockMonitor();
-      return;
-    }
-    let appliedIds = [];
-    try {
-      await PowerPoint.run(async (ctx) => {
-        const sel = ctx.presentation.getSelectedShapes();
-        // 只读 id + 尺寸，不读 adjustments（避免不必要的数据同步）
-        sel.load('items/id,items/width,items/height');
-        await ctx.sync();
-        for (const sh of sel.items) {
-          const id = sh.id;
-          const target = locked.find((x) => x.id === id);
-          if (!target) continue;
-          const currentKey = `${sh.width.toFixed(4)}|${sh.height.toFixed(4)}`;
-          const lastKey = lockMonitor.lastDims[id];
-          if (lastKey === currentKey) {
-            lockMonitor.stableCount[id] = (lockMonitor.stableCount[id] || 0) + 1;
-          } else {
-            lockMonitor.stableCount[id] = 0;
-            lockMonitor.lastDims[id] = currentKey;
-          }
-          if (lockMonitor.stableCount[id] >= LOCK_STABLE_THRESHOLD) {
-            const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-            if (minSideCm > 0) {
-              const targetCm = Math.min(target.lockedCm, minSideCm / 2);
-              const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
-              if (Number.isFinite(newAdj)) {
-                sh.adjustments.set(0, newAdj);
-                appliedIds.push(id);
-              }
-            }
-          }
-        }
-      });
-    } catch (_) {
-      // 静默吞错：拖拽中可能 selection 临时为空 / shape 被删
-    }
-    if (appliedIds.length > 0) {
-      // 不调 refreshSelection()，只改内存 + 重渲染 dialog UI
-      for (const id of appliedIds) {
-        const s = selectedShapes.find((x) => x.id === id);
-        if (s && s.locked) s.currentCm = s.lockedCm;
-      }
-      renderUI();
-      showToast(`🔒 自动重应用了 ${appliedIds.length} 个锁定的 R 角`);
-    }
-  }
-
-  // ---------------- UI helpers ----------------
-
-  function setStatus(label, text, cardClass) {
-    $('status-text').textContent = text;
-    $('status-card').className = 'status-card ' + cardClass;
-    const labelEl = document.querySelector('.status-row .status-label');
-    if (labelEl) labelEl.textContent = label;
-  }
-
-  // ---------------- 渲染 ----------------
+  // ---------------- history（纯内存） ----------------
 
   function renderHistory(history) {
     const box = $('history-toggle');
-    dbgLine(`renderHistory called: list.length=${Array.isArray(history) ? history.length : 'NOT_ARRAY'}`);
-    if (!box) {
-      dbgLine(`renderHistory ABORT: #history-toggle not found in DOM`);
-      return;
-    }
+    if (!box) return;
     box.innerHTML = '';
     const list = Array.isArray(history) ? history : [];
-    // 始终显示 5 个槽位：前 N 个是真实记录，后 (5-N) 个是 disabled 占位
+    // 始终显示 MAX_HISTORY 个槽位：前 N 个是真实记录，后 (MAX_HISTORY-N) 个是 disabled 占位
     for (let i = 0; i < MAX_HISTORY; i++) {
       const h = list[i];
       const btn = document.createElement('button');
@@ -683,21 +165,170 @@
     }
   }
 
-  async function loadAndRenderHistory() {
-    // 简化：history 只来自本次 session 内主动应用的值，纯内存，关掉 PPT 任务窗格就没
-    dbgLine(`loadAndRenderHistory: user=${userHistory.length}`);
+  function loadAndRenderHistory() {
     renderHistory(userHistory);
   }
 
+  function pushHistory(value, unit) {
+    // 纯内存：去重 + 移到最前 + 限 5 条
+    const filtered = userHistory.filter((h) => !(h.value === value && h.unit === unit));
+    filtered.unshift({ value, unit, ts: Date.now() });
+    userHistory = filtered.slice(0, MAX_HISTORY);
+    return userHistory;
+  }
+
   function onHistoryChipClick(value, unit) {
-    // 切到该 chip 用的单位 + 填入数值
-    if (unit !== currentUnit) {
-      onUnitChange(unit);
-    }
+    if (unit !== currentUnit) onUnitChange(unit);
     $('radius-input').value = unit === '%'
       ? (Number.isInteger(value) ? value : value.toFixed(1))
       : value.toFixed(2);
     $('radius-input').focus();
+  }
+
+  // ---------------- 选区 + 读选中的 R 角 ----------------
+
+  async function refreshSelection() {
+    try {
+      await PowerPoint.run(async (ctx) => {
+        const sel = ctx.presentation.getSelectedShapes();
+        // adjustments.count 是 primitive，不需要 load
+        sel.load('items/id, items/name, items/width, items/height, items/type, items/adjustments');
+        await ctx.sync();
+        const shapes = [];
+        for (const sh of sel.items) {
+          let cm = null;
+          if (sh.adjustments && sh.adjustments.count > 0) {
+            // Mac LTSC: adjustments.get(0) 是 ClientResult 代理，直接 .value
+            const value = sh.adjustments.get(0).value;
+            if (Number.isFinite(value) && value > 0) {
+              const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+              cm = value * minSideCm;
+            }
+          }
+          shapes.push({
+            id: sh.id,
+            name: sh.name,
+            type: sh.type,
+            width: sh.width,
+            height: sh.height,
+            minSideCm: Math.min(sh.width, sh.height) / PT_PER_CM,
+            currentCm: cm,
+            isRoundRect: sh.adjustments && sh.adjustments.count > 0,
+            locked: false,
+            lockedCm: null,
+          });
+        }
+        selectedShapes = shapes;
+      });
+      // 读 lock 后端（shape.tags）
+      const tagResult = await loadLocksViaTags();
+      if (tagResult.ok) {
+        for (const s of selectedShapes) {
+          if (tagResult.locks[s.id] != null) {
+            s.locked = true;
+            s.lockedCm = tagResult.locks[s.id];
+          }
+        }
+      }
+      renderUI();
+      // 锁监控：选区里有 locked 时启动，否则停
+      if (selectedShapes.some((s) => s.locked)) {
+        startLockMonitor();
+      } else {
+        stopLockMonitor();
+      }
+    } catch (err) {
+      setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
+      showToast('读选区失败: ' + (err.message || err));
+    }
+  }
+
+  // ---------------- lock monitor：检测拖完松手后自动重应用 ----------------
+
+  function startLockMonitor() {
+    if (lockMonitor.timer) return;
+    lockMonitor.lastDims = {};
+    lockMonitor.stableCount = {};
+    lockMonitor.timer = setInterval(monitorTick, LOCK_POLL_MS);
+  }
+
+  function stopLockMonitor() {
+    if (lockMonitor.timer) {
+      clearInterval(lockMonitor.timer);
+      lockMonitor.timer = null;
+    }
+    lockMonitor.lastDims = {};
+    lockMonitor.stableCount = {};
+  }
+
+  async function monitorTick() {
+    const locked = selectedShapes.filter((s) => s.locked);
+    if (locked.length === 0) {
+      stopLockMonitor();
+      return;
+    }
+    let appliedIds = [];
+    try {
+      await PowerPoint.run(async (ctx) => {
+        const sel = ctx.presentation.getSelectedShapes();
+        sel.load('items/id, items/width, items/height');
+        await ctx.sync();
+        for (const sh of sel.items) {
+          const target = locked.find((x) => x.id === sh.id);
+          if (!target) continue;
+          const currentKey = `${sh.width.toFixed(4)}|${sh.height.toFixed(4)}`;
+          const lastKey = lockMonitor.lastDims[sh.id];
+          if (lastKey === currentKey) {
+            lockMonitor.stableCount[sh.id] = (lockMonitor.stableCount[sh.id] || 0) + 1;
+          } else {
+            lockMonitor.stableCount[sh.id] = 0;
+            lockMonitor.lastDims[sh.id] = currentKey;
+          }
+          if (lockMonitor.stableCount[sh.id] >= LOCK_STABLE_THRESHOLD) {
+            const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+            if (minSideCm > 0) {
+              const targetCm = Math.min(target.lockedCm, minSideCm / 2);
+              const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
+              if (Number.isFinite(newAdj) && newAdj >= 0) {
+                sh.adjustments.set(0, newAdj);
+                appliedIds.push(sh.id);
+              }
+            }
+          }
+        }
+        await ctx.sync();
+      });
+      if (appliedIds.length > 0) {
+        // 重应用后不要 refreshSelection（会引发 selection redraw 闪烁），只更新内存
+        for (const s of selectedShapes) {
+          if (appliedIds.includes(s.id)) {
+            // 重新读 adj 算出 currentCm
+            s.currentCm = s.lockedCm; // 简化为锁值
+          }
+        }
+        showToast(`🔒 自动重应用了 ${appliedIds.length} 个锁定的 R 角`);
+      }
+    } catch (e) {
+      console.warn('lock monitor error:', e);
+    }
+  }
+
+  // ---------------- UI helpers ----------------
+
+  function setStatus(label, text, cardClass) {
+    $('status-text').textContent = text;
+    $('status-card').className = 'status-card ' + cardClass;
+    const labelEl = document.querySelector('.status-row .status-label');
+    if (labelEl) labelEl.textContent = label;
+  }
+
+  function showToast(msg) {
+    const el = $('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'toast toast-show';
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => { el.className = 'toast'; }, 2200);
   }
 
   function renderUI() {
@@ -707,116 +338,77 @@
       $('current-radius').textContent = '—';
       $('locked-count').textContent = '—';
     } else {
-      setStatus('选区', `${selectedShapes.length} 个`, 'status-ok');
-      if (selectedShapes.length === 1) {
-        $('current-radius').textContent = `${selectedShapes[0].currentCm.toFixed(2)} 厘米`;
+      const allRound = selectedShapes.every((s) => s.isRoundRect);
+      const anyRound = selectedShapes.some((s) => s.isRoundRect);
+      const mixed = !allRound && anyRound;
+      const ok = allRound;
+      setStatus('选区', `${selectedShapes.length} 个${mixed ? '（混合）' : ''}`, ok ? 'status-ok' : 'status-warn');
+      // 当前 R 角（圆角矩形的）
+      const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
+      if (roundShapes.length > 0 && roundShapes[0].currentCm != null) {
+        $('current-radius').textContent = `${roundShapes[0].currentCm.toFixed(2)} 厘米`;
       } else {
-        const cms = selectedShapes.map((s) => s.currentCm);
-        const allSame = cms.every((c) => Math.abs(c - cms[0]) < 0.005);
-        $('current-radius').textContent = allSame
-          ? `${cms[0].toFixed(2)} 厘米（多选相同）`
-          : `${Math.min(...cms).toFixed(2)} ~ ${Math.max(...cms).toFixed(2)} 厘米`;
+        $('current-radius').textContent = '—';
       }
-      const lockedN = selectedShapes.filter((s) => s.locked).length;
-      $('locked-count').textContent = `${lockedN} / ${selectedShapes.length}`;
+      // 锁定数
+      const lockedCount = selectedShapes.filter((s) => s.locked).length;
+      $('locked-count').textContent = lockedCount > 0 ? `${lockedCount}` : '—';
     }
-    // 锁定后端提示
-    const lockHint = $('lock-hint');
-    if (lockBackend === 'localStorage') {
-      lockHint.textContent = (lockHint.textContent || '') + ' · 本机存储';
-      lockHint.title = 'CustomXmlPart 不可用，锁定暂存本机 localStorage（不会跟 .pptx 走）';
-    } else if (lockBackend === 'customXmlPart') {
-      lockHint.textContent = (lockHint.textContent || '') + ' · 跟文件走';
-      lockHint.title = '锁定存到 .pptx 文件的 CustomXmlPart，换机器/发文件都会保留';
-    }
+    // 形状列表
+    renderShapeList();
+    // 输入框：单位标签 + 输入限制 + apply 按钮可用性
+    $('unit-label').textContent = currentUnit === 'cm' ? '厘米' : '百分比';
+    const hasRound = selectedShapes.length > 0 && selectedShapes.every((s) => s.isRoundRect);
+    const inputVal = parseFloat($('radius-input').value);
+    $('apply-btn').disabled = !(hasRound && Number.isFinite(inputVal) && inputVal >= 0);
+    $('reapply-btn').disabled = !selectedShapes.some((s) => s.locked);
+    // 锁定按钮
+    updateLockButton();
+  }
 
-    // 列表
+  function renderShapeList() {
     const list = $('shape-list');
-    list.innerHTML = '';
-    $('list-count').textContent = `${selectedShapes.length} 个`;
+    if (!list) return;
     if (selectedShapes.length === 0) {
       list.innerHTML = '<div class="empty-list">在 PPT 里框选形状后会出现在这里</div>';
-    } else {
-      for (const s of selectedShapes) {
-        const row = document.createElement('div');
-        row.className = 'shape-row';
-        if (!s.isRoundRect) row.classList.add('not-round');
-        const tag = document.createElement('div');
-        tag.className = 'shape-name';
-        const lockMark = s.locked ? ' 🔒' : '';
-        const name = s.name ? s.name : `Shape ${s.id}`;
-        tag.textContent = `${name}${lockMark}`;
-        const meta = document.createElement('div');
-        meta.className = 'shape-meta';
-        if (!s.isRoundRect) {
-          meta.textContent = '非圆角矩形';
-          meta.style.color = '#c50f1f';
-        } else if (s.locked) {
-          meta.textContent = `${s.currentCm.toFixed(2)}cm · 锁 ${s.lockedCm.toFixed(2)}`;
-        } else {
-          meta.textContent = `${s.currentCm.toFixed(2)} cm`;
-        }
-        row.appendChild(tag);
-        row.appendChild(meta);
-        list.appendChild(row);
-      }
+      return;
     }
-
-    // 锁定按钮状态
-    updateLockButton();
+    list.innerHTML = '';
+    for (const s of selectedShapes) {
+      const row = document.createElement('div');
+      row.className = 'shape-row' + (s.isRoundRect ? '' : ' shape-row-warn');
+      const tag = s.locked
+        ? `<span class="shape-lock">🔒 ${s.lockedCm.toFixed(2)}cm</span>`
+        : (s.isRoundRect ? '' : '<span class="shape-warn">非圆角矩形</span>');
+      const rText = s.currentCm != null ? `${s.currentCm.toFixed(2)}cm` : '—';
+      row.innerHTML = `<span class="shape-name">${s.name || '(未命名)'}</span><span class="shape-r">${rText}</span>${tag}`;
+      list.appendChild(row);
+    }
   }
 
   function updateLockButton() {
     const btn = $('lock-btn');
-    const applyBtn = $('apply-btn');
-    const reapplyBtn = $('reapply-btn');
-    const label = $('lock-label');
-    const icon = $('lock-icon');
-    const hint = $('lock-hint');
-    const roundN = selectedShapes.filter((s) => s.isRoundRect).length;
+    if (!btn) return;
     if (selectedShapes.length === 0) {
       btn.disabled = true;
-      applyBtn.disabled = true;
-      reapplyBtn.disabled = true;
-      btn.classList.remove('is-locked');
-      label.textContent = '锁定 R 角';
-      icon.textContent = '🔓';
-      hint.textContent = '请先在 PPT 里框选圆角矩形';
-      return;
-    }
-    if (roundN === 0) {
-      // 全是非圆角
-      btn.disabled = true;
-      applyBtn.disabled = true;
-      reapplyBtn.disabled = true;
-      hint.textContent = '选中的都不是圆角矩形';
+      $('lock-icon').textContent = '🔓';
+      $('lock-label').textContent = '锁定 R 角';
+      $('lock-hint').textContent = '读选中…';
       return;
     }
     btn.disabled = false;
-    applyBtn.disabled = false;
-    const lockedN = selectedShapes.filter((s) => s.locked).length;
-    reapplyBtn.disabled = lockedN === 0;
-    if (lockedN === 0) {
-      btn.classList.remove('is-locked');
-      label.textContent = '锁定 R 角';
-      icon.textContent = '🔓';
-      hint.textContent = `当前 0 / ${selectedShapes.length} 已锁定`;
-    } else if (lockedN === selectedShapes.length) {
-      btn.classList.add('is-locked');
-      label.textContent = '解锁 R 角';
-      icon.textContent = '🔒';
-      hint.textContent = `当前 ${lockedN} / ${selectedShapes.length} 已锁定`;
-    } else {
-      btn.classList.add('is-locked');
-      label.textContent = '全部锁定';
-      icon.textContent = '🔒';
-      hint.textContent = `当前 ${lockedN} / ${selectedShapes.length} 已锁定`;
-    }
+    const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
+    const allLocked = roundShapes.length > 0 && roundShapes.every((s) => s.locked);
+    $('lock-icon').textContent = allLocked ? '🔒' : '🔓';
+    $('lock-label').textContent = allLocked ? '解锁 R 角' : '锁定 R 角';
+    $('lock-hint').textContent = allLocked
+      ? `已锁定 ${roundShapes.length} 个（跟随形状 tag，跨设备保留）`
+      : `锁定后 R 角按厘米值保持；改变形状大小时自动按比例调整`;
   }
 
   // ---------------- 操作 ----------------
 
-  /** 应用 R 角：所有选中的形状都改成输入的 cm 值 */
+  /** 应用 R 角：所有选中的圆角矩形都改成输入的 cm 值 */
   async function onApply() {
     if (selectedShapes.length === 0) {
       showToast('请先在 PPT 里框选圆角矩形');
@@ -834,28 +426,20 @@
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id,items/width,items/height,items/adjustments');
+        sel.load('items/id, items/width, items/height, items/adjustments');
         await ctx.sync();
         for (const sh of sel.items) {
-          // sh.width / sh.height 是已 load 的真数字
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          if (minSideCm <= 0) {
-            failed++;
-            continue;
-          }
+          if (minSideCm <= 0) { failed++; continue; }
           const targetCm = Math.min(cm, minSideCm / 2);
           // ADJ_SCALE=1 → newAdj 是 0~0.5 的小数比例，不能 round 到整数
           const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
-          if (!Number.isFinite(newAdj)) {
-            failed++;
-            continue;
-          }
+          if (!Number.isFinite(newAdj)) { failed++; continue; }
           try {
             sh.adjustments.set(0, newAdj);
             updated++;
-          } catch (e) {
+          } catch (_) {
             // 这个形状可能不是 roundRect，set 失败
-            console.warn('set 失败:', sh.id, e);
             failed++;
           }
         }
@@ -866,9 +450,9 @@
           ? `${raw.toFixed(1)}%`
           : `${raw.toFixed(2)} 厘米`;
         showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}`);
-        // 成功后追加到历史记录（去重 + 限 5 条 + 跟文件走）
         if (updated > 0) {
-          const newHistory = await pushHistory(raw, currentUnit);
+          // 写到内存 + 渲染
+          const newHistory = pushHistory(raw, currentUnit);
           renderHistory(newHistory);
         }
       } else {
@@ -880,42 +464,40 @@
     }
   }
 
-  /** 锁定 / 解锁 R 角（CustomXmlPart 优先跟随文件，localStorage 降级） */
+  /** 锁定 / 解锁 R 角（用 shape.tags，跟 .pptx 文件走） */
   async function onToggleLock() {
     if (selectedShapes.length === 0) {
       showToast('请先在 PPT 里框选圆角矩形');
       return;
     }
-    const allLocked = selectedShapes.every((s) => s.locked);
-    const inputVal = parseFloat($('radius-input').value);
-    let touched = 0;
-    try {
-      // 读当前所有锁（从与 refreshSelection 同一个 backend 读，避免分离）
-      const { locks: currentLocks } = await loadLocks();
-      const newLocks = { ...currentLocks };
-      for (const s of selectedShapes) {
-        if (allLocked) {
-          delete newLocks[s.id];
-        } else {
-          // 锁存 cm（按当前单位换算）
-          const inputCm = Number.isFinite(inputVal) && inputVal > 0
-            ? valueToCm(inputVal, currentUnit)
-            : s.currentCm;
-          if (inputCm > 0) newLocks[s.id] = inputCm;
-        }
-        touched++;
-      }
-      // 写回（preferBackend 跟读保持一致：customXmlPart 优先）
-      const backend = await saveLocks(newLocks, lockBackend);
-      lockBackend = backend;
-      const whereLabel = backend === 'customXmlPart' ? '（跟随 .pptx 文件）'
-        : backend === 'shapeTags' ? '（跟随形状 tag，跨设备保留）'
-        : '（仅本机，关 PPT 失效）';
-      showToast(allLocked ? `已解锁 ${touched} 个${whereLabel}` : `已锁定 ${touched} 个${whereLabel}`);
-      await refreshSelection();
-    } catch (err) {
-      showToast('操作失败：' + (err.message || err));
+    const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
+    if (roundShapes.length === 0) {
+      showToast('选中的形状都不是圆角矩形');
+      return;
     }
+    const allLocked = roundShapes.every((s) => s.locked);
+    const inputVal = parseFloat($('radius-input').value);
+    const locks = {};
+    let touched = 0;
+    for (const s of roundShapes) {
+      if (allLocked) {
+        // 解锁：不写 tag
+      } else {
+        // 锁定：优先用输入框值，否则用当前 R 角
+        const inputCm = Number.isFinite(inputVal) && inputVal > 0
+          ? valueToCm(inputVal, currentUnit)
+          : s.currentCm;
+        if (inputCm > 0) locks[s.id] = inputCm;
+      }
+      touched++;
+    }
+    const r = await saveLocksViaTags(locks);
+    if (!r.ok) {
+      showToast('操作失败：' + (r.error?.message || r.error));
+      return;
+    }
+    showToast(allLocked ? `已解锁 ${touched} 个（跟随 .pptx 文件）` : `已锁定 ${touched} 个（跟随 .pptx 文件）`);
+    await refreshSelection();
   }
 
   /** 重新应用锁定：按当前形状大小反算 adj */
@@ -925,49 +507,92 @@
       showToast('当前选区没有锁定的圆角矩形');
       return;
     }
-    let updated = 0;
+    let applied = 0;
+    let failed = 0;
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id,items/width,items/height,items/adjustments');
+        sel.load('items/id, items/width, items/height');
         await ctx.sync();
         for (const sh of sel.items) {
           const target = locked.find((x) => x.id === sh.id);
           if (!target) continue;
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          if (minSideCm <= 0) continue;
-          const lockCm = Math.min(target.lockedCm, minSideCm / 2);
-          const newAdj = (lockCm / minSideCm) * ADJ_SCALE;
-          if (!Number.isFinite(newAdj)) continue;
+          if (minSideCm <= 0) { failed++; continue; }
+          const targetCm = Math.min(target.lockedCm, minSideCm / 2);
+          const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
+          if (!Number.isFinite(newAdj)) { failed++; continue; }
           try {
             sh.adjustments.set(0, newAdj);
-            updated++;
-          } catch (e) {
-            console.warn('reapply set 失败:', sh.id, e);
-          }
+            applied++;
+          } catch (_) { failed++; }
         }
         await ctx.sync();
       });
-      showToast(`✅ 已重新应用 ${updated} 个锁定`);
+      showToast(`🔒 重新应用了 ${applied} 个锁定的 R 角${failed > 0 ? `，${failed} 个失败` : ''}`);
       await refreshSelection();
     } catch (err) {
       showToast('操作失败：' + (err.message || err));
     }
   }
 
-  // ---------------- UI helpers ----------------
-
-  let toastTimer = null;
-  function showToast(msg) {
-    let el = document.querySelector('.toast');
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'toast';
-      document.body.appendChild(el);
+  function onUnitChange(newUnit) {
+    if (newUnit === currentUnit) return;
+    // 把当前输入框值换算到新单位
+    const oldVal = parseFloat($('radius-input').value);
+    if (Number.isFinite(oldVal) && oldVal >= 0) {
+      const cm = valueToCm(oldVal, currentUnit);
+      const newVal = cmToValue(cm, newUnit);
+      $('radius-input').value = newUnit === '%' ? newVal.toFixed(1) : newVal.toFixed(2);
     }
-    el.textContent = msg;
-    el.classList.add('show');
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+    currentUnit = newUnit;
+    // 更新按钮 active 态
+    document.querySelectorAll('.unit-btn').forEach((btn) => {
+      const active = btn.dataset.unit === newUnit;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    // 更新 step / placeholder
+    if (newUnit === '%') {
+      $('radius-input').step = '0.1';
+      $('radius-input').min = '0';
+      $('radius-input').max = '50';
+      $('radius-input').placeholder = '10';
+    } else {
+      $('radius-input').step = '0.01';
+      $('radius-input').min = '0';
+      $('radius-input').removeAttribute('max');
+      $('radius-input').placeholder = '0.30';
+    }
+    $('unit-label').textContent = newUnit === 'cm' ? '厘米' : '百分比';
+    renderUI();
   }
+
+  // ---------------- 事件绑定 ----------------
+
+  function bindEvents() {
+    $('apply-btn').addEventListener('click', onApply);
+    $('lock-btn').addEventListener('click', onToggleLock);
+    $('reapply-btn').addEventListener('click', onReapply);
+    $('rescan-btn').addEventListener('click', refreshSelection);
+    $('radius-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') onApply();
+    });
+    $('radius-input').addEventListener('input', () => renderUI());
+    document.querySelectorAll('.unit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => onUnitChange(btn.dataset.unit));
+    });
+  }
+
+  // ---------------- 初始化 ----------------
+
+  Office.onReady(() => {
+    bindEvents();
+    refreshSelection();
+    // 选区变化：用户在 PPT 里点别的形状、框选、切页 都会触发
+    Office.context.document.addHandlerAsync(
+      Office.EventType.DocumentSelectionChanged,
+      () => refreshSelection()
+    );
+  });
 })();

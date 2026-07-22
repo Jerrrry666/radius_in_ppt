@@ -1,4 +1,4 @@
-/* dialog.css — R 角调整 Dialog 样式 */
+/* dialog.css — R 角调整 v1.0 task pane 样式 */
 
 * {
   box-sizing: border-box;
@@ -26,6 +26,7 @@ body {
   overflow: auto;
 }
 
+/* 头部 */
 .header h1 {
   font-size: 16px;
   font-weight: 600;
@@ -94,19 +95,13 @@ body {
   font-weight: 500;
 }
 
-.input-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .input-label-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-/* 单位切换：厘米 / 百分比（iOS 风格 segmented control） */
+/* 单位切换（iOS segmented control 风格） */
 .unit-toggle {
   display: inline-flex;
   border: 1px solid #c8c6c4;
@@ -119,11 +114,10 @@ body {
   border: none;
   background: transparent;
   font-size: 11px;
+  color: #605e5c;
   padding: 3px 10px;
   cursor: pointer;
-  color: #605e5c;
   font-family: inherit;
-  transition: background 0.12s, color 0.12s;
   user-select: none;
 }
 
@@ -142,7 +136,7 @@ body {
   font-weight: 500;
 }
 
-/* 历史记录：跟 unit-toggle 一样的分段按钮 */
+/* 历史记录（跟 unit-toggle 一样的分段按钮） */
 .history-toggle {
   display: inline-flex;
   border: 1px solid #c8c6c4;
@@ -183,6 +177,13 @@ body {
 .history-btn:disabled {
   color: #a19f9d;
   cursor: default;
+}
+
+/* 输入框 + 单位 */
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 #radius-input {
@@ -231,15 +232,14 @@ body {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  font-family: inherit;
   border: 1px solid transparent;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
-  user-select: none;
-  font-family: inherit;
 }
 
 .btn:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .btn-primary {
@@ -265,21 +265,13 @@ body {
 
 .btn-secondary:hover:not(:disabled) {
   background: #f3f2f1;
-  border-color: #8a8886;
-}
-
-.btn-secondary.is-locked {
-  background: #fff4ce;
-  border-color: #f7d6a5;
-  color: #8a5a00;
+  border-color: #a19f9d;
 }
 
 .btn-ghost {
   background: transparent;
   color: #605e5c;
   border-color: transparent;
-  padding: 6px 8px;
-  font-size: 12px;
 }
 
 .btn-ghost:hover:not(:disabled) {
@@ -287,24 +279,102 @@ body {
   color: #201f1e;
 }
 
+.btn-mini {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
 /* 锁定行 */
 .lock-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .lock-icon {
   font-size: 14px;
-  line-height: 1;
 }
 
 .lock-hint {
-  font-size: 12px;
-  color: #605e5c;
-  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: #8a8886;
 }
 
+/* 形状列表 */
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.shape-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #ffffff;
+  border: 1px solid #e1dfdd;
+  border-radius: 4px;
+  padding: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.shape-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  gap: 6px;
+}
+
+.shape-row:hover {
+  background: #f3f2f1;
+}
+
+.shape-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #201f1e;
+}
+
+.shape-r {
+  font-variant-numeric: tabular-nums;
+  color: #605e5c;
+  flex-shrink: 0;
+}
+
+.shape-lock {
+  font-size: 10px;
+  background: #fff4ce;
+  color: #7a5a00;
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.shape-warn {
+  font-size: 10px;
+  background: #fde7e9;
+  color: #a4262c;
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.empty-list {
+  padding: 16px 12px;
+  text-align: center;
+  color: #a19f9d;
+  font-size: 12px;
+}
+
+/* 底部 */
 .footer {
   margin-top: auto;
   padding-top: 8px;
@@ -317,137 +387,24 @@ body {
 /* Toast */
 .toast {
   position: fixed;
+  bottom: 20px;
   left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(20px);
   background: #201f1e;
   color: #ffffff;
   padding: 8px 14px;
   border-radius: 4px;
   font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s;
-  z-index: 10;
-}
-
-.toast.show {
-  opacity: 0.92;
-}
-
-/* 操作面板（替代 toast 用于需要后续操作） */
-.action-panel {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  right: 16px;
-  background: #ffffff;
-  border: 1px solid #c8c6c4;
-  border-radius: 6px;
-  padding: 14px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: opacity 0.18s, transform 0.18s;
   z-index: 100;
-}
-
-.action-panel-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #201f1e;
-  margin-bottom: 6px;
-}
-
-.action-panel-msg {
-  font-size: 12px;
-  color: #605e5c;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  margin-bottom: 10px;
-}
-
-.action-panel-buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-/* 圆角矩形列表 */
-.list-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.shape-list {
-  max-height: 220px;
-  overflow-y: auto;
-  border: 1px solid #c8c6c4;
-  border-radius: 4px;
-  background: #ffffff;
-  margin-top: 4px;
-}
-
-.shape-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #edebe9;
-  cursor: pointer;
-  transition: background 0.08s;
-}
-
-.shape-row:last-child {
-  border-bottom: none;
-}
-
-.shape-row:hover {
-  background: #f3f2f1;
-}
-
-.shape-row.selected {
-  background: #e7f3ff;
-}
-
-.shape-row.not-round {
-  opacity: 0.65;
-  background: #fff5f5;
-}
-
-.shape-row input[type="checkbox"] {
-  margin: 0;
-  flex-shrink: 0;
-}
-
-.shape-name {
-  flex: 1;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.shape-meta {
-  font-size: 11px;
-  color: #605e5c;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-.empty-list {
-  padding: 24px 12px;
+  max-width: calc(100% - 24px);
   text-align: center;
-  color: #8a8886;
-  font-size: 12px;
 }
 
-.list-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.list-actions .btn {
-  flex: 1;
-  font-size: 11px;
-  padding: 4px 8px;
+.toast-show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }

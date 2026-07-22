@@ -5,39 +5,39 @@
 
 ## 1. 项目定位
 
-macOS PowerPoint 加载项，让用户用 **厘米** 设置圆角矩形 R 角（圆角半径），
-支持多选和「锁定 R 角绝对值」（改变形状大小时按比例自动调整）。
-最终形态是一个 `.app`（约 436 KB），双击启动一个本地静态 server + 把
-manifest 注册到 PowerPoint 加载项目录。
+macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分比** 设置圆角矩形的 R 角（圆角半径）。
+
+- 支持多选
+- 支持「锁定 R 角绝对值」（按厘米值保持；改变形状大小时自动按比例调整）
+- 最近 5 次输入历史（本次 session 内存）
+- 最终形态：`.app`（约 440 KB），双击启动本地静态 server + 把 manifest 注册到 PowerPoint 加载项目录
 
 参考：iSlide 的「设计」tab 体验。
 
-## 2. 架构概览
+## 2. 架构
 
-**纯 Office.js 路线**（自 `eb5b724` 起，删了所有服务端 .pptx 处理）：
+**纯 Office.js + task pane**：
 
 ```
 ┌─────────────┐    HTTP localhost:3000     ┌──────────────────┐
-│  PowerPoint │ ◀─────────────────────────▶ │  Office Add-in   │
-│  (LTSC Mac) │   Office.js bridge         │  - dialog.html   │
-└─────────────┘                            │  - dialog.js     │
-        │                                  │  - dialog.css    │
+│  PowerPoint │ ◀─────────────────────────▶ │  Office Task Pane │
+│  (LTSC Mac) │   Office.js bridge         │  - dialog.html    │
+└─────────────┘   ShowTaskpane (侧边栏)    │  - dialog.js      │
+        │                                  │  - dialog.css     │
         │ in-memory                        └──────────────────┘
         │ Adjustments.set(0, val)                  ▲
         │ getSelectedShapes()                      │
         ▼                                          │
 ┌─────────────┐                            ┌──────────────────┐
 │  .pptx doc  │   (文件存盘由 PPT 自己处理) │  static server   │
-└─────────────┘                            │  tools/serve.js  │
-                                           │  ~75 行，只服务  │
-                                           │  静态文件        │
-                                           └──────────────────┘
+│  + shape    │                            │  tools/serve.js  │
+│    tags     │  ◀── lock 跟着 .pptx 走 ──  │  ~60 行          │
+└─────────────┘                            └──────────────────┘
 ```
 
-**为什么不需要服务端处理 .pptx**：
-- 之前用 JSZip 在浏览器里读 .pptx，Safari 限制 + Mac LTSC 兼容性差，失败率高
-- 切到 Office.js 后，所有读写都在 PowerPoint 进程内完成，**in-memory 即时生效**
-- 用户保存 .pptx 时 PPT 自己处理文件 IO，我们完全不碰
+**lock 持久化用 `shape.tags`**（OOXML `<p:tagLst>` 段），跟着形状走，save .pptx 后跨设备/换机器都保留。
+
+**history 纯内存**（本次 session 内用户主动应用过的 R 角值，关掉 PPT 任务窗格就清空）。
 
 ## 3. 目录结构
 
@@ -45,148 +45,139 @@ manifest 注册到 PowerPoint 加载项目录。
 .
 ├── manifest.xml                      # Office Add-in 清单（指向 localhost:3000）
 ├── src/
-│   ├── dialog/
-│   │   ├── dialog.html               # 包含 office.js CDN + 调试面板
-│   │   ├── dialog.js                 # 核心逻辑（~310 行）
-│   │   └── dialog.css
-│   └── shared/
-│       └── radius.js                 # 常量（PT_PER_CM、ADJ_SCALE）
-├── app/
-│   └── MacOS/RadiusInPpt             # bash 启动器
+│   └── dialog/                       # task pane UI（dialog 是历史命名）
+│       ├── dialog.html
+│       ├── dialog.js                 # 核心逻辑（~600 行）
+│       └── dialog.css
+├── app/MacOS/RadiusInPpt             # bash 启动器
 ├── tools/
-│   ├── serve.js                      # ~75 行静态文件 server
+│   ├── serve.js                      # ~60 行静态文件 server
 │   ├── build-app.sh                  # 打包成 .app
-│   └── build-dmg.sh                  # 可选：打包成 .dmg
-├── assets/                           # 图标等
+│   ├── build-dmg.sh                  # 可选：打包成 .dmg
+│   └── sign-and-notarize.sh          # 可选：代码签名 + 公证
+├── assets/                           # 图标
 ├── dist/                             # build 输出（git ignore）
 ├── test.pptx                         # 测试用文件
-└── AGENTS.md                         # ← 本文件
+├── AGENTS.md                         # ← 本文件
+└── changelogs/
+    └── 2026-07-23.md                 # v1.0 发布日志
 ```
 
 ## 4. Mac LTSC Office.js 行为差异（重点！）
 
-> 这些是 Mac Office LTSC Standard for Mac 2021（build 16.111）上的实测行为。
+> 这些是 Mac Office LTSC Standard for Mac 2021（build 16.111 / 26071325）上的实测行为。
 > Microsoft 365 / Windows 上的行为可能不一样。**所有 API 行为以 Mac LTSC 为准**。
 
 ### 4.1 `Adjustments.value` 单位是 0~1，不是 0~50000
 
 OOXML 里 `<a:gd name="adj" fmla="val X"/>` 的 X ∈ [0, 50000]（对应 0%~50% 短边）。
-但 **Mac LTSC dialog 上下文里**，Office.js `shape.adjustments.get(0).value` 返回
-的是 **0~1 的小数比例**（OOXML 值 ÷ 50000）。
+但 **Mac LTSC Office.js** `shape.adjustments.get(0).value` 返回的是 **0~1 的小数比例**（OOXML 值 ÷ 50000）。
 
 ```js
-// ❌ 错误：按 OOXML 假设除以 100000，结果全是 0
-const ADJ_SCALE = 100000;
-const currentCm = (adj.value / ADJ_SCALE) * minSideCm;  // → 0.00
+// 读：currentCm = adj.value * minSideCm
+const adj = sh.adjustments.get(0).value;  // 0~1 fraction
+const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+const currentCm = adj * minSideCm;
 
-// ✅ 正确：Mac LTSC 返回的 .value 已经是 0~1 比例
-const ADJ_SCALE = 1;
-const currentCm = adj.value * minSideCm;  // → 1.28cm
+// 写：newAdj = (targetCm / minSideCm)
+// 不能 Math.round（round(0.067) = 0，所有非整数都被截成 0）
+const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
+sh.adjustments.set(0, newAdj);
 ```
-
-**SET 也用 0~1**：`sh.adjustments.set(0, newVal)` 接受 0~1 小数。**不能用
-`Math.round`**——`round(0.067) = 0`，所有非整数都会被截成 0 或 1。
-
-```js
-// ❌ 错
-const newAdj = Math.round((targetCm / minSideCm) * ADJ_SCALE);  // 全 round 成 0
-
-// ✅ 对
-const newAdj = (targetCm / minSideCm) * ADJ_SCALE;  // 保留小数
-```
-
-来源：调试面板里 `adjustments.get(0).value = 0.17183`，按 OOXML 公式应该是
-`17183 / 100000 * 7.46 = 1.28cm`，但用错公式会算成 0。改 ADJ_SCALE=1 后
-`0.17183 * 7.46 = 1.28cm` 正确。
 
 ### 4.2 `get(0)` 返回 ClientResult 代理，不是 ClientObject
 
-`sh.adjustments.get(0)` 返回的东西 **没有 `.load()` 方法**。直接 `.value` 拿值。
-如果想 load nested 属性调 `adjItem.load('value')` 会报
-`adjItem.load is not a function`。
+`sh.adjustments.get(0)` 返回 **ClientResult 代理**（没有 `.load()` 方法），直接 `.value` 拿值。
 
 ```js
-// ❌ 错
+// ❌ 错（会报 "adjItem.load is not a function"）
 const adj = sh.adjustments.get(0);
-adj.load('value');  // TypeError: adj.load is not a function
+adj.load('value');
+await ctx.sync();
+const v = adj.value;
 
 // ✅ 对
-const adj = sh.adjustments.get(0);
-await ctx.sync();
-const value = adj.value;  // 直接读
+const v = sh.adjustments.get(0).value;
 ```
 
-### 4.3 `customProperties` 在 dialog 上下文里不可用（已用 CustomXmlPart 绕过）
+**注意**：`shape.tags.getItem('key').load('value')` 是 work 的——tag 不是 ClientResult 代理。两者 API 行为不同。
 
-`ctx.presentation.customProperties` 在 dialog 里 **返回 undefined**
-（不是抛错，是直接没有这个属性）。Task pane 里可能能用，但 dialog 不能。
+### 4.3 写 .pptx 持久化用 `shape.tags`（Mac LTSC 唯一 work 的方案）
 
-**改用 Common API 的 `customXmlParts` 存锁**（v2.1 起）—— 这是 OOXML 标准的隐藏 XML 块，
-写入 .pptx 文件后随文件一起保存/迁移，跨机器、跨用户都跟着走：
+`customProperties` 和 `customXmlParts` 在 **task pane 和 dialog 上下文都不可用**（Mac LTSC）：
+
+- `customProperties` 在 dialog 直接 undefined
+- `customXmlParts` 在 task pane / dialog 都不存在（Mac LTSC 16.111 实测）
+
+**workaround**：`shape.tags`（PowerPointApi 1.10+，Mac LTSC 支持）：
 
 ```js
-// 读
-Office.context.document.customXmlParts.getByNamespaceAsync(
-  'https://radius.jerrrry666.com/radius-in-ppt/locks/v1',
-  (result) => { /* result.value[0].getXmlAsync(...) */ }
-);
 // 写
-result.value[0].setXmlAsync(buildLocksXml(locks), ...);
+PowerPoint.run(async (ctx) => {
+  const sh = ctx.presentation.getSelectedShapes().getItemAt(0);
+  sh.tags.add("myKey", "myValue");
+  await ctx.sync();
+});
+
+// 读
+const tag = sh.tags.getItem("myKey");
+tag.load("value");
+await ctx.sync();
+const v = tag.value;
+
+// 删
+sh.tags.delete("myKey");
 ```
 
-XML 格式：
-```xml
-<locks xmlns="https://radius.jerrrry666.com/radius-in-ppt/locks/v1">
-  <lock shapeId="123" cm="1.28"/>
-  <lock shapeId="456" cm="0.50"/>
-</locks>
-```
+**限制**：tag 是每个形状自己的，跨形状需要遍历。存的是 key-value 字符串对。
 
-**降级方案**：CustomXmlPart 不可用时（极端情况），回退到 localStorage
-（key = `radius_in_ppt_locks_v2`），但锁就不跟 .pptx 走了。
-
-### 4.4 `Adjustments.count` 是 primitive，能直接用
-
-`sh.adjustments.count` 在 Mac LTSC dialog 里是 **number**（不是 ClientObject），
-不需要 load。可以用它判断是不是圆角矩形：
+### 4.4 task pane 上下文里 `shapes.load` 不自动填 adjustments 子项
 
 ```js
-const adjCount = sh.adjustments.count;  // roundRect=1, 矩形/椭圆=0
-const isRoundRect = adjCount > 0;
+// ❌ 错：task pane 里 .value 报 "结果对象的值尚未加载"
+shapes.load('items/adjustments');
+await ctx.sync();
+const v = sh.adjustments.get(0).value;  // ❌ 报错
+
+// ✅ 对：显式 load 子项
+shapes.load('items/adjustments');
+await ctx.sync();
+sh.adjustments.load('items/value');  // ← 显式 load
+await ctx.sync();
+const v = sh.adjustments.get(0).value;  // ✅
 ```
 
-### 4.5 选区 API
+（dialog 上下文里这步可能不必要；task pane 必须显式 load。）
 
-| API | Mac LTSC dialog | 备注 |
-| --- | --- | --- |
-| `ctx.presentation.getSelectedShapes()` | ✅ 工作 | PowerPointApi 1.6+ |
-| `sh.width` / `sh.height` | ✅ 工作 | 单位是 pt |
-| `sh.id` / `sh.name` | ✅ 工作 | id 是 Office.js 内部 id |
-| `Office.context.document.addHandlerAsync(DocumentSelectionChanged, ...)` | ✅ 工作 | Common API，切页也会触发 |
+### 4.5 `Adjustments.count` 是 primitive，能直接用
 
-### 4.6 **没有 shape-level change 事件**
+`sh.adjustments.count` 在 Mac LTSC task pane 里是 **number**（不是 ClientObject），不需要 load：
 
-Office.js PowerPoint **不提供** `ShapeResized` / `ShapeMoved` / `ShapePropertyChanged`
-这类细粒度事件。`Office.EventType` 枚举里能用的只有：
+```js
+const isRoundRect = sh.adjustments.count > 0;
+```
 
-- `DocumentSelectionChanged`（选区变）
-- `ActiveViewChanged`（视图变）
-- `BindingDataChanged`（Excel/Word 才有）
-- `NodeInserted/Deleted/Replaced`（Word CustomXmlPart 才有）
+### 4.6 选区 API
 
-**后果**：检测"形状尺寸变化"只能靠 **setInterval 轮询**。
+| API | Mac LTSC task pane |
+| --- | --- |
+| `ctx.presentation.getSelectedShapes()` | ✅ 工作（PowerPointApi 1.6+） |
+| `sh.width` / `sh.height` | ✅ 工作，单位是 pt |
+| `sh.id` / `sh.name` | ✅ 工作 |
+| `Office.context.document.addHandlerAsync(DocumentSelectionChanged, ...)` | ✅ 工作（Common API） |
+| shape change 事件（`ShapeResized` 等） | ❌ **不存在**——必须用 setInterval 轮询 |
 
-**当前实现**：500ms 一次轮询，3 次连续无变化（≈1.5s 稳定）= 视为用户松手 → 反算 adj
-写回。拖拽中尺寸在变会跳过 apply，避免和拖动手感冲突。
+### 4.7 **没有 shape-level change 事件**
 
-**性能考量**：500ms 间隔 + 只在有 locked 形状时启动，功耗可忽略。
+Office.js PowerPoint **不提供** `ShapeResized` / `ShapeMoved` / `ShapePropertyChanged`。必须用 `setInterval` 轮询检测拖动完成。
+
+**当前实现**：10ms 一次轮询，4 次连续无变化（≈40ms 稳定）= 视为用户松手 → 反算 adj 写回。拖拽中尺寸在变 → 跳过 apply，避免和拖动手感冲突。
 
 ## 5. 部署 / 路径问题
 
 ### 5.1 manifest 路径会被 PowerPoint 重启清空
 
-`~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef/` 这个
-container 目录 **在 PowerPoint 退出（Cmd+Q）时可能被回收**。
+`~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef/` 在 PowerPoint 退出（Cmd+Q）时可能被回收。
 
 **所以 `.app` 启动器必须每次都**：
 
@@ -196,13 +187,11 @@ cp -f dist/RadiusInPpt.app/Contents/Resources/manifest.xml \
       ~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef/manifest.xml
 ```
 
-**用户必须 Cmd+Q 完全退出 PowerPoint**，然后重新打开，新 manifest 才生效。
-只关窗口不够（macOS 不会真的退 Office）。
+**用户必须 Cmd+Q 完全退出 PowerPoint**，然后重新打开，新 manifest 才生效。只关窗口不够（macOS 不会真的退 Office）。
 
 ### 5.2 启动器要主动找 node
 
-macOS launchd 的精简 PATH 不一定有 `/opt/homebrew/bin/node`，启动器
-（`app/MacOS/RadiusInPpt`）要主动找：
+macOS launchd 的精简 PATH 不一定有 `/opt/homebrew/bin/node`，启动器（`app/MacOS/RadiusInPpt`）要主动找：
 
 ```bash
 for p in /opt/homebrew/bin/node /usr/local/bin/node /opt/local/bin/node; do
@@ -212,8 +201,7 @@ done
 
 ### 5.3 localhost 用 HTTP
 
-Office Add-in 允许 `http://localhost` 走 HTTP（**不**需要 HTTPS / 证书）。
-manifest 里所有 URL 都是 `http://localhost:3000`。
+Office Add-in 允许 `http://localhost` 走 HTTP（**不**需要 HTTPS / 证书）。manifest 里所有 URL 都是 `http://localhost:3000`。
 
 ### 5.4 ⚠️ iCloud Documents 下的 dist 重建
 
@@ -251,43 +239,41 @@ git -c credential.helper="!f() { echo username=x-access-token; echo password=$GH
 | `2a30609` | 启动脚本主动找 node |
 | `d70f2df` | 回归 Office Add-in 路线（wef 路径 + bash 启动器） |
 | `07a1ce4` | 改用 server 端解析 .pptx（绕开浏览器 JSZip） |
-| `eb5b724` | **重构：纯 Office.js，删 server 端 PPTX 处理（-611 行）** |
-| `fa1c4ab` | 检测非圆角矩形并 disable apply |
-| `4ece5d9` | 用 ClientResult.value 读 adjustments |
-| `e2fbfae` | customProperty 不可用时降级到 localStorage |
-| `be7e6b1` | 启动器总是 `mkdir -p` wef 目录 |
-| `9e9a7b1` | 加调试面板（显示 Office.js raw 值） |
-| `ce3e425` | 显式 load adjustments count 和 value |
-| `1486764` | 用 `get(0).load('value')` 读（实际是错的，会报 `load is not a function`） |
-| `70c1683` | 恢复 `get(0).value`（去掉 .load） |
+| `eb5b724` | **重构：纯 Office.js，删 server 端 PPTX 处理** |
 | `3a92e17` | **ADJ_SCALE 改成 1**（Mac LTSC 返回 0~1 不是 0~50000） |
+| `918934d` | 改用 OOXML CustomXmlPart 存锁（后来发现 Mac LTSC 也不 work） |
+| `e4629d8` | **改 task pane**（从 dialog 改成侧边栏） |
+| `76f9bd6` | **改用 shape.tags 存锁**（Mac LTSC 唯一能 work 的持久化） |
+| `b19172b` | history 加文件扫描（后来删了，file scan 太脆弱） |
+| `14d1f6c` | history 简化为纯内存 |
+| `v1.0` | **v1.0 正式版**：删调试代码、删 shared/ 和 commands/ 目录、代码重整 |
 
 ## 8. 已知限制 / 未来工作
 
-- [x] **锁定 R 角 cross-machine**：✅ 改用 OOXML CustomXmlPart 存锁，跟 .pptx 文件走，换机器/发文件都保留
-- [x] **lock 之后改变形状大小**：✅ 用 setInterval 10ms 轮询 + 4 次稳定检测实现"拖完松手自动重应用"
-- [ ] **多选混合**（圆角矩形 + 普通矩形）：现在 UI 标记非圆角 + disable apply，已经可用
-- [x] **打包 .dmg**：`tools/build-dmg.sh` 实装完成
-- [ ] **代码签名 + 公证**：`tools/sign-and-notarize.sh` 已写好（待用户有 Apple Developer 账号时启用）
-  - 需要 Apple Developer Program 会员（$99/年）+ Developer ID Application 证书
-  - 签名用 hardened runtime（`--options=runtime`），公证走 `xcrun notarytool`
-  - 一次性 store credentials：`xcrun notarytool store-credentials "AC_PROFILE" --apple-id ... --password ... --team-id ...`
-  - 完整流程详见 `tools/sign-and-notarize.sh` 头部注释
-  - 启用后 `bash tools/build-dmg.sh` 会自动签名+公证+打包
-  - 当前状态：未启用（无 Developer 账号），.dmg 分发时用户首次需右键 → 打开
+- [x] **锁定 R 角 cross-machine**：✅ 改用 shape.tags
+- [x] **lock 之后改变形状大小**：✅ setInterval 10ms 轮询 + 4 次稳定检测
+- [x] **打包 .dmg**：`tools/build-dmg.sh` 已实现
+- [ ] **代码签名 + 公证**：`tools/sign-and-notarize.sh` 已写好，待用户有 Apple Developer 账号时启用
+- [ ] **history 跨会话**：当前只活内存。如果需要跨 session 保留，得用 shape.tags 在一个隐藏形状上挂 JSON
+- [ ] **多选混合 UI**（圆角矩形 + 普通矩形）：当前标记非圆角 + 跳过 apply
 
 ## 9. 调试技巧
 
-### 9.1 调试面板
+### 9.1 验证 lock 真的跟文件走
 
-`src/dialog/dialog.html` 底部有个 `<details>`，展开后是「🔧 调试信息」，会
-打印每个选中形状的原始 Office.js 值。改了 Office.js 读法后第一件事是看这里。
+```
+1. 选个圆角矩形，点「锁定 R 角」
+2. Cmd + S 保存 .pptx
+3. Cmd + Q 完全退 PPT
+4. 重新打开同一个 .pptx
+5. 选中刚才那个圆角矩形
+6. 状态卡「已锁定」应该显示 1
+```
 
 ### 9.2 重置 .app 状态
 
 ```bash
 pkill -f "tools/serve.js"
-mavis-trash dist
 bash tools/build-app.sh
 node tools/serve.js > /tmp/serve.log 2>&1 &
 mkdir -p ~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef
@@ -299,13 +285,12 @@ cp -f dist/RadiusInPpt.app/Contents/Resources/manifest.xml \
 ### 9.3 看 server 日志
 
 ```bash
-tail -f /tmp/serve_final.log
+tail -f /tmp/serve.log
 ```
 
 ## 10. PowerPoint 版本
 
 - 目标：**Office LTSC Standard for Mac 2021**（build 16.111 / 26071325）
 - API 范围：PowerPointApi 1.1 ~ 1.10
-- 已验证可用：`getSelectedShapes`（1.6）、`Adjustments.get/set`（1.10）、
-  `customProperties`（1.7，**dialog 上下文不可用**）
+- 已验证可用：`getSelectedShapes`（1.6）、`Adjustments.get/set`（1.10）、`shape.tags`（1.10）、`customXmlParts`（Common API，**不可用**）、`customProperties`（1.7，**不可用**）
 - Microsoft 365 用户理论上也能跑，但有些行为可能跟 LTSC 不一样
