@@ -323,6 +323,11 @@ body {
   background: #e7f3ff;
 }
 
+.shape-row.not-round {
+  opacity: 0.65;
+  background: #fff5f5;
+}
+
 .shape-row input[type="checkbox"] {
   margin: 0;
   flex-shrink: 0;

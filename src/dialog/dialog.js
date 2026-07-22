@@ -22,7 +22,7 @@
   let lockBackend = 'unknown';         // 'customProperty' | 'localStorage' | 'none'
 
   /** 当前选中的形状（refreshSelection 填充） */
-  let selectedShapes = [];  // [{id, name, width, height, currentCm, locked, lockedCm}]
+  let selectedShapes = [];  // [{id, name, width, height, currentCm, locked, lockedCm, isRoundRect, adjCount}]
 
   // ---------------- localStorage 锁定降级 ----------------
 
@@ -109,11 +109,13 @@
         for (const sh of sel.items) {
           // sh.width / sh.height 在 load 后是真数字；sh.adjustments.get(0) 是 ClientResult，需要 .value
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+          // adjustments.count 告诉你这个形状有几个调整点（圆角矩形 = 1，椭圆 = 0，正方形 = 0）
+          const adjCount = sh.adjustments.count;
           const adjResult = sh.adjustments.get(0);
           await ctx.sync();
           const adj = adjResult.value;
-          // 如果这个形状没有 adjustment points（count=0），get(0) 可能返 undefined
-          const currentCm = Number.isFinite(adj)
+          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
+          const currentCm = (isRoundRect && Number.isFinite(adj))
             ? (adj / ADJ_SCALE) * minSideCm
             : 0;
           const lockedCm = locks[sh.id];
@@ -124,6 +126,8 @@
             height: sh.height,
             currentAdj: adj,
             currentCm,
+            isRoundRect,
+            adjCount: adjCount || 0,
             locked: lockedCm != null,
             lockedCm: lockedCm == null ? null : lockedCm,
           });
@@ -184,6 +188,7 @@
       for (const s of selectedShapes) {
         const row = document.createElement('div');
         row.className = 'shape-row';
+        if (!s.isRoundRect) row.classList.add('not-round');
         const tag = document.createElement('div');
         tag.className = 'shape-name';
         const lockMark = s.locked ? ' 🔒' : '';
@@ -191,9 +196,14 @@
         tag.textContent = `${name}${lockMark}`;
         const meta = document.createElement('div');
         meta.className = 'shape-meta';
-        meta.textContent = s.locked
-          ? `${s.currentCm.toFixed(2)}cm · 锁 ${s.lockedCm.toFixed(2)}`
-          : `${s.currentCm.toFixed(2)} cm`;
+        if (!s.isRoundRect) {
+          meta.textContent = '非圆角矩形';
+          meta.style.color = '#c50f1f';
+        } else if (s.locked) {
+          meta.textContent = `${s.currentCm.toFixed(2)}cm · 锁 ${s.lockedCm.toFixed(2)}`;
+        } else {
+          meta.textContent = `${s.currentCm.toFixed(2)} cm`;
+        }
         row.appendChild(tag);
         row.appendChild(meta);
         list.appendChild(row);
@@ -211,6 +221,7 @@
     const label = $('lock-label');
     const icon = $('lock-icon');
     const hint = $('lock-hint');
+    const roundN = selectedShapes.filter((s) => s.isRoundRect).length;
     if (selectedShapes.length === 0) {
       btn.disabled = true;
       applyBtn.disabled = true;
@@ -219,6 +230,14 @@
       label.textContent = '锁定 R 角';
       icon.textContent = '🔓';
       hint.textContent = '请先在 PPT 里框选圆角矩形';
+      return;
+    }
+    if (roundN === 0) {
+      // 全是非圆角
+      btn.disabled = true;
+      applyBtn.disabled = true;
+      reapplyBtn.disabled = true;
+      hint.textContent = '选中的都不是圆角矩形';
       return;
     }
     btn.disabled = false;
