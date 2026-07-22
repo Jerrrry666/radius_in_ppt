@@ -713,8 +713,10 @@
                 skippedNoAdj++;
                 continue;
               }
-              // 关键：Mac LTSC 上 adjustments.get(0) 是 ClientResult 代理，
-              // 不能调 .load（报 "load is not a function"），直接 .value 读
+              // 关键：task pane 上下文里，shapes.load('items/adjustments') 不会自动
+              // 填子项的 .value，必须显式 load items/value 再 sync
+              sh.adjustments.load('items/value');
+              await ctx.sync();
               const adjValue = sh.adjustments.get(0).value;
               const w = sh.width;
               const h = sh.height;
