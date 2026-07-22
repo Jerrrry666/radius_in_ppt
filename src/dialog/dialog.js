@@ -713,11 +713,9 @@
                 skippedNoAdj++;
                 continue;
               }
-              // 关键：get(0) 拿 Adjustment 代理（task pane context 里要 load 一下拿真值）
-              const adjItem = sh.adjustments.get(0);
-              adjItem.load('value');
-              await ctx.sync();
-              const adjValue = adjItem.value;
+              // 关键：Mac LTSC 上 adjustments.get(0) 是 ClientResult 代理，
+              // 不能调 .load（报 "load is not a function"），直接 .value 读
+              const adjValue = sh.adjustments.get(0).value;
               const w = sh.width;
               const h = sh.height;
               if (!Number.isFinite(adjValue) || adjValue <= 0) {
