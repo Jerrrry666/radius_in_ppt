@@ -135,28 +135,48 @@
     });
   }
 
-  // 统一接口：先试 CustomXmlPart（跟文件走），失败回退 localStorage（机机本地）
+  // 统一接口：CustomXmlPart → shapeTags → localStorage
   async function loadLocks() {
     try {
       const locks = await loadLocksCustomXml();
-      return { locks, backend: 'customXmlPart' };
+      if (locks && Object.keys(locks).length > 0) {
+        return { locks, backend: 'customXmlPart' };
+      }
     } catch (e) {
-      console.warn('CustomXmlPart 不可用，降级到 localStorage:', e);
-      return { locks: loadLocksLS(), backend: 'localStorage' };
+      dbgLine(`loadLocks: CustomXmlPart unavailable (${e.message || e})`);
     }
+    // 试 shape.tags（Mac LTSC 上的兜底，跟 .pptx 走）
+    const tagResult = await loadLocksViaTags();
+    if (tagResult.ok) {
+      return { locks: tagResult.locks, backend: 'shapeTags' };
+    }
+    // 最后降级 localStorage（关 PPT 就没）
+    return { locks: loadLocksLS(), backend: 'localStorage' };
   }
 
   async function saveLocks(locks, preferBackend) {
-    // preferBackend: 写入时优先用这个 backend（跟读保持一致，避免读写分离）
+    // preferBackend 决定优先写哪个（跟读保持一致，避免读写分离）
     if (preferBackend === 'localStorage') {
       saveLocksLS(locks);
       return 'localStorage';
     }
+    if (preferBackend === 'shapeTags') {
+      const r = await saveLocksViaTags(locks);
+      if (r.ok) return 'shapeTags';
+      // shape.tags 失败，fallback to localStorage
+      saveLocksLS(locks);
+      return 'localStorage';
+    }
+    // 默认 customXmlPart
     try {
       await saveLocksCustomXml(locks);
       return 'customXmlPart';
     } catch (e) {
-      console.warn('CustomXmlPart 写失败，降级到 localStorage:', e);
+      // 试 shape.tags
+      dbgLine(`saveLocks: CustomXmlPart failed, try shapeTags`);
+      const r = await saveLocksViaTags(locks);
+      if (r.ok) return 'shapeTags';
+      // 都失败才 localStorage
       saveLocksLS(locks);
       return 'localStorage';
     }
@@ -170,6 +190,74 @@
   }
   function saveLocksLS(locks) {
     try { localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify(locks)); } catch (_) {}
+  }
+
+  // ---------------- shape.tags 锁定（Mac LTSC 兜底，跟 shape 走） ----------------
+  // 存进 OOXML 的 <p:tagLst> 段，每个形状挂自己 lock 的 cm 值
+  // 跨设备、发文件、save .pptx 都能保留
+  const LOCK_TAG_KEY = 'radiusLock_v1';
+
+  function loadLocksViaTags() {
+    return new Promise((resolve) => {
+      PowerPoint.run(async (ctx) => {
+        try {
+          const sel = ctx.presentation.getSelectedShapes();
+          sel.load('items/id');
+          await ctx.sync();
+          const locks = {};
+          for (const sh of sel.items) {
+            try {
+              const tag = sh.tags.getItem(LOCK_TAG_KEY);
+              tag.load('value');
+              await ctx.sync();
+              const cm = parseFloat(tag.value);
+              if (Number.isFinite(cm) && cm > 0) {
+                locks[sh.id] = cm;
+                dbgLine(`tag lock: shapeId=${sh.id} cm=${cm}`);
+              }
+            } catch (e) {
+              // tag 不存在，跳过
+            }
+          }
+          dbgLine(`loadLocksViaTags: ${Object.keys(locks).length} locks`);
+          resolve({ ok: true, locks });
+        } catch (e) {
+          dbgLine(`loadLocksViaTags failed: ${e.message || e}`);
+          resolve({ ok: false, error: e });
+        }
+      });
+    });
+  }
+
+  function saveLocksViaTags(locks) {
+    return new Promise((resolve) => {
+      PowerPoint.run(async (ctx) => {
+        try {
+          const sel = ctx.presentation.getSelectedShapes();
+          sel.load('items/id');
+          await ctx.sync();
+          for (const sh of sel.items) {
+            const cm = locks[sh.id];
+            try {
+              if (cm == null) {
+                sh.tags.delete(LOCK_TAG_KEY);
+                dbgLine(`tag deleted: shapeId=${sh.id}`);
+              } else {
+                sh.tags.add(LOCK_TAG_KEY, String(cm));
+                dbgLine(`tag written: shapeId=${sh.id} cm=${cm}`);
+              }
+            } catch (e) {
+              dbgLine(`tag write failed for shapeId=${sh.id}: ${e.message || e}`);
+            }
+          }
+          await ctx.sync();
+          resolve({ ok: true });
+        } catch (e) {
+          dbgLine(`saveLocksViaTags failed: ${e.message || e}`);
+          resolve({ ok: false, error: e });
+        }
+      });
+    });
   }
   function getLockLS(shapeId) {
     return loadLocksLS()[shapeId] || null;
@@ -859,8 +947,10 @@
       // 写回（preferBackend 跟读保持一致：customXmlPart 优先）
       const backend = await saveLocks(newLocks, lockBackend);
       lockBackend = backend;
-      const where = backend === 'customXmlPart' ? '（跟随 .pptx 文件）' : '（本机 localStorage）';
-      showToast(allLocked ? `已解锁 ${touched} 个${where}` : `已锁定 ${touched} 个${where}`);
+      const whereLabel = backend === 'customXmlPart' ? '（跟随 .pptx 文件）'
+        : backend === 'shapeTags' ? '（跟随形状 tag，跨设备保留）'
+        : '（仅本机，关 PPT 失效）';
+      showToast(allLocked ? `已解锁 ${touched} 个${whereLabel}` : `已锁定 ${touched} 个${whereLabel}`);
       await refreshSelection();
     } catch (err) {
       showToast('操作失败：' + (err.message || err));
