@@ -291,6 +291,39 @@ async function handleApi(req, res) {
       return sendJSON(res, 200, result);
     }
 
+    if (url === '/api/reopen') {
+      // 用 AppleScript 关闭 + 重新打开 PowerPoint 文档，让用户立即看到改动
+      const p = resolvePptxPath();
+      if (!p) return sendJSON(res, 404, { error: 'no pptx detected' });
+      const script = `
+        tell application "PowerPoint"
+          try
+            set thePres to active presentation
+            set thePath to full name of thePres
+            close thePres saving no
+            delay 0.5
+            open POSIX file thePath
+            return thePath
+          on error errMsg
+            return "err: " & errMsg
+          end try
+        end tell
+      `;
+      const tmp = `/tmp/radius_in_ppt_reopen_${Date.now()}.applescript`;
+      fs.writeFileSync(tmp, script);
+      try {
+        const out = execSync(`/usr/bin/osascript "${tmp}"`, { encoding: 'utf8' }).trim();
+        if (out.startsWith('err:')) {
+          return sendJSON(res, 500, { error: out });
+        }
+        return sendJSON(res, 200, { ok: true, path: out });
+      } catch (err) {
+        return sendJSON(res, 500, { error: err.message });
+      } finally {
+        try { fs.unlinkSync(tmp); } catch (_) {}
+      }
+    }
+
     sendJSON(res, 404, { error: 'unknown api' });
   } catch (err) {
     console.error('[serve] API error:', err);

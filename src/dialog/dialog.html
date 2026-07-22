@@ -81,6 +81,13 @@
       <button id="reapply-btn" class="btn btn-ghost">重新应用锁定（针对当前选区）</button>
     </section>
 
+    <section class="control-group diag-section" style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px;">
+      <div class="diag-title" style="font-size:12px;color:#856404;font-weight:600;margin-bottom:6px;">🔬 诊断：测试 Office.js 能否读取/写入 PPT 当前选区</div>
+      <button id="diag-btn" class="btn btn-ghost" style="font-size:12px;">读取当前选中形状</button>
+      <button id="diag-write-btn" class="btn btn-ghost" style="font-size:12px;background:#ffe082;">✍️ 写入测试：把选中形状 R 角设为 0.5cm</button>
+      <pre id="diag-out" class="diag-out" style="font-size:11px;color:#333;background:#fff;border:1px solid #ddd;border-radius:4px;padding:6px;margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all;">（先在 PPT 里框选一个圆角矩形，再点上面的按钮）</pre>
+    </section>
+
     <footer class="footer">
       <span>v1.0 · 支持多选 · 仅作用于圆角矩形</span>
     </footer>

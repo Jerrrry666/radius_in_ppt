@@ -30,6 +30,8 @@
     $('select-all-btn').addEventListener('click', () => toggleAll(true));
     $('deselect-all-btn').addEventListener('click', () => toggleAll(false));
     $('rescan-btn').addEventListener('click', scan);
+    $('diag-btn').addEventListener('click', runDiag);
+    $('diag-write-btn').addEventListener('click', runDiagWrite);
     $('radius-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') onApply();
     });
@@ -317,7 +319,7 @@
 
   /**
    * 显示一个操作面板（替代 toast，用于需要用户后续操作的情况）
-   * 包含一个"知道了"按钮关闭
+   * 包含"自动重开 PowerPoint"按钮（如果支持）+ "知道了"按钮
    */
   function showActionPanel(title, message) {
     // 移除旧面板
@@ -330,11 +332,31 @@
       <div class="action-panel-title">${escapeHtml(title)}</div>
       <div class="action-panel-msg">${escapeHtml(message).replace(/\n/g, '<br/>')}</div>
       <div class="action-panel-buttons">
-        <button class="btn btn-secondary" id="action-ok">知道了</button>
+        <button class="btn btn-primary" id="action-reopen" style="background:#0078d4;color:white;">⚡ 自动重开 PowerPoint 看到改动</button>
+        <button class="btn btn-secondary" id="action-ok">我手动重开</button>
       </div>
     `;
     document.body.appendChild(panel);
+
     $('action-ok').addEventListener('click', () => panel.remove());
+    $('action-reopen').addEventListener('click', async () => {
+      const btn = $('action-reopen');
+      btn.disabled = true;
+      btn.textContent = '重开中…';
+      try {
+        const res = await fetch(`${SERVER}/api/reopen`);
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        panel.remove();
+        showToast('已重开 PowerPoint 文档');
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '⚡ 自动重开 PowerPoint 看到改动';
+        showToast('重开失败：' + err.message + '（请手动重开）');
+      }
+    });
   }
 
   function escapeHtml(s) {
@@ -343,5 +365,94 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  // ---------------- 诊断：测试 Office.js 能不能读当前选区 ----------------
+
+  async function runDiag() {
+    const out = $('diag-out');
+    const lines = [];
+    lines.push('【环境】');
+    lines.push('Office 版本：' + (Office.context.diagnostics && Office.context.diagnostics.version
+      ? Office.context.diagnostics.version : '(n/a)'));
+    if (Office.context.requirements) {
+      const sets = ['1.1','1.2','1.3','1.4','1.5','1.6','1.7','1.8','1.9','1.10'];
+      const supported = sets.filter((v) => Office.context.requirements.isSetSupported('PowerPointApi', v));
+      lines.push('PowerPointApi 支持的版本：' + (supported.length ? supported.join(', ') : '(none)'));
+    }
+    lines.push('');
+    lines.push('【读 selection】');
+
+    try {
+      await PowerPoint.run(async (context) => {
+        const sel = context.presentation.getSelectedShapes();
+        sel.load('items/id,items/name,items/type');
+        await context.sync();
+        lines.push('选中形状数：' + sel.items.length);
+        sel.items.forEach((sh, i) => {
+          lines.push(`  [${i}] id=${sh.id}  name=${JSON.stringify(sh.name)}  type=${sh.type}`);
+        });
+      });
+    } catch (err) {
+      lines.push('❌ getSelectedShapes 失败：');
+      lines.push('  ' + (err.message || err.toString()));
+      if (err.code) lines.push('  code: ' + err.code);
+      if (err.debugInfo) lines.push('  debugInfo: ' + (err.debugInfo.message || err.debugInfo.code || JSON.stringify(err.debugInfo)));
+    }
+    out.textContent = lines.join('\n');
+  }
+
+  // 写入测试：把当前选中的所有圆角矩形的 R 角强制设为 0.5cm
+  // 如果成功，PPT 画布上会立刻看到圆角变化（不需要保存/重开）
+  async function runDiagWrite() {
+    const out = $('diag-out');
+    const lines = [];
+    const TARGET_CM = 0.5;
+
+    try {
+      await PowerPoint.run(async (context) => {
+        const sel = context.presentation.getSelectedShapes();
+        sel.load('items/id,items/name,items/width,items/height');
+        await context.sync();
+
+        lines.push('【写入测试】目标 R 角 = ' + TARGET_CM + ' cm');
+        lines.push('选中形状数：' + sel.items.length);
+        lines.push('');
+
+        if (sel.items.length === 0) {
+          lines.push('❌ 没选中任何东西，请先在 PPT 里点一个圆角矩形');
+          return;
+        }
+
+        for (let i = 0; i < sel.items.length; i++) {
+          const sh = sel.items[i];
+          const minSidePt = Math.min(sh.width, sh.height);
+          if (minSidePt <= 0) {
+            lines.push(`  [${i}] id=${sh.id} name=${JSON.stringify(sh.name)} ❌ 宽高异常`);
+            continue;
+          }
+          // adj value 0~50000, 公式: adj = (cm / (minSidePt / 28.3464567)) * 100000
+          const newAdj = Math.round(TARGET_CM * 100000 / (minSidePt / 28.3464567));
+          lines.push(`  [${i}] id=${sh.id} name=${JSON.stringify(sh.name)}`);
+          lines.push(`       minSide=${minSidePt.toFixed(1)}pt = ${(minSidePt/28.3464567).toFixed(2)}cm`);
+          lines.push(`       写 shape.adjustments.set(0, ${newAdj})...`);
+          try {
+            sh.adjustments.set(0, newAdj);
+          } catch (e) {
+            lines.push('       ❌ set 失败：' + (e.message || e));
+            continue;
+          }
+        }
+        await context.sync();
+        lines.push('');
+        lines.push('✅ context.sync() 完成。看看 PPT 画布上选中的形状有没有变圆角。');
+        lines.push('   (不要保存，关掉这个 dialog 也不影响)');
+      });
+    } catch (err) {
+      lines.push('❌ PowerPoint.run 失败：');
+      lines.push('  ' + (err.message || err.toString()));
+      if (err.code) lines.push('  code: ' + err.code);
+    }
+    out.textContent = lines.join('\n');
   }
 })();
