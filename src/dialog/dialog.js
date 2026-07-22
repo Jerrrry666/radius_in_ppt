@@ -17,7 +17,9 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const PT_PER_CM = 28.3464567;       // 1 cm = 28.3464567 pt
-  const ADJ_SCALE = 100000;            // adj value 0~50000 对应 0%~50%
+  // Mac LTSC Office.js: adjustments.get(0).value 返回 0~1 的小数（占短边比例）
+  // OOXML 原始是 0~50000（0~50%），但 Office.js 在 Mac dialog 上下文里 normalize 成 0~1 了
+  const ADJ_SCALE = 1;
   const LOCK_STORAGE_KEY = 'radius_in_ppt_locks_v2';
   let lockBackend = 'unknown';         // 'customProperty' | 'localStorage' | 'none'
 
@@ -304,7 +306,8 @@
             continue;
           }
           const targetCm = Math.min(cm, minSideCm / 2);
-          const newAdj = Math.round((targetCm / minSideCm) * ADJ_SCALE);
+          // ADJ_SCALE=1 → newAdj 是 0~0.5 的小数比例，不能 round 到整数
+          const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
           if (!Number.isFinite(newAdj)) {
             failed++;
             continue;
@@ -405,7 +408,7 @@
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
           if (minSideCm <= 0) continue;
           const lockCm = Math.min(target.lockedCm, minSideCm / 2);
-          const newAdj = Math.round((lockCm / minSideCm) * ADJ_SCALE);
+          const newAdj = (lockCm / minSideCm) * ADJ_SCALE;
           if (!Number.isFinite(newAdj)) continue;
           try {
             sh.adjustments.set(0, newAdj);
