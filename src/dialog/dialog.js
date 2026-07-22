@@ -69,6 +69,7 @@
 
   async function refreshSelection() {
     setStatus('选区', '读选中…', 'status-empty');
+    const debugLines = [];
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
@@ -107,13 +108,21 @@
 
         selectedShapes = [];
         for (const sh of sel.items) {
-          // sh.width / sh.height 在 load 后是真数字；sh.adjustments.get(0) 是 ClientResult，需要 .value
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          // adjustments.count 告诉你这个形状有几个调整点（圆角矩形 = 1，椭圆 = 0，正方形 = 0）
           const adjCount = sh.adjustments.count;
           const adjResult = sh.adjustments.get(0);
           await ctx.sync();
           const adj = adjResult.value;
+
+          // 调试：把所有 raw 值都打出来
+          debugLines.push(`Shape id=${sh.id} name="${sh.name}"`);
+          debugLines.push(`  width=${sh.width}pt  height=${sh.height}pt  minSide=${minSideCm.toFixed(2)}cm`);
+          debugLines.push(`  adjustments.count = ${adjCount} (type=${typeof adjCount})`);
+          debugLines.push(`  adjustments.get(0) = ${adjResult} (type=${typeof adjResult})`);
+          debugLines.push(`  adjustments.get(0).value = ${adj} (type=${typeof adj})`);
+          debugLines.push(`  isRoundRect 判定: ${(typeof adjCount === 'number' && adjCount > 0) ? 'true' : 'false'}`);
+          debugLines.push('');
+
           const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
           const currentCm = (isRoundRect && Number.isFinite(adj))
             ? (adj / ADJ_SCALE) * minSideCm
@@ -134,9 +143,13 @@
         }
       });
       renderUI();
+      const dbg = $('debug-out');
+      if (dbg) dbg.textContent = debugLines.join('\n') || '（无选中）';
     } catch (err) {
       setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
       showToast('读选区失败: ' + (err.message || err));
+      const dbg = $('debug-out');
+      if (dbg) dbg.textContent = '读失败：' + (err.message || err);
     }
   }
 
