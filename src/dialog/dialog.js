@@ -275,7 +275,7 @@
 
   // 加一条历史：同 value+unit 的会移到最前，不重复；只保留 MAX_HISTORY 条
   function dbgLine(msg) {
-    const dbg = $('debug-out');
+    const dbg = $('history-log');
     if (!dbg) return;
     const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     dbg.textContent = `[${ts}] ${msg}\n` + dbg.textContent;
