@@ -607,12 +607,31 @@
   }
 
   async function loadAndRenderHistory() {
+    // 跟 pushHistory 对称：CustomXmlPart 失败时降级到 localStorage
     try {
       const history = await loadHistoryCustomXml();
-      renderHistory(history);
+      if (history && history.length > 0) {
+        renderHistory(history);
+        return;
+      }
+      // CustomXmlPart 成功但空：再看 localStorage 有没有
     } catch (e) {
-      renderHistory([]);
+      dbgLine(`loadAndRenderHistory: CustomXmlPart failed → try localStorage`);
     }
+    try {
+      const raw = localStorage.getItem('radius_in_ppt_history_v1');
+      if (raw) {
+        const history = JSON.parse(raw);
+        if (Array.isArray(history) && history.length > 0) {
+          dbgLine(`loadAndRenderHistory: loaded ${history.length} from localStorage`);
+          renderHistory(history);
+          return;
+        }
+      }
+    } catch (e2) {
+      dbgLine(`loadAndRenderHistory: localStorage read failed: ${e2.message || e2}`);
+    }
+    renderHistory([]);
   }
 
   function onHistoryChipClick(value, unit) {
