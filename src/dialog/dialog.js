@@ -117,20 +117,37 @@
           await ctx.sync();
           const adj = adjResult.value;
 
+          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
+          let currentCm = (isRoundRect && Number.isFinite(adj))
+            ? (adj / ADJ_SCALE) * minSideCm
+            : 0;
+          const lockedCm = locks[sh.id];
+
+          // 自动重应用锁：如果 locked 且当前 cm 跟锁定值漂移了 > 0.005cm，按当前尺寸反算比例写回
+          let reApplied = false;
+          if (lockedCm != null && isRoundRect && minSideCm > 0
+              && Math.abs(currentCm - lockedCm) > 0.005) {
+            const targetCm = Math.min(lockedCm, minSideCm / 2);
+            const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
+            if (Number.isFinite(newAdj)) {
+              sh.adjustments.set(0, newAdj);
+              currentCm = targetCm;   // 写回去之后新的 cm 就是 targetCm
+              reApplied = true;
+            }
+          }
+
           // 调试：把所有 raw 值都打出来
           debugLines.push(`Shape id=${sh.id} name="${sh.name}"`);
           debugLines.push(`  width=${sh.width}pt  height=${sh.height}pt  minSide=${minSideCm.toFixed(2)}cm`);
           debugLines.push(`  adjustments.count = ${adjCount} (type=${typeof adjCount})`);
           debugLines.push(`  adjustments.get(0) = ${adjResult} (type=${typeof adjResult})`);
           debugLines.push(`  adjustments.get(0).value = ${adj} (type=${typeof adj})`);
-          debugLines.push(`  isRoundRect 判定: ${(typeof adjCount === 'number' && adjCount > 0) ? 'true' : 'false'}`);
+          debugLines.push(`  isRoundRect 判定: ${isRoundRect ? 'true' : 'false'}`);
+          if (lockedCm != null) {
+            debugLines.push(`  锁定: ${lockedCm.toFixed(2)}cm${reApplied ? ' (本轮已重应用)' : ''}`);
+          }
           debugLines.push('');
 
-          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
-          const currentCm = (isRoundRect && Number.isFinite(adj))
-            ? (adj / ADJ_SCALE) * minSideCm
-            : 0;
-          const lockedCm = locks[sh.id];
           selectedShapes.push({
             id: sh.id,
             name: sh.name,
@@ -142,12 +159,18 @@
             adjCount: adjCount || 0,
             locked: lockedCm != null,
             lockedCm: lockedCm == null ? null : lockedCm,
+            reApplied,
           });
         }
       });
       renderUI();
       const dbg = $('debug-out');
       if (dbg) dbg.textContent = debugLines.join('\n') || '（无选中）';
+      // 自动重应用锁的提示
+      const reappliedCount = selectedShapes.filter((s) => s.reApplied).length;
+      if (reappliedCount > 0) {
+        showToast(`🔒 自动重应用了 ${reappliedCount} 个锁定的 R 角`);
+      }
     } catch (err) {
       setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
       showToast('读选区失败: ' + (err.message || err));
