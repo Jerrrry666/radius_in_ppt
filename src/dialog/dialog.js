@@ -314,6 +314,10 @@
   // ---------------- 初始化 ----------------
 
   Office.onReady(() => {
+    dbgLine(`Office.onReady fired. host=${Office.context.host} docMode=${Office.context.document?.mode}`);
+    // 检测 customXmlParts 是否可用（task pane 跟 dialog 的关键区别）
+    const hasCustomXml = !!(Office.context.document && Office.context.document.customXmlParts);
+    dbgLine(`customXmlParts available: ${hasCustomXml}`);
     bindEvents();
     refreshSelection();
     // 监听选区变化：用户在 PPT 里点别的形状、框选、切页 都会触发

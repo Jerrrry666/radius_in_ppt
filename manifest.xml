@@ -6,7 +6,7 @@
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
   xsi:type="TaskPaneApp">
   <Id>8c2d8a9c-aaaa-4def-9abc-111111111111</Id>
-  <Version>1.0.0</Version>
+  <Version>2.0.0</Version>
   <ProviderName>R PowerPoint Tools</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="R 角调整" />
@@ -23,7 +23,7 @@
   </Hosts>
   <DefaultSettings>
     <SourceLocation DefaultValue="http://localhost:3000/src/dialog/dialog.html" />
-    <RequestedHeight>400</RequestedHeight>
+    <RequestedHeight>560</RequestedHeight>
     <RequestedWidth>360</RequestedWidth>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
@@ -31,12 +31,6 @@
     <Hosts>
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
-          <GetStarted>
-            <Title resid="GetStarted.Title" />
-            <Description resid="GetStarted.Description" />
-            <LearnMoreUrl resid="GetStarted.LearnMoreUrl" />
-          </GetStarted>
-          <FunctionFile resid="Commands.Url" />
           <ExtensionPoint xsi:type="CustomTab">
             <CustomTab id="RadiusTab">
               <Group id="RadiusGroup">
@@ -46,19 +40,20 @@
                   <bt:Image size="32" resid="Icon.32x32" />
                   <bt:Image size="80" resid="Icon.80x80" />
                 </Icon>
-                <Control xsi:type="Button" id="OpenRadiusDialog">
-                  <Label resid="OpenRadiusDialog.Label" />
+                <Control xsi:type="Button" id="OpenRadiusPane">
+                  <Label resid="OpenRadiusPane.Label" />
                   <Supertip>
-                    <Title resid="OpenRadiusDialog.Label" />
-                    <Description resid="OpenRadiusDialog.Tooltip" />
+                    <Title resid="OpenRadiusPane.Label" />
+                    <Description resid="OpenRadiusPane.Tooltip" />
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16x16" />
                     <bt:Image size="32" resid="Icon.32x32" />
                     <bt:Image size="80" resid="Icon.80x80" />
                   </Icon>
-                  <Action xsi:type="ExecuteFunction">
-                    <FunctionName>openRadiusDialog</FunctionName>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                    <TaskpaneId>RadiusTaskpaneId</TaskpaneId>
                   </Action>
                 </Control>
               </Group>
@@ -75,18 +70,15 @@
         <bt:Image id="Icon.80x80" DefaultValue="http://localhost:3000/assets/icon-80.png" />
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://github.com/Jerrrry666/radius_in_ppt" />
-        <bt:Url id="Commands.Url" DefaultValue="http://localhost:3000/src/commands/commands.html" />
+        <bt:Url id="Taskpane.Url" DefaultValue="http://localhost:3000/src/dialog/dialog.html" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="CustomTabLabel" DefaultValue="R 角调整" />
         <bt:String id="RadiusGroup.Label" DefaultValue="圆角矩形" />
-        <bt:String id="OpenRadiusDialog.Label" DefaultValue="调整 R 角" />
-        <bt:String id="GetStarted.Title" DefaultValue="R 角调整插件已加载" />
+        <bt:String id="OpenRadiusPane.Label" DefaultValue="调整 R 角" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="OpenRadiusDialog.Tooltip" DefaultValue="打开 R 角数值设置面板，精确调整圆角矩形的圆角半径（厘米），并支持锁定" />
-        <bt:String id="GetStarted.Description" DefaultValue="选中一个或多个圆角矩形后，点击顶部「R 角调整」tab 中的「调整 R 角」按钮，即可输入精确的圆角半径数值，并可锁定 R 角绝对值。" />
+        <bt:String id="OpenRadiusPane.Tooltip" DefaultValue="打开 R 角调整侧边栏：精确设置圆角矩形的 R 角（cm/%）、锁定 R 角绝对值、最近 5 次历史" />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
