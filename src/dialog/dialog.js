@@ -9,9 +9,14 @@
  *   4. toast: "已更新 N 个圆角矩形为 X 厘米"
  *
  * 监听 PPT 选区变化：DocumentSelectionChanged 事件 → 自动 refresh
+ * 多页 PPT：getSelectedShapes() 只返回当前页选中的形状，切页后选区变化 → 自动 refresh
  *
- * 多页 PPT：getSelectedShapes() 只返回当前页选中的形状。
- *          切页后选区变化 → 自动 refresh。
+ * 锁定 R 角 + 自动重应用：
+ *   - 选区里有 locked 形状时，启动 setInterval 轮询（500ms）
+ *   - 若连续 3 次尺寸无变化（≈1.5s 稳定）→ 视为用户松手 → 反算 adj 写回
+ *   - 拖拽中尺寸在变 → 跳过 apply，避免和拖拽手感冲突
+ *   - 注：Office.js PowerPoint 没有 shape change 事件（详见 AGENTS.md 4 节），
+ *         这是当前的 API 限制下的最优解
  */
 
 (function () {
@@ -171,11 +176,87 @@
       if (reappliedCount > 0) {
         showToast(`🔒 自动重应用了 ${reappliedCount} 个锁定的 R 角`);
       }
+      // 根据当前选区是否有 locked 形状，启动/停止轮询监控
+      const hasLocked = selectedShapes.some((s) => s.locked);
+      if (hasLocked) startLockMonitor();
+      else stopLockMonitor();
     } catch (err) {
       setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
       showToast('读选区失败: ' + (err.message || err));
       const dbg = $('debug-out');
       if (dbg) dbg.textContent = '读失败：' + (err.message || err);
+    }
+  }
+
+  // ---------------- 锁定监控（轮询稳定检测） ----------------
+  // 目的：用户拖完形状松手后，自动把 R 角反算回锁定值
+  // 策略：每 500ms poll 一次，若连续 3 次尺寸无变化（≈ 1.5s）则视为松手
+  // 期间尺寸在变（拖拽中）→ 跳过 apply，避免和用户的拖动手感冲突
+
+  const LOCK_POLL_MS = 500;
+  const LOCK_STABLE_THRESHOLD = 3;  // 连续 N 次无变化
+  let lockMonitor = null;            // { timer, lastDims, stableCount, lastApplied }
+
+  function startLockMonitor() {
+    if (lockMonitor) return;
+    lockMonitor = { timer: null, lastDims: {}, stableCount: {}, lastApplied: {} };
+    lockMonitor.timer = setInterval(monitorTick, LOCK_POLL_MS);
+  }
+
+  function stopLockMonitor() {
+    if (!lockMonitor) return;
+    clearInterval(lockMonitor.timer);
+    lockMonitor = null;
+  }
+
+  async function monitorTick() {
+    // 兜底：如果选区里没有 locked，关闭 monitor
+    const locked = selectedShapes.filter((s) => s.locked);
+    if (locked.length === 0) {
+      stopLockMonitor();
+      return;
+    }
+    try {
+      let needRender = false;
+      await PowerPoint.run(async (ctx) => {
+        const sel = ctx.presentation.getSelectedShapes();
+        sel.load('items/id,items/width,items/height');
+        await ctx.sync();
+        for (const sh of sel.items) {
+          const id = sh.id;
+          const target = locked.find((x) => x.id === id);
+          if (!target) continue;
+          const currentKey = `${sh.width.toFixed(4)}|${sh.height.toFixed(4)}`;
+          const lastKey = lockMonitor.lastDims[id];
+          if (lastKey === currentKey) {
+            // 没变 → 稳定计数 +1
+            lockMonitor.stableCount[id] = (lockMonitor.stableCount[id] || 0) + 1;
+          } else {
+            // 变了 → 还在拖，重置
+            lockMonitor.stableCount[id] = 0;
+            lockMonitor.lastDims[id] = currentKey;
+          }
+          // 稳定达到阈值才 apply（避免拖拽中抽搐）
+          if (lockMonitor.stableCount[id] >= LOCK_STABLE_THRESHOLD) {
+            const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+            if (minSideCm > 0) {
+              const targetCm = Math.min(target.lockedCm, minSideCm / 2);
+              const newAdj = (targetCm / minSideCm) * ADJ_SCALE;
+              if (Number.isFinite(newAdj)) {
+                sh.adjustments.set(0, newAdj);
+                lockMonitor.lastApplied[id] = Date.now();
+                needRender = true;
+              }
+            }
+          }
+        }
+      });
+      if (needRender) {
+        // 重新拉一次读，把 currentCm 同步到 dialog
+        await refreshSelection();
+      }
+    } catch (_) {
+      // 静默吞错：拖拽中可能 selection 临时为空 / shape 被删
     }
   }
 

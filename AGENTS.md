@@ -156,6 +156,23 @@ const isRoundRect = adjCount > 0;
 | `sh.id` / `sh.name` | ✅ 工作 | id 是 Office.js 内部 id |
 | `Office.context.document.addHandlerAsync(DocumentSelectionChanged, ...)` | ✅ 工作 | Common API，切页也会触发 |
 
+### 4.6 **没有 shape-level change 事件**
+
+Office.js PowerPoint **不提供** `ShapeResized` / `ShapeMoved` / `ShapePropertyChanged`
+这类细粒度事件。`Office.EventType` 枚举里能用的只有：
+
+- `DocumentSelectionChanged`（选区变）
+- `ActiveViewChanged`（视图变）
+- `BindingDataChanged`（Excel/Word 才有）
+- `NodeInserted/Deleted/Replaced`（Word CustomXmlPart 才有）
+
+**后果**：检测"形状尺寸变化"只能靠 **setInterval 轮询**。
+
+**当前实现**：500ms 一次轮询，3 次连续无变化（≈1.5s 稳定）= 视为用户松手 → 反算 adj
+写回。拖拽中尺寸在变会跳过 apply，避免和拖动手感冲突。
+
+**性能考量**：500ms 间隔 + 只在有 locked 形状时启动，功耗可忽略。
+
 ## 5. 部署 / 路径问题
 
 ### 5.1 manifest 路径会被 PowerPoint 重启清空
@@ -242,8 +259,8 @@ git -c credential.helper="!f() { echo username=x-access-token; echo password=$GH
 - [ ] **锁定 R 角 cross-machine**：现在 localStorage，换机器就丢
   - 选项 A：把 dialog 迁到 task pane（customProperty 在 task pane 也许能用）
   - 选项 B：lock 存到一个隐藏的 .pptx slide 里（用户看不到但跟着文件走）
+- [x] **lock 之后改变形状大小**：✅ 用 setInterval 500ms 轮询 + 3 次稳定检测实现"拖完松手自动重应用"
 - [ ] **多选混合**（圆角矩形 + 普通矩形）：现在 UI 标记非圆角 + disable apply，已经可用
-- [ ] **lock 之后改变形状大小**：「重新应用锁定」按钮已经实现，但还没测用户实际工作流
 - [ ] **打包 .dmg**：`tools/build-dmg.sh` 还没实装
 - [ ] **代码签名**：.app 没签名，Gatekeeper 每次拦（右键打开只拦一次）
 
