@@ -221,9 +221,8 @@
         throw new Error(err.error || `HTTP ${res.status}`);
       }
       const result = await res.json();
-      showToast(`已更新 ${result.modified} 个圆角矩形为 ${cm.toFixed(2)} 厘米。Mac PowerPoint 会弹"是否重新载入"，点「是」即可。`);
 
-      // 更新 localStorage 锁定表（如果选中的有锁定）
+      // 更新 localStorage 锁定表
       const locks = RadiusCore.loadLocks();
       for (const it of items) {
         const k = `${it.slideNum}|${it.id}`;
@@ -232,6 +231,12 @@
         }
       }
       RadiusCore.saveLocks(locks);
+
+      // 显示操作面板（因为 Mac PowerPoint 不会自动弹"文件已修改"）
+      showActionPanel(
+        `✅ 已更新 ${result.modified} 个圆角矩形为 ${cm.toFixed(2)} 厘米`,
+        `Mac PowerPoint 不会自动检测文件被外部修改。\n请在 PowerPoint 里：\n1. 点顶部菜单「文件」\n2. 选「关闭」\n3. 再点「文件 → 打开」找到 ${result.path} 重开\n\n或者直接 Cmd+W 关闭再点文件名重开。`
+      );
 
       // 重新扫描
       await scan();
@@ -294,7 +299,7 @@
     }
   }
 
-  // ---------------- Toast ----------------
+  // ---------------- Toast / 操作面板 ----------------
 
   let toastTimer = null;
   function showToast(msg) {
@@ -308,6 +313,28 @@
     el.classList.add('show');
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  /**
+   * 显示一个操作面板（替代 toast，用于需要用户后续操作的情况）
+   * 包含一个"知道了"按钮关闭
+   */
+  function showActionPanel(title, message) {
+    // 移除旧面板
+    const old = document.querySelector('.action-panel');
+    if (old) old.remove();
+
+    const panel = document.createElement('div');
+    panel.className = 'action-panel';
+    panel.innerHTML = `
+      <div class="action-panel-title">${escapeHtml(title)}</div>
+      <div class="action-panel-msg">${escapeHtml(message).replace(/\n/g, '<br/>')}</div>
+      <div class="action-panel-buttons">
+        <button class="btn btn-secondary" id="action-ok">知道了</button>
+      </div>
+    `;
+    document.body.appendChild(panel);
+    $('action-ok').addEventListener('click', () => panel.remove());
   }
 
   function escapeHtml(s) {
