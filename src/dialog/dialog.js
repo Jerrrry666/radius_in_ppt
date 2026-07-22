@@ -107,9 +107,15 @@
 
         selectedShapes = [];
         for (const sh of sel.items) {
-          const adj = sh.adjustments.get(0);   // 0~50000
+          // sh.width / sh.height 在 load 后是真数字；sh.adjustments.get(0) 是 ClientResult，需要 .value
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          const currentCm = (adj / ADJ_SCALE) * minSideCm;
+          const adjResult = sh.adjustments.get(0);
+          await ctx.sync();
+          const adj = adjResult.value;
+          // 如果这个形状没有 adjustment points（count=0），get(0) 可能返 undefined
+          const currentCm = Number.isFinite(adj)
+            ? (adj / ADJ_SCALE) * minSideCm
+            : 0;
           const lockedCm = locks[sh.id];
           selectedShapes.push({
             id: sh.id,
@@ -251,21 +257,41 @@
       return;
     }
     let updated = 0;
+    let failed = 0;
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id,items/width,items/height');
+        sel.load('items/id,items/width,items/height,items/adjustments');
         await ctx.sync();
         for (const sh of sel.items) {
+          // sh.width / sh.height 是已 load 的真数字
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+          if (minSideCm <= 0) {
+            failed++;
+            continue;
+          }
           const targetCm = Math.min(cm, minSideCm / 2);
           const newAdj = Math.round((targetCm / minSideCm) * ADJ_SCALE);
-          sh.adjustments.set(0, newAdj);
-          updated++;
+          if (!Number.isFinite(newAdj)) {
+            failed++;
+            continue;
+          }
+          try {
+            sh.adjustments.set(0, newAdj);
+            updated++;
+          } catch (e) {
+            // 这个形状可能不是 roundRect，set 失败
+            console.warn('set 失败:', sh.id, e);
+            failed++;
+          }
         }
         await ctx.sync();
       });
-      showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${cm.toFixed(2)} 厘米`);
+      if (failed === 0) {
+        showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${cm.toFixed(2)} 厘米`);
+      } else {
+        showToast(`⚠️ ${updated} 个成功，${failed} 个失败（可能不是圆角矩形）`);
+      }
       await refreshSelection();
     } catch (err) {
       showToast('应用失败：' + (err.message || err));
@@ -338,16 +364,22 @@
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id,items/width,items/height');
+        sel.load('items/id,items/width,items/height,items/adjustments');
         await ctx.sync();
         for (const sh of sel.items) {
           const target = locked.find((x) => x.id === sh.id);
           if (!target) continue;
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+          if (minSideCm <= 0) continue;
           const lockCm = Math.min(target.lockedCm, minSideCm / 2);
           const newAdj = Math.round((lockCm / minSideCm) * ADJ_SCALE);
-          sh.adjustments.set(0, newAdj);
-          updated++;
+          if (!Number.isFinite(newAdj)) continue;
+          try {
+            sh.adjustments.set(0, newAdj);
+            updated++;
+          } catch (e) {
+            console.warn('reapply set 失败:', sh.id, e);
+          }
         }
         await ctx.sync();
       });
