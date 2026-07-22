@@ -110,20 +110,47 @@ EOF
   fi
 fi
 
+# ---------- 4.5. 自动注册 manifest 到 PowerPoint 加载项目录 ----------
+# Mac Office 加载 Office Add-in 的官方持久化方式：把 manifest 复制到
+# ~/Library/Containers/com.microsoft.Powerpoint/Data/Library/Application Support/Microsoft/AddIns/
+# 重启 PowerPoint 后会自动加载。无需走 UI 菜单。
+ADDIN_DIR="$HOME/Library/Containers/com.microsoft.Powerpoint/Data/Library/Application Support/Microsoft/AddIns"
+ADDIN_INSTALLED=0
+if [ -d "$HOME/Library/Containers/com.microsoft.Powerpoint" ]; then
+  mkdir -p "$ADDIN_DIR"
+  # 始终覆盖，保证版本一致
+  cp -f "$MANIFEST" "$ADDIN_DIR/manifest.xml"
+  if [ $? -eq 0 ]; then
+    ADDIN_INSTALLED=1
+  fi
+fi
+
 # ---------- 5. 弹引导对话框 ----------
 # 这里用 osascript 阻塞，等用户操作
 DIALOG_RESULT=$(osascript <<EOF
 set theResult to ""
 try
-  set theChoice to button returned of (display dialog "✅ R 角调整 server 已启动
+  if $ADDIN_INSTALLED = 1 then
+    set theChoice to button returned of (display dialog "✅ R 角调整 已就位
 
-接下来在 PowerPoint 中:
-1. 顶部菜单「插入」 → 「我的加载项」
-2. 选「开发人员加载项」 标签
-3. 点「从文件添加」 → 选 manifest.xml
-4. PowerPoint 顶部会出现「R 角调整」tab
+已自动把 manifest 注册到 PowerPoint 加载项目录。
 
-之后每次使用直接双击本 App。" buttons {"打开 PowerPoint", "在 Finder 中显示 manifest.xml", "完成"} default button "打开 PowerPoint" with title "R 角调整")
+下一步：
+1. 完全退出 PowerPoint（Cmd + Q，不要只关窗口）
+2. 重新打开 PowerPoint
+3. 顶部 ribbon 会出现「R 角调整」tab
+
+之后每次使用只需双击本 App 即可。" buttons {"退出并重新打开 PowerPoint", "完成"} default button "退出并重新打开 PowerPoint" with title "R 角调整")
+  else
+    set theChoice to button returned of (display dialog "✅ R 角调整 server 已启动
+
+但未检测到 PowerPoint 安装。
+
+如果已安装 PowerPoint：
+1. 完全退出 PowerPoint（Cmd + Q）
+2. 重新打开 PowerPoint
+3. 顶部 ribbon 会出现「R 角调整」tab" buttons {"完成"} default button "完成" with title "R 角调整")
+  end if
   set theResult to theChoice
 on error
   set theResult to "完成"
@@ -134,6 +161,17 @@ EOF
 
 # ---------- 6. 处理用户选择 ----------
 case "$DIALOG_RESULT" in
+  "退出并重新打开 PowerPoint")
+    # 关闭 PowerPoint（如果是运行的）
+    pkill -x "Microsoft PowerPoint" 2>/dev/null || true
+    sleep 1
+    # 重新打开
+    if [ -d "/Applications/Microsoft PowerPoint.app" ]; then
+      open -a "Microsoft PowerPoint"
+    else
+      open -a "PowerPoint" 2>/dev/null || true
+    fi
+    ;;
   "打开 PowerPoint")
     if [ -d "/Applications/Microsoft PowerPoint.app" ]; then
       open -a "Microsoft PowerPoint"
