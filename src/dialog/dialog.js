@@ -29,6 +29,9 @@
   const LOCK_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/locks/v1';
   let lockBackend = 'unknown';         // 'customXmlPart' | 'localStorage' | 'none'
 
+  // 单位：'cm' | '%'  （输入/应用用，存储和锁都用 cm 统一）
+  let currentUnit = 'cm';
+
   /** 当前选中的形状（refreshSelection 填充） */
   let selectedShapes = [];  // [{id, name, width, height, currentCm, locked, lockedCm, isRoundRect, adjCount}]
 
@@ -196,6 +199,68 @@
     $('radius-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') onApply();
     });
+    // 单位切换
+    document.querySelectorAll('.unit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => onUnitChange(btn.dataset.unit));
+    });
+  }
+
+  // ---------------- 单位换算 ----------------
+  // 存储和形状属性都用 cm 统一，只有 input 和 apply 时按 currentUnit 转换
+  // % 模式：以选区里第一个圆角矩形的 minSideCm 为基准
+
+  function getRefShapeMinSideCm() {
+    // 多选时用第一个 roundRect 的 minSide；
+    // 如果没选或都不是 roundRect，返回 null
+    for (const s of selectedShapes) {
+      if (s.isRoundRect && s.width && s.height) {
+        return Math.min(s.width, s.height) / PT_PER_CM;
+      }
+    }
+    return null;
+  }
+
+  function valueToCm(val, unit) {
+    if (unit === '%') {
+      const minSideCm = getRefShapeMinSideCm();
+      if (minSideCm == null || minSideCm <= 0) return 0;
+      return (val / 100) * minSideCm;
+    }
+    return val;
+  }
+
+  function cmToValue(cm, unit) {
+    if (unit === '%') {
+      const minSideCm = getRefShapeMinSideCm();
+      if (minSideCm == null || minSideCm <= 0) return 0;
+      return (cm / minSideCm) * 100;
+    }
+    return cm;
+  }
+
+  function onUnitChange(newUnit) {
+    if (newUnit === currentUnit) return;
+    const raw = parseFloat($('radius-input').value);
+    if (Number.isFinite(raw) && raw > 0) {
+      // 把当前输入值先转成 cm，再转成新单位的值写回
+      const cm = valueToCm(raw, currentUnit);
+      const newVal = cmToValue(cm, newUnit);
+      $('radius-input').value = newUnit === '%'
+        ? newVal.toFixed(2)
+        : newVal.toFixed(3);
+    }
+    currentUnit = newUnit;
+    document.querySelectorAll('.unit-btn').forEach((b) => {
+      const active = b.dataset.unit === newUnit;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', String(active));
+    });
+    $('unit-label').textContent = newUnit === '%' ? '%' : '厘米';
+    $('radius-input').step = newUnit === '%' ? '0.1' : '0.01';
+    $('radius-input').placeholder = newUnit === '%' ? '10' : '0.30';
+    $('radius-hint').textContent = newUnit === '%'
+      ? '范围 0 ~ 50（占短边 %）。超过 50% 显示为最大圆角。'
+      : '范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。';
   }
 
   // ---------------- 读选区 ----------------
@@ -497,11 +562,13 @@
       showToast('请先在 PPT 里框选圆角矩形');
       return;
     }
-    const cm = parseFloat($('radius-input').value);
-    if (!Number.isFinite(cm) || cm < 0) {
+    const raw = parseFloat($('radius-input').value);
+    if (!Number.isFinite(raw) || raw < 0) {
       showToast('请输入有效的 R 角值');
       return;
     }
+    // 输入值按当前单位换算成 cm
+    const cm = valueToCm(raw, currentUnit);
     let updated = 0;
     let failed = 0;
     try {
@@ -535,7 +602,10 @@
         await ctx.sync();
       });
       if (failed === 0) {
-        showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${cm.toFixed(2)} 厘米`);
+        const displayVal = currentUnit === '%'
+          ? `${raw.toFixed(1)}%`
+          : `${raw.toFixed(2)} 厘米`;
+        showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}`);
       } else {
         showToast(`⚠️ ${updated} 个成功，${failed} 个失败（可能不是圆角矩形）`);
       }
@@ -552,7 +622,7 @@
       return;
     }
     const allLocked = selectedShapes.every((s) => s.locked);
-    const inputCm = parseFloat($('radius-input').value);
+    const inputVal = parseFloat($('radius-input').value);
     let touched = 0;
     try {
       // 读当前所有锁（从与 refreshSelection 同一个 backend 读，避免分离）
@@ -562,10 +632,11 @@
         if (allLocked) {
           delete newLocks[s.id];
         } else {
-          const lockCm = Number.isFinite(inputCm) && inputCm > 0
-            ? inputCm
+          // 锁存 cm（按当前单位换算）
+          const inputCm = Number.isFinite(inputVal) && inputVal > 0
+            ? valueToCm(inputVal, currentUnit)
             : s.currentCm;
-          if (lockCm > 0) newLocks[s.id] = lockCm;
+          if (inputCm > 0) newLocks[s.id] = inputCm;
         }
         touched++;
       }

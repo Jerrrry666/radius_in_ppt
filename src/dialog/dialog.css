@@ -100,6 +100,48 @@ body {
   gap: 8px;
 }
 
+.input-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 单位切换：厘米 / 百分比（iOS 风格 segmented control） */
+.unit-toggle {
+  display: inline-flex;
+  border: 1px solid #c8c6c4;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.unit-btn {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  color: #605e5c;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+  user-select: none;
+}
+
+.unit-btn:not(:last-child) {
+  border-right: 1px solid #c8c6c4;
+}
+
+.unit-btn:hover:not(.active) {
+  background: #f3f2f1;
+  color: #201f1e;
+}
+
+.unit-btn.active {
+  background: #0078d4;
+  color: #ffffff;
+  font-weight: 500;
+}
+
 #radius-input {
   flex: 1;
   font-size: 14px;

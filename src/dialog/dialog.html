@@ -42,7 +42,13 @@
     </section>
 
     <section class="control-group">
-      <label for="radius-input" class="control-label">R 角数值（厘米）</label>
+      <div class="input-label-row">
+        <label for="radius-input" class="control-label">R 角数值</label>
+        <div class="unit-toggle" role="tablist" aria-label="单位">
+          <button type="button" class="unit-btn active" data-unit="cm" role="tab" aria-selected="true">厘米</button>
+          <button type="button" class="unit-btn" data-unit="%" role="tab" aria-selected="false">百分比</button>
+        </div>
+      </div>
       <div class="input-row">
         <input
           id="radius-input"
@@ -52,9 +58,9 @@
           placeholder="0.30"
           inputmode="decimal"
         />
-        <span class="unit">厘米</span>
+        <span id="unit-label" class="unit">厘米</span>
       </div>
-      <div class="hint">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
+      <div id="radius-hint" class="hint">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
     </section>
 
     <section class="control-group">
