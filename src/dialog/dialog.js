@@ -4,16 +4,16 @@
  * 工作流：
  *   1. 打开 dialog → getSelectedShapes() → 显示选中的圆角矩形
  *   2. 用户输入 R 角 → 「应用 R 角」→ adjustments.set(0, newVal)
- *   3. 锁定信息优先存到 customProperty（key = "lock:{shapeId}"）
- *      如果 customProperties API 不可用（部分 dialog 上下文缺失），降级到 localStorage
+ *   3. 锁定信息存到 OOXML CustomXmlPart（namespace = LOCK_XML_NS），跟 .pptx 文件走
+ *      如果 customXmlParts 在当前平台不可用，降级到 localStorage
  *   4. toast: "已更新 N 个圆角矩形为 X 厘米"
  *
  * 监听 PPT 选区变化：DocumentSelectionChanged 事件 → 自动 refresh
  * 多页 PPT：getSelectedShapes() 只返回当前页选中的形状，切页后选区变化 → 自动 refresh
  *
  * 锁定 R 角 + 自动重应用：
- *   - 选区里有 locked 形状时，启动 setInterval 轮询（500ms）
- *   - 若连续 3 次尺寸无变化（≈1.5s 稳定）→ 视为用户松手 → 反算 adj 写回
+ *   - 选区里有 locked 形状时，启动 setInterval 轮询（10ms）
+ *   - 若连续 4 次尺寸无变化（≈40ms 稳定）→ 视为用户松手 → 反算 adj 写回
  *   - 拖拽中尺寸在变 → 跳过 apply，避免和拖拽手感冲突
  *   - 注：Office.js PowerPoint 没有 shape change 事件（详见 AGENTS.md 4 节），
  *         这是当前的 API 限制下的最优解
@@ -26,10 +26,136 @@
   // OOXML 原始是 0~50000（0~50%），但 Office.js 在 Mac dialog 上下文里 normalize 成 0~1 了
   const ADJ_SCALE = 1;
   const LOCK_STORAGE_KEY = 'radius_in_ppt_locks_v2';
-  let lockBackend = 'unknown';         // 'customProperty' | 'localStorage' | 'none'
+  const LOCK_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/locks/v1';
+  let lockBackend = 'unknown';         // 'customXmlPart' | 'localStorage' | 'none'
 
   /** 当前选中的形状（refreshSelection 填充） */
   let selectedShapes = [];  // [{id, name, width, height, currentCm, locked, lockedCm, isRoundRect, adjCount}]
+
+  // ---------------- CustomXmlPart 锁存储（跟随 .pptx 文件） ----------------
+  // Mac dialog 里 customProperties 不可用，改用 Common API 的 customXmlParts：
+  // 写入 .pptx 文件的 customXml 段（OOXML 标准的隐藏 XML 块），换机器/发文件都跟着走
+  // XML 格式：
+  //   <locks xmlns="...">
+  //     <lock shapeId="123" cm="1.28"/>
+  //   </locks>
+
+  function buildLocksXml(locks) {
+    const entries = Object.entries(locks)
+      .filter(([_, cm]) => cm != null && Number.isFinite(cm) && cm > 0)
+      .map(([id, cm]) => `    <lock shapeId="${escapeXml(id)}" cm="${cm.toFixed(4)}"/>`)
+      .join('\n');
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<locks xmlns="${LOCK_XML_NS}">\n${entries}\n</locks>`;
+  }
+
+  function parseLocksXml(xml) {
+    const locks = {};
+    if (!xml) return locks;
+    try {
+      const doc = new DOMParser().parseFromString(xml, 'text/xml');
+      const nodes = doc.getElementsByTagNameNS(LOCK_XML_NS, 'lock');
+      for (const n of nodes) {
+        const id = n.getAttribute('shapeId');
+        const cm = parseFloat(n.getAttribute('cm'));
+        if (id && Number.isFinite(cm)) locks[id] = cm;
+      }
+    } catch (e) {
+      console.warn('parseLocksXml failed:', e);
+    }
+    return locks;
+  }
+
+  function escapeXml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
+    })[c]);
+  }
+
+  function loadLocksCustomXml() {
+    return new Promise((resolve, reject) => {
+      if (!Office.context.document || !Office.context.document.customXmlParts) {
+        reject(new Error('customXmlParts not available'));
+        return;
+      }
+      Office.context.document.customXmlParts.getByNamespaceAsync(
+        LOCK_XML_NS,
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            reject(new Error(result.error?.message || 'getByNamespace failed'));
+            return;
+          }
+          if (!result.value || result.value.length === 0) {
+            resolve({});
+            return;
+          }
+          result.value[0].getXmlAsync((xmlResult) => {
+            if (xmlResult.status !== Office.AsyncResultStatus.Succeeded) {
+              reject(new Error(xmlResult.error?.message || 'getXml failed'));
+              return;
+            }
+            resolve(parseLocksXml(xmlResult.value));
+          });
+        }
+      );
+    });
+  }
+
+  function saveLocksCustomXml(locks) {
+    return new Promise((resolve, reject) => {
+      if (!Office.context.document || !Office.context.document.customXmlParts) {
+        reject(new Error('customXmlParts not available'));
+        return;
+      }
+      const xml = buildLocksXml(locks);
+      Office.context.document.customXmlParts.getByNamespaceAsync(
+        LOCK_XML_NS,
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            reject(new Error(result.error?.message || 'getByNamespace failed'));
+            return;
+          }
+          if (result.value && result.value.length > 0) {
+            result.value[0].setXmlAsync(xml, (setResult) => {
+              if (setResult.status === Office.AsyncResultStatus.Succeeded) resolve();
+              else reject(new Error(setResult.error?.message || 'setXml failed'));
+            });
+          } else {
+            Office.context.document.customXmlParts.addAsync(xml, (addResult) => {
+              if (addResult.status === Office.AsyncResultStatus.Succeeded) resolve();
+              else reject(new Error(addResult.error?.message || 'addAsync failed'));
+            });
+          }
+        }
+      );
+    });
+  }
+
+  // 统一接口：先试 CustomXmlPart（跟文件走），失败回退 localStorage（机机本地）
+  async function loadLocks() {
+    try {
+      const locks = await loadLocksCustomXml();
+      return { locks, backend: 'customXmlPart' };
+    } catch (e) {
+      console.warn('CustomXmlPart 不可用，降级到 localStorage:', e);
+      return { locks: loadLocksLS(), backend: 'localStorage' };
+    }
+  }
+
+  async function saveLocks(locks, preferBackend) {
+    // preferBackend: 写入时优先用这个 backend（跟读保持一致，避免读写分离）
+    if (preferBackend === 'localStorage') {
+      saveLocksLS(locks);
+      return 'localStorage';
+    }
+    try {
+      await saveLocksCustomXml(locks);
+      return 'customXmlPart';
+    } catch (e) {
+      console.warn('CustomXmlPart 写失败，降级到 localStorage:', e);
+      saveLocksLS(locks);
+      return 'localStorage';
+    }
+  }
 
   // ---------------- localStorage 锁定降级 ----------------
 
@@ -78,40 +204,14 @@
     setStatus('选区', '读选中…', 'status-empty');
     const debugLines = [];
     try {
+      // 先从 CustomXmlPart（或 localStorage fallback）读锁，跟随 .pptx 文件
+      const { locks, backend: lb } = await loadLocks();
+      lockBackend = lb;
+
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
         sel.load('items/id,items/name,items/width,items/height,items/adjustments');
         await ctx.sync();
-
-        // 收集锁定信息：先尝试 customProperty，不可用则降级 localStorage
-        const locks = {};
-        lockBackend = 'none';
-        if (ctx.presentation.customProperties) {
-          try {
-            const props = ctx.presentation.customProperties;
-            props.load('items');
-            await ctx.sync();
-            for (const cp of props.items || []) {
-              cp.load('key, value');
-            }
-            await ctx.sync();
-            for (const cp of props.items || []) {
-              const k = cp.key;
-              if (k && k.startsWith('lock:')) {
-                const cm = parseFloat(cp.value);
-                if (Number.isFinite(cm)) locks[k.slice(5)] = cm;
-              }
-            }
-            lockBackend = 'customProperty';
-          } catch (e) {
-            console.warn('customProperties 不可用，降级到 localStorage:', e);
-            lockBackend = 'localStorage';
-            Object.assign(locks, loadLocksLS());
-          }
-        } else {
-          lockBackend = 'localStorage';
-          Object.assign(locks, loadLocksLS());
-        }
 
         selectedShapes = [];
         for (const sh of sel.items) {
@@ -299,7 +399,10 @@
     const lockHint = $('lock-hint');
     if (lockBackend === 'localStorage') {
       lockHint.textContent = (lockHint.textContent || '') + ' · 本机存储';
-      lockHint.title = 'customProperty 在本 dialog 不可用，锁定暂存本机 localStorage';
+      lockHint.title = 'CustomXmlPart 不可用，锁定暂存本机 localStorage（不会跟 .pptx 走）';
+    } else if (lockBackend === 'customXmlPart') {
+      lockHint.textContent = (lockHint.textContent || '') + ' · 跟文件走';
+      lockHint.title = '锁定存到 .pptx 文件的 CustomXmlPart，换机器/发文件都会保留';
     }
 
     // 列表
@@ -442,7 +545,7 @@
     }
   }
 
-  /** 锁定 / 解锁 R 角（customProperty 优先，localStorage 降级） */
+  /** 锁定 / 解锁 R 角（CustomXmlPart 优先跟随文件，localStorage 降级） */
   async function onToggleLock() {
     if (selectedShapes.length === 0) {
       showToast('请先在 PPT 里框选圆角矩形');
@@ -452,44 +555,24 @@
     const inputCm = parseFloat($('radius-input').value);
     let touched = 0;
     try {
-      if (lockBackend === 'localStorage') {
-        for (const s of selectedShapes) {
-          if (allLocked) {
-            setLockLS(s.id, null);
-          } else {
-            const lockCm = Number.isFinite(inputCm) && inputCm > 0 ? inputCm : s.currentCm;
-            setLockLS(s.id, lockCm);
-          }
-          touched++;
+      // 读当前所有锁（从与 refreshSelection 同一个 backend 读，避免分离）
+      const { locks: currentLocks } = await loadLocks();
+      const newLocks = { ...currentLocks };
+      for (const s of selectedShapes) {
+        if (allLocked) {
+          delete newLocks[s.id];
+        } else {
+          const lockCm = Number.isFinite(inputCm) && inputCm > 0
+            ? inputCm
+            : s.currentCm;
+          if (lockCm > 0) newLocks[s.id] = lockCm;
         }
-      } else {
-        await PowerPoint.run(async (ctx) => {
-          const props = ctx.presentation.customProperties;
-          for (const s of selectedShapes) {
-            const key = `lock:${s.id}`;
-            const item = props.getItemOrNullObject(key);
-            await ctx.sync();
-            if (allLocked) {
-              if (!item.isNullObject) {
-                item.delete();
-                touched++;
-              }
-            } else {
-              const lockCm = Number.isFinite(inputCm) && inputCm > 0
-                ? inputCm
-                : s.currentCm;
-              if (item.isNullObject) {
-                props.add(key, String(lockCm));
-              } else {
-                item.value = String(lockCm);
-              }
-              touched++;
-            }
-            await ctx.sync();
-          }
-        });
+        touched++;
       }
-      const where = lockBackend === 'localStorage' ? '（本机 localStorage）' : '';
+      // 写回（preferBackend 跟读保持一致：customXmlPart 优先）
+      const backend = await saveLocks(newLocks, lockBackend);
+      lockBackend = backend;
+      const where = backend === 'customXmlPart' ? '（跟随 .pptx 文件）' : '（本机 localStorage）';
       showToast(allLocked ? `已解锁 ${touched} 个${where}` : `已锁定 ${touched} 个${where}`);
       await refreshSelection();
     } catch (err) {

@@ -116,26 +116,34 @@ await ctx.sync();
 const value = adj.value;  // 直接读
 ```
 
-### 4.3 `customProperties` 在 dialog 上下文里不可用
+### 4.3 `customProperties` 在 dialog 上下文里不可用（已用 CustomXmlPart 绕过）
 
 `ctx.presentation.customProperties` 在 dialog 里 **返回 undefined**
 （不是抛错，是直接没有这个属性）。Task pane 里可能能用，但 dialog 不能。
 
-**降级方案**：锁定信息存 localStorage（key = `radius_in_ppt_locks_v2`）。
+**改用 Common API 的 `customXmlParts` 存锁**（v2.1 起）—— 这是 OOXML 标准的隐藏 XML 块，
+写入 .pptx 文件后随文件一起保存/迁移，跨机器、跨用户都跟着走：
 
 ```js
-let lockBackend = 'none';
-if (ctx.presentation.customProperties) {
-  // 尝试用 customProperty（key = "lock:{shapeId}"）
-  // 实际在 Mac LTSC dialog 走不到这里
-} else {
-  lockBackend = 'localStorage';
-  // 从 localStorage 读 locks
-}
+// 读
+Office.context.document.customXmlParts.getByNamespaceAsync(
+  'https://radius.jerrrry666.com/radius-in-ppt/locks/v1',
+  (result) => { /* result.value[0].getXmlAsync(...) */ }
+);
+// 写
+result.value[0].setXmlAsync(buildLocksXml(locks), ...);
 ```
 
-**代价**：锁不跟着 .pptx 文件走，换台机器/换浏览器/清缓存就丢。
-如果用户需要跨设备锁持久化，得把 dialog 迁到 task pane（API 不同）。
+XML 格式：
+```xml
+<locks xmlns="https://radius.jerrrry666.com/radius-in-ppt/locks/v1">
+  <lock shapeId="123" cm="1.28"/>
+  <lock shapeId="456" cm="0.50"/>
+</locks>
+```
+
+**降级方案**：CustomXmlPart 不可用时（极端情况），回退到 localStorage
+（key = `radius_in_ppt_locks_v2`），但锁就不跟 .pptx 走了。
 
 ### 4.4 `Adjustments.count` 是 primitive，能直接用
 
@@ -256,10 +264,8 @@ git -c credential.helper="!f() { echo username=x-access-token; echo password=$GH
 
 ## 8. 已知限制 / 未来工作
 
-- [ ] **锁定 R 角 cross-machine**：现在 localStorage，换机器就丢
-  - 选项 A：把 dialog 迁到 task pane（customProperty 在 task pane 也许能用）
-  - 选项 B：lock 存到一个隐藏的 .pptx slide 里（用户看不到但跟着文件走）
-- [x] **lock 之后改变形状大小**：✅ 用 setInterval 500ms 轮询 + 3 次稳定检测实现"拖完松手自动重应用"
+- [x] **锁定 R 角 cross-machine**：✅ 改用 OOXML CustomXmlPart 存锁，跟 .pptx 文件走，换机器/发文件都保留
+- [x] **lock 之后改变形状大小**：✅ 用 setInterval 10ms 轮询 + 4 次稳定检测实现"拖完松手自动重应用"
 - [ ] **多选混合**（圆角矩形 + 普通矩形）：现在 UI 标记非圆角 + disable apply，已经可用
 - [x] **打包 .dmg**：`tools/build-dmg.sh` 实装完成
 - [ ] **代码签名 + 公证**：`tools/sign-and-notarize.sh` 已写好（待用户有 Apple Developer 账号时启用）
