@@ -683,106 +683,10 @@
     }
   }
 
-  /**
-   * 扫描整个 presentation 里所有圆角矩形的 R 角值，
-   * 统计每个 cm 值出现次数，取 top 10（按出现次数降序，相同次数按值升序）
-   * 作为 history 的"种子"——打开 .pptx 时直接用文件里现成的 R 角
-   */
-  async function collectFileRadiusHistory() {
-    try {
-      return await PowerPoint.run(async (ctx) => {
-        const slides = ctx.presentation.slides;
-        slides.load('items/id');
-        await ctx.sync();
-        dbgLine(`file scan: ${slides.items.length} slides`);
-        const counts = new Map(); // key=cm.toFixed(2), value=count
-        let scanned = 0;
-        let skippedNoAdj = 0;
-        let skippedZeroVal = 0;
-        let totalShapes = 0;
-        for (const slide of slides.items) {
-          const shapes = slide.shapes;
-          // 多读几个字段用于调试
-          shapes.load('items/id, items/adjustments, items/width, items/height, items/type, items/name');
-          await ctx.sync();
-          totalShapes += shapes.items.length;
-          for (const sh of shapes.items) {
-            try {
-              const adjCount = sh.adjustments ? sh.adjustments.count : 0;
-              if (adjCount === 0) {
-                skippedNoAdj++;
-                continue;
-              }
-              // 关键：task pane 上下文里，shapes.load('items/adjustments') 不会自动
-              // 填子项的 .value，必须显式 load items/value 再 sync
-              sh.adjustments.load('items/value');
-              await ctx.sync();
-              const adjValue = sh.adjustments.get(0).value;
-              const w = sh.width;
-              const h = sh.height;
-              if (!Number.isFinite(adjValue) || adjValue <= 0) {
-                if (scanned < 3) {
-                  dbgLine(`  [skip zero adj] id=${sh.id} name="${sh.name}" adjCount=${adjCount} adjValue=${adjValue} ${w}x${h}`);
-                }
-                skippedZeroVal++;
-                continue;
-              }
-              if (!w || !h) continue;
-              const minSideCm = Math.min(w, h) / PT_PER_CM;
-              const cm = adjValue * minSideCm;
-              if (!Number.isFinite(cm) || cm <= 0) continue;
-              scanned++;
-              const key = cm.toFixed(2);
-              counts.set(key, (counts.get(key) || 0) + 1);
-              if (scanned <= 5) {
-                dbgLine(`  [hit] id=${sh.id} name="${sh.name}" adj=${adjValue.toFixed(5)} ${w.toFixed(1)}x${h.toFixed(1)}pt → ${cm.toFixed(2)}cm`);
-              }
-            } catch (e) {
-              if (scanned < 3) dbgLine(`  [err] id=${sh.id} name="${sh.name}": ${e.message || e}`);
-            }
-          }
-        }
-        // 排序：count 降序；count 相同时 cm 升序
-        const sorted = Array.from(counts.entries())
-          .sort((a, b) => b[1] - a[1] || parseFloat(a[0]) - parseFloat(b[0]))
-          .slice(0, MAX_HISTORY * 2) // 多扫一些，留给 merge 时筛选
-          .map(([cmKey]) => ({ value: parseFloat(cmKey), unit: 'cm', ts: 0 }));
-        dbgLine(`file scan: ${totalShapes} total, ${scanned} roundRects (${skippedNoAdj} no-adj, ${skippedZeroVal} zero-val), ${counts.size} unique cm`);
-        dbgLine(`file scan top: ${JSON.stringify(sorted.slice(0, 5))}`);
-        return sorted;
-      });
-    } catch (e) {
-      dbgLine(`file scan failed: ${e.message || e}`);
-      return [];
-    }
-  }
-
   async function loadAndRenderHistory() {
-    // 优先级：本次 session 主动应用的值（内存 userHistory）+ 扫描文件的 top R 角
-    // 合并：user 优先，file 补后，去重按 (value, unit)
-    const fileHistory = await collectFileRadiusHistory();
-    // 主动清理可能残留的旧 localStorage 数据（升级前的脏数据）
-    try { localStorage.removeItem('radius_in_ppt_history_v1'); } catch (_) {}
-    const seen = new Set();
-    const merged = [];
-    for (const h of userHistory) {
-      const k = `${h.value}|${h.unit}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      merged.push(h);
-      if (merged.length >= MAX_HISTORY) break;
-    }
-    if (merged.length < MAX_HISTORY) {
-      for (const h of fileHistory) {
-        const k = `${h.value}|${h.unit}`;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        merged.push(h);
-        if (merged.length >= MAX_HISTORY) break;
-      }
-    }
-    dbgLine(`loadAndRenderHistory: user=${userHistory.length} file=${fileHistory.length} merged=${merged.length}`);
-    renderHistory(merged);
+    // 简化：history 只来自本次 session 内主动应用的值，纯内存，关掉 PPT 任务窗格就没
+    dbgLine(`loadAndRenderHistory: user=${userHistory.length}`);
+    renderHistory(userHistory);
   }
 
   function onHistoryChipClick(value, unit) {
