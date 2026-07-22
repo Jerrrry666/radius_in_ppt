@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+._*
+
+# Node
+node_modules/
+npm-debug.log*
+
+# 编辑器
+.vscode/
+.idea/
+*.iml
+
+# 临时 / 证书（首次运行 serve.js 时会用 openssl 自签证书）
+certs/
+*.pem
+*.crt
+*.key
+
+# Office 上传包（如果用户以后打 zip 装到 AppSource）
+*.zip

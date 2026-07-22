@@ -1,0 +1,20 @@
+{
+  "name": "radius-in-ppt",
+  "version": "1.0.0",
+  "description": "PowerPoint 圆角矩形 R 角调整加载项：精确输入厘米值，支持锁定 R 角绝对值，多选支持。",
+  "private": true,
+  "scripts": {
+    "start": "node ./tools/serve.js",
+    "dev": "node ./tools/serve.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "office-addin",
+    "powerpoint",
+    "rounded-rectangle",
+    "radius"
+  ],
+  "license": "MIT"
+}
