@@ -109,23 +109,17 @@
         selectedShapes = [];
         for (const sh of sel.items) {
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          // 先 load count（AdjustmentCollection 自带的 primitive，load 后才稳）
-          sh.adjustments.load('count');
-          await ctx.sync();
+          // 恢复原版：get(0) 在 Mac LTSC dialog 里返回的是 ClientResult 代理，.value 直接拿
           const adjCount = sh.adjustments.count;
-          let adj = 0;
-          if (adjCount > 0) {
-            // get(0) 返回 Adjustment 子对象，必须 .load('value') 才有真实值
-            const adjItem = sh.adjustments.get(0);
-            adjItem.load('value');
-            await ctx.sync();
-            adj = adjItem.value;
-          }
+          const adjResult = sh.adjustments.get(0);
+          await ctx.sync();
+          const adj = adjResult.value;
 
           // 调试：把所有 raw 值都打出来
           debugLines.push(`Shape id=${sh.id} name="${sh.name}"`);
           debugLines.push(`  width=${sh.width}pt  height=${sh.height}pt  minSide=${minSideCm.toFixed(2)}cm`);
           debugLines.push(`  adjustments.count = ${adjCount} (type=${typeof adjCount})`);
+          debugLines.push(`  adjustments.get(0) = ${adjResult} (type=${typeof adjResult})`);
           debugLines.push(`  adjustments.get(0).value = ${adj} (type=${typeof adj})`);
           debugLines.push(`  isRoundRect 判定: ${(typeof adjCount === 'number' && adjCount > 0) ? 'true' : 'false'}`);
           debugLines.push('');
