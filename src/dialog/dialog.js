@@ -37,7 +37,7 @@
     $('apply-btn').addEventListener('click', onApply);
     $('lock-btn').addEventListener('click', onToggleLock);
     $('reapply-btn').addEventListener('click', onReapply);
-    $('rescan-btn')?.addEventListener('click', refreshSelection);
+    $('rescan-btn').addEventListener('click', refreshSelection);
     $('radius-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') onApply();
     });
