@@ -11,25 +11,25 @@
 ~$*.xlsx
 ~$*.docx
 
-# Node
-node_modules/
-npm-debug.log*
-
-# 编辑器
-.vscode/
-.idea/
-*.iml
-
-# 临时 / 证书（首次运行 serve.js 时会用 openssl 自签证书）
+# 证书 / key
 certs/
 *.pem
 *.crt
 *.key
 
-# Office 上传包（如果用户以后打 zip 装到 AppSource）
+# 打包 / 分发
 *.zip
-
-# 构建产物
 dist/
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.iml
+
+# Node
+node_modules/
+npm-debug.log*
+
+# 备份
 *.bak.*
-~$*
+*~
