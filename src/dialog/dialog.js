@@ -694,28 +694,51 @@
         const slides = ctx.presentation.slides;
         slides.load('items/id');
         await ctx.sync();
+        dbgLine(`file scan: ${slides.items.length} slides`);
         const counts = new Map(); // key=cm.toFixed(2), value=count
         let scanned = 0;
+        let skippedNoAdj = 0;
+        let skippedZeroVal = 0;
+        let totalShapes = 0;
         for (const slide of slides.items) {
           const shapes = slide.shapes;
-          shapes.load('items/id, items/adjustments, items/width, items/height');
+          // 多读几个字段用于调试
+          shapes.load('items/id, items/adjustments, items/width, items/height, items/type, items/name');
           await ctx.sync();
+          totalShapes += shapes.items.length;
           for (const sh of shapes.items) {
             try {
-              if (!sh.adjustments || sh.adjustments.count === 0) continue;
+              const adjCount = sh.adjustments ? sh.adjustments.count : 0;
+              if (adjCount === 0) {
+                skippedNoAdj++;
+                continue;
+              }
+              // 关键：get(0) 拿 Adjustment 代理（task pane context 里要 load 一下拿真值）
+              const adjItem = sh.adjustments.get(0);
+              adjItem.load('value');
+              await ctx.sync();
+              const adjValue = adjItem.value;
               const w = sh.width;
               const h = sh.height;
+              if (!Number.isFinite(adjValue) || adjValue <= 0) {
+                if (scanned < 3) {
+                  dbgLine(`  [skip zero adj] id=${sh.id} name="${sh.name}" adjCount=${adjCount} adjValue=${adjValue} ${w}x${h}`);
+                }
+                skippedZeroVal++;
+                continue;
+              }
               if (!w || !h) continue;
-              const adjValue = sh.adjustments.get(0).value;
-              if (!Number.isFinite(adjValue) || adjValue <= 0) continue;
               const minSideCm = Math.min(w, h) / PT_PER_CM;
               const cm = adjValue * minSideCm;
               if (!Number.isFinite(cm) || cm <= 0) continue;
               scanned++;
               const key = cm.toFixed(2);
               counts.set(key, (counts.get(key) || 0) + 1);
+              if (scanned <= 5) {
+                dbgLine(`  [hit] id=${sh.id} name="${sh.name}" adj=${adjValue.toFixed(5)} ${w.toFixed(1)}x${h.toFixed(1)}pt → ${cm.toFixed(2)}cm`);
+              }
             } catch (e) {
-              // 单个形状读取失败，跳过
+              if (scanned < 3) dbgLine(`  [err] id=${sh.id} name="${sh.name}": ${e.message || e}`);
             }
           }
         }
@@ -724,7 +747,8 @@
           .sort((a, b) => b[1] - a[1] || parseFloat(a[0]) - parseFloat(b[0]))
           .slice(0, MAX_HISTORY * 2) // 多扫一些，留给 merge 时筛选
           .map(([cmKey]) => ({ value: parseFloat(cmKey), unit: 'cm', ts: 0 }));
-        dbgLine(`file scan: ${scanned} roundRects, ${counts.size} unique cm, top: ${JSON.stringify(sorted.slice(0, 5))}`);
+        dbgLine(`file scan: ${totalShapes} total, ${scanned} roundRects (${skippedNoAdj} no-adj, ${skippedZeroVal} zero-val), ${counts.size} unique cm`);
+        dbgLine(`file scan top: ${JSON.stringify(sorted.slice(0, 5))}`);
         return sorted;
       });
     } catch (e) {
