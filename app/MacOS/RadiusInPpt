@@ -107,44 +107,42 @@ EOF
 fi
 
 # ---------- 5. 复制 manifest 到 wef ----------
+# Cmd+Q 后 macOS 可能回收沙盒目录，所以无条件创建
 ADDIN_INSTALLED=0
-if [ -d "$HOME/Library/Containers/com.microsoft.Powerpoint" ]; then
-  mkdir -p "$WEF_DIR"
-  cp -f "$MANIFEST" "$WEF_DIR/manifest.xml"
-  if [ $? -eq 0 ]; then
-    ADDIN_INSTALLED=1
-    echo "[RadiusInPpt] manifest 已复制到 $WEF_DIR"
-  fi
+mkdir -p "$WEF_DIR"
+cp -f "$MANIFEST" "$WEF_DIR/manifest.xml"
+if [ $? -eq 0 ]; then
+  ADDIN_INSTALLED=1
+  echo "[RadiusInPpt] manifest 已复制到 $WEF_DIR"
+fi
+# PowerPoint 是否在跑（决定后续弹什么窗）
+PP_RUNNING=0
+if pgrep -f "Microsoft PowerPoint" >/dev/null 2>&1; then
+  PP_RUNNING=1
 fi
 
 # ---------- 6. 弹引导对话框 ----------
+# PowerPoint 在跑：要求 Cmd+Q + 重开 让新 manifest 生效
+# PowerPoint 没在跑：直接帮他开
 DIALOG_RESULT=$(osascript <<EOF
 set theResult to ""
 try
-  if $ADDIN_INSTALLED = 1 then
+  if $PP_RUNNING = 1 then
     set theChoice to button returned of (display dialog "✅ R 角调整 已就位
 
 静态 server 已启动（http://localhost:3000）
-加载项已注册到 PowerPoint。
+manifest 已复制到 wef 目录。
 
-下一步：
-1. 完全退出 PowerPoint（Cmd + Q，不要只关窗口）
-2. 重新打开 PowerPoint
-3. 点击顶部「主页」tab → 「加载项」
-4. 在弹窗里选「R 角调整」
-5. 顶部 ribbon 会出现「R 角调整」tab
+但你得**完全退出 PowerPoint（Cmd + Q，不要只关窗口）后重新打开**，新加载项才会生效。
 
 之后每次使用只需双击本 App。" buttons {"退出并重新打开 PowerPoint", "在 Finder 中显示 manifest", "完成"} default button "退出并重新打开 PowerPoint" with title "R 角调整")
   else
-    set theChoice to button returned of (display dialog "✅ server 已启动
+    set theChoice to button returned of (display dialog "✅ R 角调整 已就位
 
-但未检测到 PowerPoint 安装，无法自动注册加载项。
+静态 server 已启动（http://localhost:3000）
+manifest 已复制到 wef 目录。
 
-请手动操作：
-1. 打开 Finder，按 Cmd + Shift + G
-2. 输入：~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef
-3. 把 manifest.xml 拷到这个目录
-4. 重启 PowerPoint" buttons {"好的"} default button "好的" with title "R 角调整")
+PowerPoint 启动后会在 ribbon 看到「R 角调整」tab。" buttons {"打开 PowerPoint", "完成"} default button "打开 PowerPoint" with title "R 角调整")
   end if
   set theResult to theChoice
 on error
