@@ -4,7 +4,8 @@
  * 工作流：
  *   1. 打开 dialog → getSelectedShapes() → 显示选中的圆角矩形
  *   2. 用户输入 R 角 → 「应用 R 角」→ adjustments.set(0, newVal)
- *   3. 锁定信息存到 customProperty（key = "lock:{shapeId}", value = "{cm}"）
+ *   3. 锁定信息优先存到 customProperty（key = "lock:{shapeId}"）
+ *      如果 customProperties API 不可用（部分 dialog 上下文缺失），降级到 localStorage
  *   4. toast: "已更新 N 个圆角矩形为 X 厘米"
  *
  * 监听 PPT 选区变化：DocumentSelectionChanged 事件 → 自动 refresh
@@ -17,9 +18,30 @@
   const $ = (id) => document.getElementById(id);
   const PT_PER_CM = 28.3464567;       // 1 cm = 28.3464567 pt
   const ADJ_SCALE = 100000;            // adj value 0~50000 对应 0%~50%
+  const LOCK_STORAGE_KEY = 'radius_in_ppt_locks_v2';
+  let lockBackend = 'unknown';         // 'customProperty' | 'localStorage' | 'none'
 
   /** 当前选中的形状（refreshSelection 填充） */
   let selectedShapes = [];  // [{id, name, width, height, currentCm, locked, lockedCm}]
+
+  // ---------------- localStorage 锁定降级 ----------------
+
+  function loadLocksLS() {
+    try { return JSON.parse(localStorage.getItem(LOCK_STORAGE_KEY) || '{}'); }
+    catch (_) { return {}; }
+  }
+  function saveLocksLS(locks) {
+    try { localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify(locks)); } catch (_) {}
+  }
+  function getLockLS(shapeId) {
+    return loadLocksLS()[shapeId] || null;
+  }
+  function setLockLS(shapeId, cm) {
+    const m = loadLocksLS();
+    if (cm === null) delete m[shapeId];
+    else m[shapeId] = cm;
+    saveLocksLS(m);
+  }
 
   // ---------------- 初始化 ----------------
 
@@ -51,25 +73,36 @@
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
         sel.load('items/id,items/name,items/width,items/height,items/adjustments');
-        const props = ctx.presentation.customProperties;
-        props.load('items');
         await ctx.sync();
 
-        // 加载每个 customProperty 的 key + value
-        const items = props.items || [];
-        for (const cp of items) {
-          cp.load('key, value');
-        }
-        await ctx.sync();
-
-        // 收集所有锁：key 形如 "lock:{shapeId}"
+        // 收集锁定信息：先尝试 customProperty，不可用则降级 localStorage
         const locks = {};
-        for (const cp of items) {
-          const k = cp.key;
-          if (k && k.startsWith('lock:')) {
-            const cm = parseFloat(cp.value);
-            if (Number.isFinite(cm)) locks[k.slice(5)] = cm;
+        lockBackend = 'none';
+        if (ctx.presentation.customProperties) {
+          try {
+            const props = ctx.presentation.customProperties;
+            props.load('items');
+            await ctx.sync();
+            for (const cp of props.items || []) {
+              cp.load('key, value');
+            }
+            await ctx.sync();
+            for (const cp of props.items || []) {
+              const k = cp.key;
+              if (k && k.startsWith('lock:')) {
+                const cm = parseFloat(cp.value);
+                if (Number.isFinite(cm)) locks[k.slice(5)] = cm;
+              }
+            }
+            lockBackend = 'customProperty';
+          } catch (e) {
+            console.warn('customProperties 不可用，降级到 localStorage:', e);
+            lockBackend = 'localStorage';
+            Object.assign(locks, loadLocksLS());
           }
+        } else {
+          lockBackend = 'localStorage';
+          Object.assign(locks, loadLocksLS());
         }
 
         selectedShapes = [];
@@ -127,6 +160,12 @@
       }
       const lockedN = selectedShapes.filter((s) => s.locked).length;
       $('locked-count').textContent = `${lockedN} / ${selectedShapes.length}`;
+    }
+    // 锁定后端提示
+    const lockHint = $('lock-hint');
+    if (lockBackend === 'localStorage') {
+      lockHint.textContent = (lockHint.textContent || '') + ' · 本机存储';
+      lockHint.title = 'customProperty 在本 dialog 不可用，锁定暂存本机 localStorage';
     }
 
     // 列表
@@ -233,7 +272,7 @@
     }
   }
 
-  /** 锁定 / 解锁 R 角 */
+  /** 锁定 / 解锁 R 角（customProperty 优先，localStorage 降级） */
   async function onToggleLock() {
     if (selectedShapes.length === 0) {
       showToast('请先在 PPT 里框选圆角矩形');
@@ -243,34 +282,45 @@
     const inputCm = parseFloat($('radius-input').value);
     let touched = 0;
     try {
-      await PowerPoint.run(async (ctx) => {
-        const props = ctx.presentation.customProperties;
+      if (lockBackend === 'localStorage') {
         for (const s of selectedShapes) {
-          const key = `lock:${s.id}`;
-          const item = props.getItemOrNullObject(key);
-          await ctx.sync();
           if (allLocked) {
-            // 解锁
-            if (!item.isNullObject) {
-              item.delete();
+            setLockLS(s.id, null);
+          } else {
+            const lockCm = Number.isFinite(inputCm) && inputCm > 0 ? inputCm : s.currentCm;
+            setLockLS(s.id, lockCm);
+          }
+          touched++;
+        }
+      } else {
+        await PowerPoint.run(async (ctx) => {
+          const props = ctx.presentation.customProperties;
+          for (const s of selectedShapes) {
+            const key = `lock:${s.id}`;
+            const item = props.getItemOrNullObject(key);
+            await ctx.sync();
+            if (allLocked) {
+              if (!item.isNullObject) {
+                item.delete();
+                touched++;
+              }
+            } else {
+              const lockCm = Number.isFinite(inputCm) && inputCm > 0
+                ? inputCm
+                : s.currentCm;
+              if (item.isNullObject) {
+                props.add(key, String(lockCm));
+              } else {
+                item.value = String(lockCm);
+              }
               touched++;
             }
-          } else {
-            // 锁定：用输入值；如果没输入或无效，用当前 R 角
-            const lockCm = Number.isFinite(inputCm) && inputCm > 0
-              ? inputCm
-              : s.currentCm;
-            if (item.isNullObject) {
-              props.add(key, String(lockCm));
-            } else {
-              item.value = String(lockCm);
-            }
-            touched++;
+            await ctx.sync();
           }
-          await ctx.sync();
-        }
-      });
-      showToast(allLocked ? `已解锁 ${touched} 个` : `已锁定 ${touched} 个`);
+        });
+      }
+      const where = lockBackend === 'localStorage' ? '（本机 localStorage）' : '';
+      showToast(allLocked ? `已解锁 ${touched} 个${where}` : `已锁定 ${touched} 个${where}`);
       await refreshSelection();
     } catch (err) {
       showToast('操作失败：' + (err.message || err));
