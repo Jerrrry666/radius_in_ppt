@@ -109,17 +109,20 @@
         selectedShapes = [];
         for (const sh of sel.items) {
           const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          const adjCount = sh.adjustments.count;
-          const adjResult = sh.adjustments.get(0);
+          // 必须显式 load('count, items/value')，否则 Mac dialog 上下文里 .count 可能是 0、.value 是 undefined
+          sh.adjustments.load('count, items/value');
           await ctx.sync();
-          const adj = adjResult.value;
+          const adjCount = sh.adjustments.count;
+          const adj = (adjCount > 0 && sh.adjustments.items.length > 0)
+            ? sh.adjustments.items[0].value
+            : 0;
 
           // 调试：把所有 raw 值都打出来
           debugLines.push(`Shape id=${sh.id} name="${sh.name}"`);
           debugLines.push(`  width=${sh.width}pt  height=${sh.height}pt  minSide=${minSideCm.toFixed(2)}cm`);
           debugLines.push(`  adjustments.count = ${adjCount} (type=${typeof adjCount})`);
-          debugLines.push(`  adjustments.get(0) = ${adjResult} (type=${typeof adjResult})`);
-          debugLines.push(`  adjustments.get(0).value = ${adj} (type=${typeof adj})`);
+          debugLines.push(`  adjustments.items.length = ${sh.adjustments.items.length}`);
+          debugLines.push(`  adjustments.items[0].value = ${adj} (type=${typeof adj})`);
           debugLines.push(`  isRoundRect 判定: ${(typeof adjCount === 'number' && adjCount > 0) ? 'true' : 'false'}`);
           debugLines.push('');
 
