@@ -190,13 +190,13 @@
 
   // ---------------- 锁定监控（轮询稳定检测） ----------------
   // 目的：用户拖完形状松手后，自动把 R 角反算回锁定值
-  // 策略：每 50ms poll 一次，若连续 4 次尺寸无变化（≈ 200ms）则视为松手
+  // 策略：每 10ms poll 一次，若连续 4 次尺寸无变化（≈ 40ms）则视为松手
   // 期间尺寸在变（拖拽中）→ 跳过 apply，避免和用户的拖动手感冲突
   // 注意：apply 后不要调 refreshSelection()（会再触发一次完整 getSelectedShapes + sync，
   //       导致 PowerPoint 选区高亮重画，肉眼看是闪烁），直接改内存里的 currentCm 然后 renderUI
 
-  const LOCK_POLL_MS = 50;
-  const LOCK_STABLE_THRESHOLD = 4;  // 4 * 50ms = 200ms 稳定才 apply
+  const LOCK_POLL_MS = 10;
+  const LOCK_STABLE_THRESHOLD = 4;  // 4 * 10ms = 40ms 稳定才 apply
   let lockMonitor = null;            // { timer, lastDims, stableCount }
 
   function startLockMonitor() {
