@@ -2,13 +2,10 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="initial-scale=1,width=device-width" />
   <title>R 角调整</title>
   <link rel="stylesheet" href="dialog.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
-  <!-- JSZip for parsing .pptx (Office.js 不支持 getSelectedDataAsync Shape on Mac) -->
-  <script src="../shared/jszip.min.js"></script>
-  <script src="../shared/radius.js"></script>
   <script src="dialog.js"></script>
 </head>
 <body>
@@ -21,26 +18,25 @@
     <section id="status-card" class="status-card status-empty">
       <div class="status-row">
         <span class="status-label">选区</span>
-        <span id="status-text" class="status-text">扫描中…</span>
+        <span id="status-text" class="status-text">读选中…</span>
       </div>
       <div class="status-row">
         <span class="status-label">当前 R 角</span>
         <span id="current-radius" class="status-text">—</span>
       </div>
+      <div class="status-row">
+        <span class="status-label">已锁定</span>
+        <span id="locked-count" class="status-text">—</span>
+      </div>
     </section>
 
     <section class="control-group">
       <div class="list-header">
-        <label class="control-label">圆角矩形列表</label>
+        <label class="control-label">选中的圆角矩形</label>
         <span id="list-count" class="hint">—</span>
       </div>
       <div id="shape-list" class="shape-list">
-        <div class="empty-list">扫描文档中…</div>
-      </div>
-      <div class="list-actions">
-        <button id="select-all-btn" class="btn btn-ghost">全选</button>
-        <button id="deselect-all-btn" class="btn btn-ghost">全不选</button>
-        <button id="rescan-btn" class="btn btn-ghost">重新扫描</button>
+        <div class="empty-list">在 PPT 里框选形状后会出现在这里</div>
       </div>
     </section>
 
@@ -57,7 +53,7 @@
         />
         <span class="unit">厘米</span>
       </div>
-      <div class="hint">范围 0 ~ 形状短边 / 2。超过一半时显示为最大圆角。</div>
+      <div class="hint">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
     </section>
 
     <section class="control-group">
@@ -70,27 +66,16 @@
           <span id="lock-icon" class="lock-icon">🔓</span>
           <span id="lock-label">锁定 R 角</span>
         </button>
-        <span id="lock-hint" class="lock-hint">未锁定</span>
+        <span id="lock-hint" class="lock-hint">未选中形状</span>
       </div>
-      <div class="hint">
-        锁定后，R 角保持厘米值不变；改变形状大小时会自动按比例调整。
-      </div>
+      <div class="hint">锁定后 R 角按厘米值保持；改变形状大小时自动按比例调整。</div>
     </section>
 
     <section class="control-group">
       <button id="reapply-btn" class="btn btn-ghost">重新应用锁定（针对当前选区）</button>
     </section>
 
-    <section class="control-group diag-section" style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px;">
-      <div class="diag-title" style="font-size:12px;color:#856404;font-weight:600;margin-bottom:6px;">🔬 诊断：测试 Office.js 能否读取/写入 PPT 当前选区</div>
-      <button id="diag-btn" class="btn btn-ghost" style="font-size:12px;">读取当前选中形状</button>
-      <button id="diag-write-btn" class="btn btn-ghost" style="font-size:12px;background:#ffe082;">✍️ 写入测试：把选中形状 R 角设为 0.5cm</button>
-      <pre id="diag-out" class="diag-out" style="font-size:11px;color:#333;background:#fff;border:1px solid #ddd;border-radius:4px;padding:6px;margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all;">（先在 PPT 里框选一个圆角矩形，再点上面的按钮）</pre>
-    </section>
-
-    <footer class="footer">
-      <span>v1.0 · 支持多选 · 仅作用于圆角矩形</span>
-    </footer>
+    <footer class="footer">v2.0 · 纯 Office.js · 无 server 依赖</footer>
   </main>
 </body>
 </html>

@@ -1,15 +1,18 @@
 #!/bin/bash
 #
-# RadiusInPpt — .app 启动脚本（Office Add-in 路线）
+# RadiusInPpt — .app 启动脚本（Office Add-in 路线，纯前端版）
 #
 # 行为：
 #   1. 找到 .app/Contents/Resources/ 下的源文件
 #   2. 找 node（兼容 launchd 的精简 PATH）
-#   3. 后台启动 node server (http://localhost:3000)
+#   3. 后台启动 node server（http://localhost:3000，serve.js）
 #   4. 复制 manifest.xml 到
 #      ~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef
 #      （Microsoft 官方 Mac Office Add-in 加载路径）
 #   5. 弹引导对话框，提示用户完全退出 PowerPoint (Cmd+Q) 后重新打开
+#
+# 注意：所有 .pptx 读写都通过 Office.js 在 PowerPoint 进程内完成，
+#      这个 server 只负责给 dialog 提供 HTML/JS/CSS 静态资源。
 #
 set -u
 
@@ -22,8 +25,7 @@ LOG_FILE="/tmp/radius_in_ppt.log"
 PID_FILE="/tmp/radius_in_ppt.pid"
 WEF_DIR="$HOME/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef"
 
-# ---------- 2. 找 node（macOS 双击 .app 时 PATH 不包含 /opt/homebrew/bin）----------
-
+# ---------- 2. 找 node ----------
 find_node() {
   if command -v node >/dev/null 2>&1; then
     command -v node
@@ -49,7 +51,7 @@ if [ -z "$NODE_BIN" ]; then
   osascript <<'EOF' 2>/dev/null || true
 display dialog "没找到 Node.js（需要 18+）。
 
-R 角调整的 server 用 Node.js 跑。
+R 角调整需要 Node.js 跑一个轻量静态文件 server。
 
 最简单的安装方式：Terminal 跑下面这一行
     brew install node
@@ -66,7 +68,6 @@ is_port_in_use() {
   lsof -ti tcp:3000 -sTCP:LISTEN >/dev/null 2>&1
 }
 
-# 清理已死进程
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && ! kill -0 "$OLD_PID" 2>/dev/null; then
@@ -74,12 +75,11 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 
+EXISTING_MODE=0
 if is_port_in_use; then
   RUNNING_PID=$(lsof -ti tcp:3000 -sTCP:LISTEN | head -1)
   echo "[RadiusInPpt] server 已经在端口 3000 上运行（PID $RUNNING_PID）"
   EXISTING_MODE=1
-else
-  EXISTING_MODE=0
 fi
 
 # ---------- 4. 启动 server ----------
@@ -97,32 +97,6 @@ start_server() {
   fi
 }
 
-# ---------- 4.5. 记下当前 PowerPoint .pptx 路径（给 server 用）----------
-PPTX_PATH_FILE="/tmp/radius_in_ppt_pptx_path.txt"
-detect_pptx() {
-  local script='
-  tell application "PowerPoint"
-    try
-      if not (exists active window) then return ""
-      return full name of (presentation of active window)
-    on error
-      return ""
-    end try
-  end tell
-  '
-  local tmp
-  tmp=$(mktemp /tmp/radius_in_ppt_as_XXXXXX.applescript)
-  printf '%s' "$script" > "$tmp"
-  local out
-  out=$(/usr/bin/osascript "$tmp" 2>/dev/null | tr -d '\r\n')
-  rm -f "$tmp"
-  if [ -n "$out" ] && [ -f "$out" ]; then
-    echo "$out" > "$PPTX_PATH_FILE"
-    echo "[RadiusInPpt] recorded .pptx path: $out"
-  fi
-}
-detect_pptx
-
 if [ "$EXISTING_MODE" = "0" ]; then
   if ! start_server; then
     osascript <<'EOF' 2>/dev/null
@@ -132,8 +106,7 @@ EOF
   fi
 fi
 
-# ---------- 5. 复制 manifest 到 wef 目录 ----------
-# Microsoft 官方 Mac Office Add-in 加载路径
+# ---------- 5. 复制 manifest 到 wef ----------
 ADDIN_INSTALLED=0
 if [ -d "$HOME/Library/Containers/com.microsoft.Powerpoint" ]; then
   mkdir -p "$WEF_DIR"
@@ -151,7 +124,7 @@ try
   if $ADDIN_INSTALLED = 1 then
     set theChoice to button returned of (display dialog "✅ R 角调整 已就位
 
-服务器已启动（http://localhost:3000）
+静态 server 已启动（http://localhost:3000）
 加载项已注册到 PowerPoint。
 
 下一步：
@@ -163,7 +136,7 @@ try
 
 之后每次使用只需双击本 App。" buttons {"退出并重新打开 PowerPoint", "在 Finder 中显示 manifest", "完成"} default button "退出并重新打开 PowerPoint" with title "R 角调整")
   else
-    set theChoice to button returned of (display dialog "✅ R 角调整 server 已启动
+    set theChoice to button returned of (display dialog "✅ server 已启动
 
 但未检测到 PowerPoint 安装，无法自动注册加载项。
 
