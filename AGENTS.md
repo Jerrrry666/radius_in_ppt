@@ -133,21 +133,29 @@ sh.tags.delete("myKey");
 
 ### 4.4 task pane 上下文里 `shapes.load` 不自动填 adjustments 子项
 
+**这是 v1.0 唯一一个 hotfix 的坑**（commit `d6bba1a`），`refreshSelection` 里第一次读 adjustments.value 时漏了显式 load。
+
 ```js
 // ❌ 错：task pane 里 .value 报 "结果对象的值尚未加载"
 shapes.load('items/adjustments');
 await ctx.sync();
 const v = sh.adjustments.get(0).value;  // ❌ 报错
 
-// ✅ 对：显式 load 子项
+// ✅ 对：显式 load 子项（每个 roundRect 都要做）
 shapes.load('items/adjustments');
 await ctx.sync();
-sh.adjustments.load('items/value');  // ← 显式 load
-await ctx.sync();
-const v = sh.adjustments.get(0).value;  // ✅
+for (const sh of shapes.items) {
+  if (sh.adjustments.count > 0) {
+    sh.adjustments.load('items/value');  // ← 显式 load
+    await ctx.sync();
+    const v = sh.adjustments.get(0).value;  // ✅
+  }
+}
 ```
 
 （dialog 上下文里这步可能不必要；task pane 必须显式 load。）
+
+**写时不需要**：只有读 `.value` 时才需要这个显式 load；写时 `sh.adjustments.set(0, newVal)` 不需要。
 
 ### 4.5 `Adjustments.count` 是 primitive，能直接用
 
