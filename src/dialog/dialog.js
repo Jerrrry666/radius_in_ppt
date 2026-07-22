@@ -276,15 +276,31 @@
   // 加一条历史：同 value+unit 的会移到最前，不重复；只保留 MAX_HISTORY 条
   async function pushHistory(value, unit) {
     try {
+      console.log('[history] pushHistory enter', { value, unit });
       const history = await loadHistoryCustomXml();
+      console.log('[history] current loaded:', history);
       const filtered = history.filter((h) => !(h.value === value && h.unit === unit));
       filtered.unshift({ value, unit, ts: Date.now() });
       const trimmed = filtered.slice(0, MAX_HISTORY);
       await saveHistoryCustomXml(trimmed);
+      console.log('[history] saved:', trimmed);
       return trimmed;
     } catch (e) {
-      console.warn('history 写失败（customXmlPart 不可用）:', e);
-      return [];
+      console.warn('[history] push failed:', e);
+      // 降级：写 localStorage（仅在 customXmlPart 不可用时）
+      try {
+        const raw = localStorage.getItem('radius_in_ppt_history_v1');
+        const history = raw ? JSON.parse(raw) : [];
+        const filtered = history.filter((h) => !(h.value === value && h.unit === unit));
+        filtered.unshift({ value, unit, ts: Date.now() });
+        const trimmed = filtered.slice(0, MAX_HISTORY);
+        localStorage.setItem('radius_in_ppt_history_v1', JSON.stringify(trimmed));
+        console.log('[history] saved to localStorage:', trimmed);
+        return trimmed;
+      } catch (e2) {
+        console.warn('[history] localStorage also failed:', e2);
+        return [];
+      }
     }
   }
 
@@ -767,7 +783,8 @@
         showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}`);
         // 成功后追加到历史记录（去重 + 限 5 条 + 跟文件走）
         if (updated > 0) {
-          pushHistory(raw, currentUnit).then(loadAndRenderHistory);
+          const newHistory = await pushHistory(raw, currentUnit);
+          renderHistory(newHistory);
         }
       } else {
         showToast(`⚠️ ${updated} 个成功，${failed} 个失败（可能不是圆角矩形）`);
