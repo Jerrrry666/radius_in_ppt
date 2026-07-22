@@ -593,9 +593,11 @@
         btn.dataset.unit = h.unit;
         const label = h.unit === '%'
           ? `${Number.isInteger(h.value) ? h.value : h.value.toFixed(1)}%`
-          : `${h.value.toFixed(2)} cm`;
+          : h.value.toFixed(2);
         btn.textContent = label;
-        btn.title = `${label}（点击填入输入框）`;
+        btn.title = h.unit === '%'
+          ? `${label}（点击填入输入框）`
+          : `${label} cm（点击填入输入框）`;
         btn.addEventListener('click', () => onHistoryChipClick(h.value, h.unit));
       } else {
         btn.disabled = true;
