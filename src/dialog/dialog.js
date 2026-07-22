@@ -700,32 +700,89 @@
     }
   }
 
-  async function loadAndRenderHistory() {
-    // 跟 pushHistory 对称：CustomXmlPart 失败时降级到 localStorage
+  /**
+   * 扫描整个 presentation 里所有圆角矩形的 R 角值，
+   * 统计每个 cm 值出现次数，取 top 10（按出现次数降序，相同次数按值升序）
+   * 作为 history 的"种子"——打开 .pptx 时直接用文件里现成的 R 角
+   */
+  async function collectFileRadiusHistory() {
     try {
-      const history = await loadHistoryCustomXml();
-      if (history && history.length > 0) {
-        renderHistory(history);
-        return;
-      }
-      // CustomXmlPart 成功但空：再看 localStorage 有没有
+      return await PowerPoint.run(async (ctx) => {
+        const slides = ctx.presentation.slides;
+        slides.load('items/id');
+        await ctx.sync();
+        const counts = new Map(); // key=cm.toFixed(2), value=count
+        let scanned = 0;
+        for (const slide of slides.items) {
+          const shapes = slide.shapes;
+          shapes.load('items/id, items/adjustments, items/width, items/height');
+          await ctx.sync();
+          for (const sh of shapes.items) {
+            try {
+              if (!sh.adjustments || sh.adjustments.count === 0) continue;
+              const w = sh.width;
+              const h = sh.height;
+              if (!w || !h) continue;
+              const adjValue = sh.adjustments.get(0).value;
+              if (!Number.isFinite(adjValue) || adjValue <= 0) continue;
+              const minSideCm = Math.min(w, h) / PT_PER_CM;
+              const cm = adjValue * minSideCm;
+              if (!Number.isFinite(cm) || cm <= 0) continue;
+              scanned++;
+              const key = cm.toFixed(2);
+              counts.set(key, (counts.get(key) || 0) + 1);
+            } catch (e) {
+              // 单个形状读取失败，跳过
+            }
+          }
+        }
+        // 排序：count 降序；count 相同时 cm 升序
+        const sorted = Array.from(counts.entries())
+          .sort((a, b) => b[1] - a[1] || parseFloat(a[0]) - parseFloat(b[0]))
+          .slice(0, MAX_HISTORY * 2) // 多扫一些，留给 merge 时筛选
+          .map(([cmKey]) => ({ value: parseFloat(cmKey), unit: 'cm', ts: 0 }));
+        dbgLine(`file scan: ${scanned} roundRects, ${counts.size} unique cm, top: ${JSON.stringify(sorted.slice(0, 5))}`);
+        return sorted;
+      });
     } catch (e) {
-      dbgLine(`loadAndRenderHistory: CustomXmlPart failed → try localStorage`);
+      dbgLine(`file scan failed: ${e.message || e}`);
+      return [];
     }
+  }
+
+  async function loadAndRenderHistory() {
+    // 优先级：扫描文件的 top R 角 + 本次 session 应用的（localStorage）
+    // 合并：user history 在前（用户主动应用的值优先），文件扫描补后，去重
+    const fileHistory = await collectFileRadiusHistory();
+    let userHistory = [];
     try {
       const raw = localStorage.getItem('radius_in_ppt_history_v1');
       if (raw) {
-        const history = JSON.parse(raw);
-        if (Array.isArray(history) && history.length > 0) {
-          dbgLine(`loadAndRenderHistory: loaded ${history.length} from localStorage`);
-          renderHistory(history);
-          return;
-        }
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) userHistory = parsed;
       }
-    } catch (e2) {
-      dbgLine(`loadAndRenderHistory: localStorage read failed: ${e2.message || e2}`);
+    } catch (_) {}
+    // merge: user 优先，file 补后；去重按 (value, unit) 都精确匹配
+    const seen = new Set();
+    const merged = [];
+    for (const h of userHistory) {
+      const k = `${h.value}|${h.unit}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      merged.push(h);
+      if (merged.length >= MAX_HISTORY) break;
     }
-    renderHistory([]);
+    if (merged.length < MAX_HISTORY) {
+      for (const h of fileHistory) {
+        const k = `${h.value}|${h.unit}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        merged.push(h);
+        if (merged.length >= MAX_HISTORY) break;
+      }
+    }
+    dbgLine(`loadAndRenderHistory: user=${userHistory.length} file=${fileHistory.length} merged=${merged.length}`);
+    renderHistory(merged);
   }
 
   function onHistoryChipClick(value, unit) {
