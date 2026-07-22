@@ -191,31 +191,29 @@
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id, items/name, items/width, items/height, items/type, items/adjustments');
+        sel.load('items/id, items/name, items/width, items/height, items/adjustments');
         await ctx.sync();
         const shapes = [];
         for (const sh of sel.items) {
-          // 关键：task pane 上下文里 adjustments 子项的 value 不会自动跟随
-          // shapes.load 一起填，必须显式 load items/value 再 sync
+          const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+          // Mac LTSC task pane: get(0) 是 ClientResult 代理，先 get 再 sync
+          // 让 value 自动填上（不需要显式 load items/value）
+          const adjCount = sh.adjustments.count;
+          const adjResult = sh.adjustments.get(0);
+          await ctx.sync();
+          let value = null;
+          try { value = adjResult.value; } catch (_) { /* 不是 roundRect */ }
+          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
           let cm = null;
-          let isRoundRect = false;
-          if (sh.adjustments && sh.adjustments.count > 0) {
-            isRoundRect = true;
-            sh.adjustments.load('items/value');
-            await ctx.sync();
-            const value = sh.adjustments.get(0).value;
-            if (Number.isFinite(value) && value > 0) {
-              const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-              cm = value * minSideCm;
-            }
+          if (isRoundRect && Number.isFinite(value) && value > 0) {
+            cm = value * minSideCm;
           }
           shapes.push({
             id: sh.id,
             name: sh.name,
-            type: sh.type,
             width: sh.width,
             height: sh.height,
-            minSideCm: Math.min(sh.width, sh.height) / PT_PER_CM,
+            minSideCm,
             currentCm: cm,
             isRoundRect,
             locked: false,
