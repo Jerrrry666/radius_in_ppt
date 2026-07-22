@@ -27,6 +27,8 @@
   const ADJ_SCALE = 1;
   const LOCK_STORAGE_KEY = 'radius_in_ppt_locks_v2';
   const LOCK_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/locks/v1';
+  const HISTORY_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/history/v1';
+  const MAX_HISTORY = 5;
   let lockBackend = 'unknown';         // 'customXmlPart' | 'localStorage' | 'none'
 
   // 单位：'cm' | '%'  （输入/应用用，存储和锁都用 cm 统一）
@@ -177,6 +179,113 @@
     if (cm === null) delete m[shapeId];
     else m[shapeId] = cm;
     saveLocksLS(m);
+  }
+
+  // ---------------- 历史记录（CustomXmlPart，跟 .pptx 文件走） ----------------
+  // 每次「应用 R 角」成功后追加一条；只保留最近 MAX_HISTORY 条
+  // XML 格式：
+  //   <history xmlns="...">
+  //     <entry value="1.28" unit="cm" ts="1720000000"/>
+  //     <entry value="10" unit="%" ts="1720000001"/>
+  //   </history>
+
+  function buildHistoryXml(history) {
+    const entries = history
+      .map((h) => `    <entry value="${h.value}" unit="${escapeXml(h.unit)}" ts="${h.ts}"/>`)
+      .join('\n');
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<history xmlns="${HISTORY_XML_NS}">\n${entries}\n</history>`;
+  }
+
+  function parseHistoryXml(xml) {
+    const history = [];
+    if (!xml) return history;
+    try {
+      const doc = new DOMParser().parseFromString(xml, 'text/xml');
+      const nodes = doc.getElementsByTagNameNS(HISTORY_XML_NS, 'entry');
+      for (const n of nodes) {
+        const value = parseFloat(n.getAttribute('value'));
+        const unit = n.getAttribute('unit') || 'cm';
+        const ts = parseInt(n.getAttribute('ts') || '0', 10);
+        if (Number.isFinite(value)) history.push({ value, unit, ts });
+      }
+    } catch (e) {
+      console.warn('parseHistoryXml failed:', e);
+    }
+    return history;
+  }
+
+  function loadHistoryCustomXml() {
+    return new Promise((resolve, reject) => {
+      if (!Office.context.document || !Office.context.document.customXmlParts) {
+        reject(new Error('customXmlParts not available'));
+        return;
+      }
+      Office.context.document.customXmlParts.getByNamespaceAsync(
+        HISTORY_XML_NS,
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            reject(new Error(result.error?.message || 'getByNamespace failed'));
+            return;
+          }
+          if (!result.value || result.value.length === 0) {
+            resolve([]);
+            return;
+          }
+          result.value[0].getXmlAsync((xmlResult) => {
+            if (xmlResult.status !== Office.AsyncResultStatus.Succeeded) {
+              reject(new Error(xmlResult.error?.message || 'getXml failed'));
+              return;
+            }
+            resolve(parseHistoryXml(xmlResult.value));
+          });
+        }
+      );
+    });
+  }
+
+  function saveHistoryCustomXml(history) {
+    return new Promise((resolve, reject) => {
+      if (!Office.context.document || !Office.context.document.customXmlParts) {
+        reject(new Error('customXmlParts not available'));
+        return;
+      }
+      const xml = buildHistoryXml(history);
+      Office.context.document.customXmlParts.getByNamespaceAsync(
+        HISTORY_XML_NS,
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            reject(new Error(result.error?.message || 'getByNamespace failed'));
+            return;
+          }
+          if (result.value && result.value.length > 0) {
+            result.value[0].setXmlAsync(xml, (setResult) => {
+              if (setResult.status === Office.AsyncResultStatus.Succeeded) resolve();
+              else reject(new Error(setResult.error?.message || 'setXml failed'));
+            });
+          } else {
+            Office.context.document.customXmlParts.addAsync(xml, (addResult) => {
+              if (addResult.status === Office.AsyncResultStatus.Succeeded) resolve();
+              else reject(new Error(addResult.error?.message || 'addAsync failed'));
+            });
+          }
+        }
+      );
+    });
+  }
+
+  // 加一条历史：同 value+unit 的会移到最前，不重复；只保留 MAX_HISTORY 条
+  async function pushHistory(value, unit) {
+    try {
+      const history = await loadHistoryCustomXml();
+      const filtered = history.filter((h) => !(h.value === value && h.unit === unit));
+      filtered.unshift({ value, unit, ts: Date.now() });
+      const trimmed = filtered.slice(0, MAX_HISTORY);
+      await saveHistoryCustomXml(trimmed);
+      return trimmed;
+    } catch (e) {
+      console.warn('history 写失败（customXmlPart 不可用）:', e);
+      return [];
+    }
   }
 
   // ---------------- 初始化 ----------------
@@ -334,6 +443,7 @@
         }
       });
       renderUI();
+      loadAndRenderHistory();
       const dbg = $('debug-out');
       if (dbg) dbg.textContent = debugLines.join('\n') || '（无选中）';
       // 自动重应用锁的提示
@@ -439,6 +549,50 @@
   }
 
   // ---------------- 渲染 ----------------
+
+  function renderHistory(history) {
+    const box = $('history-chips');
+    if (!box) return;
+    if (!history || history.length === 0) {
+      box.innerHTML = '<span class="history-empty">应用后会自动记录</span>';
+      return;
+    }
+    box.innerHTML = '';
+    for (const h of history) {
+      const btn = document.createElement('button');
+      btn.className = 'history-chip';
+      btn.type = 'button';
+      btn.dataset.value = String(h.value);
+      btn.dataset.unit = h.unit;
+      const label = h.unit === '%'
+        ? `${Number.isInteger(h.value) ? h.value : h.value.toFixed(1)}%`
+        : `${h.value.toFixed(2)} cm`;
+      btn.textContent = label;
+      btn.title = `${label}（点击填入）`;
+      btn.addEventListener('click', () => onHistoryChipClick(h.value, h.unit));
+      box.appendChild(btn);
+    }
+  }
+
+  async function loadAndRenderHistory() {
+    try {
+      const history = await loadHistoryCustomXml();
+      renderHistory(history);
+    } catch (e) {
+      renderHistory([]);
+    }
+  }
+
+  function onHistoryChipClick(value, unit) {
+    // 切到该 chip 用的单位 + 填入数值
+    if (unit !== currentUnit) {
+      onUnitChange(unit);
+    }
+    $('radius-input').value = unit === '%'
+      ? (Number.isInteger(value) ? value : value.toFixed(1))
+      : value.toFixed(2);
+    $('radius-input').focus();
+  }
 
   function renderUI() {
     // 状态卡
@@ -606,6 +760,10 @@
           ? `${raw.toFixed(1)}%`
           : `${raw.toFixed(2)} 厘米`;
         showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}`);
+        // 成功后追加到历史记录（去重 + 限 5 条 + 跟文件走）
+        if (updated > 0) {
+          pushHistory(raw, currentUnit).then(loadAndRenderHistory);
+        }
       } else {
         showToast(`⚠️ ${updated} 个成功，${failed} 个失败（可能不是圆角矩形）`);
       }

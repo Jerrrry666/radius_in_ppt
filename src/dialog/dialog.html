@@ -49,6 +49,7 @@
           <button type="button" class="unit-btn" data-unit="%" role="tab" aria-selected="false">百分比</button>
         </div>
       </div>
+      <div id="radius-hint" class="hint">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
       <div class="input-row">
         <input
           id="radius-input"
@@ -60,7 +61,12 @@
         />
         <span id="unit-label" class="unit">厘米</span>
       </div>
-      <div id="radius-hint" class="hint">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
+      <div class="history-row">
+        <span class="history-label">最近 5 次</span>
+        <div id="history-chips" class="history-chips">
+          <span class="history-empty">应用后会自动记录</span>
+        </div>
+      </div>
     </section>
 
     <section class="control-group">
