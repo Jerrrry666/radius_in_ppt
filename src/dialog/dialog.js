@@ -46,17 +46,25 @@
   // ---------------- 读选区 ----------------
 
   async function refreshSelection() {
+    setStatus('选区', '读选中…', 'status-empty');
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
         sel.load('items/id,items/name,items/width,items/height,items/adjustments');
         const props = ctx.presentation.customProperties;
-        props.load('items/key,items/value');
+        props.load('items');
+        await ctx.sync();
+
+        // 加载每个 customProperty 的 key + value
+        const items = props.items || [];
+        for (const cp of items) {
+          cp.load('key, value');
+        }
         await ctx.sync();
 
         // 收集所有锁：key 形如 "lock:{shapeId}"
         const locks = {};
-        for (const cp of props.items) {
+        for (const cp of items) {
           const k = cp.key;
           if (k && k.startsWith('lock:')) {
             const cm = parseFloat(cp.value);
@@ -84,8 +92,18 @@
       });
       renderUI();
     } catch (err) {
+      setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
       showToast('读选区失败: ' + (err.message || err));
     }
+  }
+
+  // ---------------- UI helpers ----------------
+
+  function setStatus(label, text, cardClass) {
+    $('status-text').textContent = text;
+    $('status-card').className = 'status-card ' + cardClass;
+    const labelEl = document.querySelector('.status-row .status-label');
+    if (labelEl) labelEl.textContent = label;
   }
 
   // ---------------- 渲染 ----------------
@@ -93,14 +111,11 @@
   function renderUI() {
     // 状态卡
     if (selectedShapes.length === 0) {
-      $('status-text').textContent = '未选中';
+      setStatus('选区', '未选中', 'status-warn');
       $('current-radius').textContent = '—';
       $('locked-count').textContent = '—';
-      $('status-card').className = 'status-card status-warn';
     } else {
-      $('status-text').textContent = `${selectedShapes.length} 个`;
-      $('status-card').className = 'status-card status-ok';
-      // 当前 R 角
+      setStatus('选区', `${selectedShapes.length} 个`, 'status-ok');
       if (selectedShapes.length === 1) {
         $('current-radius').textContent = `${selectedShapes[0].currentCm.toFixed(2)} 厘米`;
       } else {
@@ -146,11 +161,15 @@
 
   function updateLockButton() {
     const btn = $('lock-btn');
+    const applyBtn = $('apply-btn');
+    const reapplyBtn = $('reapply-btn');
     const label = $('lock-label');
     const icon = $('lock-icon');
     const hint = $('lock-hint');
     if (selectedShapes.length === 0) {
       btn.disabled = true;
+      applyBtn.disabled = true;
+      reapplyBtn.disabled = true;
       btn.classList.remove('is-locked');
       label.textContent = '锁定 R 角';
       icon.textContent = '🔓';
@@ -158,7 +177,9 @@
       return;
     }
     btn.disabled = false;
+    applyBtn.disabled = false;
     const lockedN = selectedShapes.filter((s) => s.locked).length;
+    reapplyBtn.disabled = lockedN === 0;
     if (lockedN === 0) {
       btn.classList.remove('is-locked');
       label.textContent = '锁定 R 角';
