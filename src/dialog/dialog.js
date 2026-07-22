@@ -274,19 +274,26 @@
   }
 
   // 加一条历史：同 value+unit 的会移到最前，不重复；只保留 MAX_HISTORY 条
+  function dbgLine(msg) {
+    const dbg = $('debug-out');
+    if (!dbg) return;
+    const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    dbg.textContent = `[${ts}] ${msg}\n` + dbg.textContent;
+  }
+
   async function pushHistory(value, unit) {
     try {
-      console.log('[history] pushHistory enter', { value, unit });
+      dbgLine(`pushHistory enter: value=${value} unit=${unit}`);
       const history = await loadHistoryCustomXml();
-      console.log('[history] current loaded:', history);
+      dbgLine(`loaded ${history.length} entries from CustomXmlPart`);
       const filtered = history.filter((h) => !(h.value === value && h.unit === unit));
       filtered.unshift({ value, unit, ts: Date.now() });
       const trimmed = filtered.slice(0, MAX_HISTORY);
       await saveHistoryCustomXml(trimmed);
-      console.log('[history] saved:', trimmed);
+      dbgLine(`saved to CustomXmlPart: ${JSON.stringify(trimmed)}`);
       return trimmed;
     } catch (e) {
-      console.warn('[history] push failed:', e);
+      dbgLine(`CustomXmlPart FAILED: ${e.message || e} → fall back to localStorage`);
       // 降级：写 localStorage（仅在 customXmlPart 不可用时）
       try {
         const raw = localStorage.getItem('radius_in_ppt_history_v1');
@@ -295,10 +302,10 @@
         filtered.unshift({ value, unit, ts: Date.now() });
         const trimmed = filtered.slice(0, MAX_HISTORY);
         localStorage.setItem('radius_in_ppt_history_v1', JSON.stringify(trimmed));
-        console.log('[history] saved to localStorage:', trimmed);
+        dbgLine(`saved to localStorage: ${JSON.stringify(trimmed)}`);
         return trimmed;
       } catch (e2) {
-        console.warn('[history] localStorage also failed:', e2);
+        dbgLine(`localStorage also FAILED: ${e2.message || e2}`);
         return [];
       }
     }
@@ -568,7 +575,11 @@
 
   function renderHistory(history) {
     const box = $('history-toggle');
-    if (!box) return;
+    dbgLine(`renderHistory called: list.length=${Array.isArray(history) ? history.length : 'NOT_ARRAY'}`);
+    if (!box) {
+      dbgLine(`renderHistory ABORT: #history-toggle not found in DOM`);
+      return;
+    }
     box.innerHTML = '';
     const list = Array.isArray(history) ? history : [];
     // 始终显示 5 个槽位：前 N 个是真实记录，后 (5-N) 个是 disabled 占位
