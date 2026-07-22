@@ -21,16 +21,47 @@ SERVER_JS="$RES_DIR/tools/serve.js"
 LOG_FILE="/tmp/radius_in_ppt.log"
 PID_FILE="/tmp/radius_in_ppt.pid"
 
-# ---------- 2. 检查 node ----------
-if ! command -v node >/dev/null 2>&1; then
-  osascript <<'EOF' 2>/dev/null || true
-display dialog "需要先安装 Node.js 18+ 才能运行 R 角调整。
+# ---------- 2. 找 node（macOS 双击 .app 时 PATH 不包含 /opt/homebrew/bin）----------
 
-访问 https://nodejs.org/ 下载安装 LTS 版本。" buttons {"打开 Node.js 官网"} default button "打开 Node.js 官网" with title "R 角调整" with icon stop
+find_node() {
+  # 1. 先看 PATH
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  # 2. 常见安装位置（按优先级）
+  local candidates=(
+    "/opt/homebrew/bin/node"            # Apple Silicon Homebrew
+    "/usr/local/bin/node"                # Intel Homebrew / pkg 安装
+    "/opt/local/bin/node"                # MacPorts
+    "$HOME/.nvm/versions/node/$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null | tail -1)/bin/node"  # nvm 默认版本
+    "/usr/bin/node"                      # 几乎不存在，留个兜底
+  )
+  for c in "${candidates[@]}"; do
+    if [ -x "$c" ]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+NODE_BIN="$(find_node || true)"
+if [ -z "$NODE_BIN" ]; then
+  osascript <<'EOF' 2>/dev/null || true
+display dialog "没找到 Node.js（需要 18+）。
+
+R 角调整的 server 用 Node.js 跑。
+
+最简单的安装方式：Terminal 跑下面这一行
+    brew install node
+
+或者访问 https://nodejs.org/ 下载 LTS 安装包。" buttons {"打开 Node.js 官网"} default button "打开 Node.js 官网" with title "R 角调整" with icon stop
 EOF
   open "https://nodejs.org/" >/dev/null 2>&1 || true
   exit 1
 fi
+echo "[RadiusInPpt] using node: $NODE_BIN ($($NODE_BIN --version 2>&1))"
 
 # ---------- 3. 检查端口 ----------
 is_port_in_use() {
@@ -58,7 +89,7 @@ fi
 # ---------- 4. 启动 server ----------
 start_server() {
   cd "$RES_DIR" || exit 1
-  nohup node "$SERVER_JS" >> "$LOG_FILE" 2>&1 &
+  nohup "$NODE_BIN" "$SERVER_JS" >> "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
   sleep 2
   if is_port_in_use; then
