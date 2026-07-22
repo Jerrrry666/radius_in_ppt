@@ -6,6 +6,8 @@
   <title>R 角调整</title>
   <link rel="stylesheet" href="dialog.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <!-- JSZip for parsing .pptx (Office.js 不支持 getSelectedDataAsync Shape on Mac) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="../shared/radius.js"></script>
   <script src="dialog.js"></script>
 </head>
@@ -19,11 +21,26 @@
     <section id="status-card" class="status-card status-empty">
       <div class="status-row">
         <span class="status-label">选区</span>
-        <span id="status-text" class="status-text">读取中…</span>
+        <span id="status-text" class="status-text">扫描中…</span>
       </div>
       <div class="status-row">
         <span class="status-label">当前 R 角</span>
         <span id="current-radius" class="status-text">—</span>
+      </div>
+    </section>
+
+    <section class="control-group">
+      <div class="list-header">
+        <label class="control-label">圆角矩形列表</label>
+        <span id="list-count" class="hint">—</span>
+      </div>
+      <div id="shape-list" class="shape-list">
+        <div class="empty-list">扫描文档中…</div>
+      </div>
+      <div class="list-actions">
+        <button id="select-all-btn" class="btn btn-ghost">全选</button>
+        <button id="deselect-all-btn" class="btn btn-ghost">全不选</button>
+        <button id="rescan-btn" class="btn btn-ghost">重新扫描</button>
       </div>
     </section>
 

@@ -249,3 +249,80 @@ body {
 .toast.show {
   opacity: 0.92;
 }
+
+/* 圆角矩形列表 */
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.shape-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #c8c6c4;
+  border-radius: 4px;
+  background: #ffffff;
+  margin-top: 4px;
+}
+
+.shape-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #edebe9;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+
+.shape-row:last-child {
+  border-bottom: none;
+}
+
+.shape-row:hover {
+  background: #f3f2f1;
+}
+
+.shape-row.selected {
+  background: #e7f3ff;
+}
+
+.shape-row input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.shape-name {
+  flex: 1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shape-meta {
+  font-size: 11px;
+  color: #605e5c;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.empty-list {
+  padding: 24px 12px;
+  text-align: center;
+  color: #8a8886;
+  font-size: 12px;
+}
+
+.list-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.list-actions .btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 8px;
+}

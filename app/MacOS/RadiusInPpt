@@ -97,6 +97,32 @@ start_server() {
   fi
 }
 
+# ---------- 4.5. 记下当前 PowerPoint .pptx 路径（给 server 用）----------
+PPTX_PATH_FILE="/tmp/radius_in_ppt_pptx_path.txt"
+detect_pptx() {
+  local script='
+  tell application "PowerPoint"
+    try
+      if not (exists active window) then return ""
+      return full name of (presentation of active window)
+    on error
+      return ""
+    end try
+  end tell
+  '
+  local tmp
+  tmp=$(mktemp /tmp/radius_in_ppt_as_XXXXXX.applescript)
+  printf '%s' "$script" > "$tmp"
+  local out
+  out=$(/usr/bin/osascript "$tmp" 2>/dev/null | tr -d '\r\n')
+  rm -f "$tmp"
+  if [ -n "$out" ] && [ -f "$out" ]; then
+    echo "$out" > "$PPTX_PATH_FILE"
+    echo "[RadiusInPpt] recorded .pptx path: $out"
+  fi
+}
+detect_pptx
+
 if [ "$EXISTING_MODE" = "0" ]; then
   if ! start_server; then
     osascript <<'EOF' 2>/dev/null
