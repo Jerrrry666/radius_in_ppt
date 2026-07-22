@@ -29,6 +29,9 @@
   const LOCK_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/locks/v1';
   const HISTORY_XML_NS = 'https://radius.jerrrry666.com/radius-in-ppt/history/v1';
   const MAX_HISTORY = 5;
+  // 本次 session 内用户主动应用过的 R 角值，纯内存（关掉 PPT 任务窗格就清空）
+  // 不再用 localStorage 持久化——文件扫描已经能提供 seed history
+  let userHistory = [];
   let lockBackend = 'unknown';         // 'customXmlPart' | 'localStorage' | 'none'
 
   // 单位：'cm' | '%'  （输入/应用用，存储和锁都用 cm 统一）
@@ -370,33 +373,13 @@
   }
 
   async function pushHistory(value, unit) {
-    try {
-      dbgLine(`pushHistory enter: value=${value} unit=${unit}`);
-      const history = await loadHistoryCustomXml();
-      dbgLine(`loaded ${history.length} entries from CustomXmlPart`);
-      const filtered = history.filter((h) => !(h.value === value && h.unit === unit));
-      filtered.unshift({ value, unit, ts: Date.now() });
-      const trimmed = filtered.slice(0, MAX_HISTORY);
-      await saveHistoryCustomXml(trimmed);
-      dbgLine(`saved to CustomXmlPart: ${JSON.stringify(trimmed)}`);
-      return trimmed;
-    } catch (e) {
-      dbgLine(`CustomXmlPart FAILED: ${e.message || e} → fall back to localStorage`);
-      // 降级：写 localStorage（仅在 customXmlPart 不可用时）
-      try {
-        const raw = localStorage.getItem('radius_in_ppt_history_v1');
-        const history = raw ? JSON.parse(raw) : [];
-        const filtered = history.filter((h) => !(h.value === value && h.unit === unit));
-        filtered.unshift({ value, unit, ts: Date.now() });
-        const trimmed = filtered.slice(0, MAX_HISTORY);
-        localStorage.setItem('radius_in_ppt_history_v1', JSON.stringify(trimmed));
-        dbgLine(`saved to localStorage: ${JSON.stringify(trimmed)}`);
-        return trimmed;
-      } catch (e2) {
-        dbgLine(`localStorage also FAILED: ${e2.message || e2}`);
-        return [];
-      }
-    }
+    // history 现在只活在内存（userHistory）+ 文件扫描：localStorage 已被弃用
+    dbgLine(`pushHistory enter: value=${value} unit=${unit} (in-memory)`);
+    const filtered = userHistory.filter((h) => !(h.value === value && h.unit === unit));
+    filtered.unshift({ value, unit, ts: Date.now() });
+    userHistory = filtered.slice(0, MAX_HISTORY);
+    dbgLine(`user history now: ${JSON.stringify(userHistory)}`);
+    return userHistory;
   }
 
   // ---------------- 初始化 ----------------
@@ -751,18 +734,11 @@
   }
 
   async function loadAndRenderHistory() {
-    // 优先级：扫描文件的 top R 角 + 本次 session 应用的（localStorage）
-    // 合并：user history 在前（用户主动应用的值优先），文件扫描补后，去重
+    // 优先级：本次 session 主动应用的值（内存 userHistory）+ 扫描文件的 top R 角
+    // 合并：user 优先，file 补后，去重按 (value, unit)
     const fileHistory = await collectFileRadiusHistory();
-    let userHistory = [];
-    try {
-      const raw = localStorage.getItem('radius_in_ppt_history_v1');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) userHistory = parsed;
-      }
-    } catch (_) {}
-    // merge: user 优先，file 补后；去重按 (value, unit) 都精确匹配
+    // 主动清理可能残留的旧 localStorage 数据（升级前的脏数据）
+    try { localStorage.removeItem('radius_in_ppt_history_v1'); } catch (_) {}
     const seen = new Set();
     const merged = [];
     for (const h of userHistory) {
