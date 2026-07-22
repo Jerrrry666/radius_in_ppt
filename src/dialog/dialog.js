@@ -191,14 +191,18 @@
     try {
       await PowerPoint.run(async (ctx) => {
         const sel = ctx.presentation.getSelectedShapes();
-        // adjustments.count 是 primitive，不需要 load
         sel.load('items/id, items/name, items/width, items/height, items/type, items/adjustments');
         await ctx.sync();
         const shapes = [];
         for (const sh of sel.items) {
+          // 关键：task pane 上下文里 adjustments 子项的 value 不会自动跟随
+          // shapes.load 一起填，必须显式 load items/value 再 sync
           let cm = null;
+          let isRoundRect = false;
           if (sh.adjustments && sh.adjustments.count > 0) {
-            // Mac LTSC: adjustments.get(0) 是 ClientResult 代理，直接 .value
+            isRoundRect = true;
+            sh.adjustments.load('items/value');
+            await ctx.sync();
             const value = sh.adjustments.get(0).value;
             if (Number.isFinite(value) && value > 0) {
               const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
@@ -213,7 +217,7 @@
             height: sh.height,
             minSideCm: Math.min(sh.width, sh.height) / PT_PER_CM,
             currentCm: cm,
-            isRoundRect: sh.adjustments && sh.adjustments.count > 0,
+            isRoundRect,
             locked: false,
             lockedCm: null,
           });
