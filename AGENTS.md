@@ -190,6 +190,21 @@ done
 Office Add-in 允许 `http://localhost` 走 HTTP（**不**需要 HTTPS / 证书）。
 manifest 里所有 URL 都是 `http://localhost:3000`。
 
+### 5.4 ⚠️ iCloud Documents 下的 dist 重建
+
+如果项目放在 `~/Documents/`（iCloud Drive 同步盘），**别外层 `mavis-trash dist`**：
+- iCloud 会把 dist 移到自己的 Trash，30 天后才真正删除
+- 期间 PowerPoint / Spotlight / 其他 macOS 服务还在引用旧路径
+- 系统会反复弹 "无法完成此操作，因为需要下载'dist'" 让用户恢复
+
+**正确做法**：直接 `bash tools/build-app.sh` 覆盖式重建（脚本内部 `find $DIST -mindepth 1 -maxdepth 1 -exec rm -rf {} +` 已经清掉 `.app` / `.dmg` / `dmg-staging` / `AppIcon.iconset`），不要在外层 trash dist。
+
+如果已经被卡住、对话框反复弹：
+1. 点"好"消掉
+2. Cmd+Q PowerPoint
+3. `touch /Users/ma/Documents/minimax/radius_in_ppt/dist` 强制 iCloud 重新拉本地
+4. 重启 .app
+
 ## 6. Git 推送（带 token 走 HTTPS）
 
 Mac 上 token 经常被 git 拒（认证对话框），用一次性 credential helper：
