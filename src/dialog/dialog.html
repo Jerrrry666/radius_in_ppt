@@ -75,21 +75,58 @@
     </section>
 
     <section class="control-group">
+      <div class="list-header">
+        <label class="control-label">预设库（5 槽位）</label>
+        <button id="preset-add-btn" class="btn btn-ghost btn-mini" title="把当前选中的圆角矩形 R 角（或输入框值）存为预设">+ 保存当前 R 角</button>
+      </div>
+      <div id="preset-list" class="preset-list">
+        <div class="preset-empty">保存常用 R 角，一键应用。点击「+ 保存当前值」开始。</div>
+      </div>
+      <div class="hint">预设纯内存保存，关掉 task pane 后失效（v1.2 升级为跨 session）。</div>
+    </section>
+
+    <section class="control-group">
+      <div class="list-header">
+        <label class="control-label">R 角样式刷</label>
+        <span id="pipette-hint" class="pipette-hint">点击吸取一个圆角矩形的 R 角，再点其他形状应用</span>
+      </div>
+      <div class="pipette-row">
+        <button id="pipette-btn" class="btn btn-secondary pipette-btn" data-state="idle">
+          <span id="pipette-icon">🖌️</span>
+          <span id="pipette-label">吸取 R 角</span>
+        </button>
+        <label id="pipette-sync-label" class="pipette-sync-option" title="勾选后样式刷会把源形状的「防误触」开关状态同步到目标（不论目标是否已使用数值固定 R 角）">
+          <input type="checkbox" id="pipette-sync-checkbox">
+          <span>刷防误触状态</span>
+        </label>
+        <span id="pipette-state-badge" class="pipette-state-badge idle">空闲</span>
+      </div>
+    </section>
+
+    <section class="control-group">
       <div class="lock-row">
         <button id="lock-btn" class="btn btn-secondary" disabled>
-          <span id="lock-icon" class="lock-icon">🔓</span>
-          <span id="lock-label">锁定 R 角</span>
+          <span id="lock-icon" class="lock-icon">🔒</span>
+          <span id="lock-label">使用数值固定 R 角</span>
         </button>
         <span id="lock-hint" class="lock-hint">读选中…</span>
       </div>
-      <div class="hint">锁定后 R 角按厘米值保持；改变形状大小时自动按比例调整。</div>
+      <div class="strict-row">
+        <label id="strict-toggle" class="strict-toggle disabled" title="开启后任何修改都不会改 R 角（task pane / PPT 内编辑都拒绝）">
+          <input type="checkbox" id="strict-checkbox" disabled>
+          <span class="strict-slider"></span>
+          <span class="strict-label">防误触</span>
+          <span class="strict-hint">开启后任何修改都不改 R 角</span>
+        </label>
+      </div>
+      <div class="hint">开启使用数值固定 R 角后 R 角按厘米值保持，PPT 内的任何编辑（拖控制柄等）都会被反算。开启防误触可让 task pane 内的按钮也拒绝改值。</div>
     </section>
 
     <section class="control-group">
       <button id="reapply-btn" class="btn btn-ghost" disabled>重新应用锁定（针对当前选区）</button>
     </section>
 
-    <footer class="footer">v1.0 · task pane · shape.tags 持久化</footer>
+    <footer class="footer">v1.1 · 预设库 + 样式刷 + 使用数值固定 R 角/防误触</footer>
   </main>
   <div id="toast" class="toast"></div>
 </body>

@@ -301,6 +301,87 @@ body {
   color: #8a8886;
 }
 
+/* 固定 R 角数值开关行 */
+.strict-row {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+}
+
+/* iOS 风格 toggle */
+.strict-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: #605e5c;
+}
+
+.strict-toggle.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.strict-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.strict-slider {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background: #c8c6c4;
+  border-radius: 10px;
+  transition: background 0.18s;
+  flex-shrink: 0;
+}
+
+.strict-slider::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.18s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.strict-toggle input:checked + .strict-slider {
+  background: #0078d4;
+}
+
+.strict-toggle input:checked + .strict-slider::before {
+  transform: translateX(16px);
+}
+
+.strict-toggle input:focus-visible + .strict-slider {
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.35);
+}
+
+.strict-label {
+  font-weight: 500;
+  color: #201f1e;
+  white-space: nowrap;
+}
+
+.strict-hint {
+  font-size: 11px;
+  color: #8a8886;
+  white-space: nowrap;
+}
+
+.strict-toggle input:checked ~ .strict-label {
+  color: #005a9e;
+}
+
 /* 形状列表 */
 .list-header {
   display: flex;
@@ -358,6 +439,12 @@ body {
   flex-shrink: 0;
 }
 
+.shape-lock-strict {
+  background: #fde7e9;
+  color: #a4262c;
+  font-weight: 500;
+}
+
 .shape-warn {
   font-size: 10px;
   background: #fde7e9;
@@ -407,4 +494,248 @@ body {
 .toast-show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* ============== v1.1 新增：预设库 ============== */
+
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #ffffff;
+  border: 1px solid #e1dfdd;
+  border-radius: 4px;
+  padding: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  background: #ffffff;
+  transition: background 0.12s;
+}
+
+.preset-row:hover {
+  background: #f3f2f1;
+}
+
+.preset-row .preset-name {
+  flex: 1;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #201f1e;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+
+.preset-row .preset-name:hover:not(:focus) {
+  border-color: #e1dfdd;
+}
+
+.preset-row .preset-name:focus {
+  border-color: #0078d4;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #0078d4;
+}
+
+.preset-row .preset-value {
+  font-variant-numeric: tabular-nums;
+  color: #605e5c;
+  font-size: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.preset-row .preset-value-input {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: #201f1e;
+  width: 62px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 3px;
+  font-family: inherit;
+  outline: none;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.preset-row .preset-value-input:hover:not(:focus) {
+  border-color: #e1dfdd;
+  background: #ffffff;
+}
+
+.preset-row .preset-value-input:focus {
+  border-color: #0078d4;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #0078d4;
+}
+
+.preset-row .preset-apply {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid #c8c6c4;
+  background: #ffffff;
+  color: #0078d4;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+.preset-row .preset-apply:hover {
+  background: #e7f3ff;
+  border-color: #0078d4;
+}
+
+.preset-row .preset-apply:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.preset-row .preset-del {
+  background: transparent;
+  border: none;
+  color: #a19f9d;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.preset-row .preset-del:hover {
+  color: #a4262c;
+}
+
+.preset-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: #a19f9d;
+  font-size: 12px;
+}
+
+/* ============== v1.1 新增：样式刷 ============== */
+
+.pipette-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pipette-btn {
+  position: relative;
+}
+
+.pipette-btn.state-sourcing {
+  background: #fff4ce;
+  border-color: #f7d6a5;
+  color: #7a5a00;
+}
+
+.pipette-btn.state-sourcing::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background: #f7d6a5;
+  border-radius: 50%;
+  animation: pipette-pulse 1.2s ease-in-out infinite;
+}
+
+.pipette-btn.state-brushing {
+  background: #e7f3ff;
+  border-color: #0078d4;
+  color: #005a9e;
+}
+
+.pipette-btn.state-brushing::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background: #0078d4;
+  border-radius: 50%;
+  animation: pipette-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pipette-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.pipette-state-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pipette-state-badge.idle {
+  background: #f3f2f1;
+  color: #605e5c;
+}
+
+.pipette-state-badge.sourcing {
+  background: #fff4ce;
+  color: #7a5a00;
+}
+
+.pipette-state-badge.brushing {
+  background: #e7f3ff;
+  color: #005a9e;
+}
+
+.pipette-state-badge.empty {
+  display: none;
+}
+
+.pipette-hint {
+  font-size: 11px;
+  color: #8a8886;
+  line-height: 1.4;
+}
+
+.pipette-hint.has-source {
+  color: #005a9e;
+  font-weight: 500;
+}
+
+.pipette-sync-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #605e5c;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.pipette-sync-option input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.pipette-sync-option input:checked ~ span {
+  color: #005a9e;
+  font-weight: 500;
 }
