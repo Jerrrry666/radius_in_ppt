@@ -6,6 +6,8 @@
   <title>R 角调整</title>
   <link rel="stylesheet" href="dialog.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <script src="../lib/ppt-driver.js"></script>
+  <script src="../lib/radius-core.js"></script>
   <script src="dialog.js"></script>
 </head>
 <body>
@@ -103,6 +105,91 @@
       </div>
     </section>
 
+    <section id="layout-panel" class="control-group layout-panel">
+      <div class="list-header">
+        <label class="control-label">布局模式（v1.2）</label>
+        <span id="layout-hint" class="layout-hint">—</span>
+      </div>
+      <div id="layout-empty" class="layout-empty">
+        <div class="layout-empty-text">在 PPT 里选 1+ 个圆角矩形（可以包含其他形状），然后在下面指定哪个是父、哪些是子。</div>
+        <div id="layout-setup-list" class="layout-setup-list">
+          <!-- 由 renderLayoutSetupList 动态生成 -->
+          <div class="layout-setup-empty">在 PPT 里选 1+ 个圆角矩形</div>
+        </div>
+        <div class="layout-setup-row">
+          <label class="layout-setup-label">行</label>
+          <input id="layout-setup-rows" type="number" min="1" max="5" step="1" value="2" class="layout-setup-input" />
+          <span class="layout-setup-x">×</span>
+          <label class="layout-setup-label">列</label>
+          <input id="layout-setup-cols" type="number" min="1" max="5" step="1" value="2" class="layout-setup-input" />
+          <button id="layout-setup-btn" class="btn btn-primary btn-mini" disabled>建布局</button>
+        </div>
+        <div class="hint">选 1 父 + rows×cols 子后，「建布局」按钮启用。</div>
+      </div>
+      <div id="layout-active" class="layout-active" style="display:none">
+        <div class="layout-info">
+          <span class="layout-info-label">父</span>
+          <span id="layout-parent-name" class="layout-info-value">—</span>
+          <span class="layout-info-sep">·</span>
+          <span class="layout-info-label">子</span>
+          <span id="layout-children-count" class="layout-info-value">—</span>
+        </div>
+        <div class="layout-grid-row">
+          <label class="layout-grid-label">行</label>
+          <input id="layout-rows" type="range" min="1" max="5" step="1" value="2" class="layout-range" />
+          <input id="layout-rows-num" type="number" min="1" max="5" step="1" value="2" class="layout-num" />
+        </div>
+        <div class="layout-grid-row">
+          <label class="layout-grid-label">列</label>
+          <input id="layout-cols" type="range" min="1" max="5" step="1" value="2" class="layout-range" />
+          <input id="layout-cols-num" type="number" min="1" max="5" step="1" value="2" class="layout-num" />
+        </div>
+        <div class="layout-grid-row">
+          <label class="layout-grid-label">边距</label>
+          <input id="layout-padding" type="range" min="0" max="3" step="0.05" value="0.5" class="layout-range" />
+          <input id="layout-padding-num" type="number" min="0" max="3" step="0.05" value="0.50" class="layout-num" />
+          <span class="layout-unit">cm</span>
+        </div>
+        <div class="layout-grid-row">
+          <label class="layout-grid-label">间距</label>
+          <input id="layout-gutter" type="range" min="0" max="3" step="0.05" value="0.3" class="layout-range" />
+          <input id="layout-gutter-num" type="number" min="0" max="3" step="0.05" value="0.30" class="layout-num" />
+          <span class="layout-unit">cm</span>
+        </div>
+        <div class="layout-preview-row">
+          <span class="layout-preview-label">子尺寸</span>
+          <span id="layout-preview-size" class="layout-preview-value">—</span>
+        </div>
+        <div class="layout-options-row">
+          <label class="layout-toggle-label">R 角联动</label>
+          <div class="layout-link-r-group">
+            <label class="layout-link-r-opt">
+              <input type="radio" name="layout-link-r-mode" value="subtract" checked>
+              <span>近似等宽（r = 父 R − 边距）</span>
+            </label>
+            <label class="layout-link-r-opt">
+              <input type="radio" name="layout-link-r-mode" value="same">
+              <span>严格 45° 等宽（r = 父 R）</span>
+            </label>
+            <label class="layout-link-r-opt">
+              <input type="radio" name="layout-link-r-mode" value="off">
+              <span>不联动（手动）</span>
+            </label>
+          </div>
+        </div>
+        <div class="layout-actions-row">
+          <button id="layout-detach-btn" class="btn btn-ghost">脱离布局</button>
+          <span id="layout-warn" class="layout-warn"></span>
+        </div>
+      </div>
+      <div id="layout-child-info" class="layout-child-info" style="display:none">
+        <div class="layout-child-text">
+          当前形状属于一个布局（父：<span id="layout-child-parent">—</span>）。修改父或脱离布局后可独立调整。
+        </div>
+        <button id="layout-child-detach-btn" class="btn btn-ghost">脱离此布局</button>
+      </div>
+    </section>
+
     <section class="control-group">
       <div class="lock-row">
         <button id="lock-btn" class="btn btn-secondary" disabled>
@@ -126,7 +213,17 @@
       <button id="reapply-btn" class="btn btn-ghost" disabled>重新应用锁定（针对当前选区）</button>
     </section>
 
-    <footer class="footer">v1.1 · 预设库 + 样式刷 + 使用数值固定 R 角/防误触</footer>
+    <footer class="footer">v1.2 · 布局模式（rows × cols 网格 + 边距/间距滑块 + R 角联动）</footer>
+
+    <details id="debug-log" class="debug-log">
+      <summary>
+        <span>🔧 调试日志（点击展开）</span>
+        <button type="button" id="smoke-test-btn" class="debug-copy-btn" title="跑遍所有 driver 方法，在 PPT 实际验证一遍">🧪 Driver 烟囱测试</button>
+        <button type="button" id="debug-copy-btn" class="debug-copy-btn" title="复制全部日志到剪贴板">📋 复制</button>
+        <button type="button" id="debug-clear-btn" class="debug-clear-btn" title="清空日志">🗑️ 清空</button>
+      </summary>
+      <div id="debug-log-body" class="debug-log-body"></div>
+    </details>
   </main>
   <div id="toast" class="toast"></div>
 </body>

@@ -16,6 +16,8 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
 
 ## 2. 架构
 
+### 2.1 部署架构（PPT ↔ task pane ↔ server）
+
 **纯 Office.js + task pane**：
 
 ```
@@ -38,6 +40,107 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
 **lock 持久化用 `shape.tags`**（OOXML `<p:tagLst>` 段），跟着形状走，save .pptx 后跨设备/换机器都保留。
 
 **history 纯内存**（本次 session 内用户主动应用过的 R 角值，关掉 PPT 任务窗格就清空）。
+
+### 2.2 代码架构（两层 + UI 层）—— **2026-07-24 决定**
+
+v1.2 暴露出来的问题：bug 卡在"是 PowerPoint 怪还是我逻辑怪"上永远分不清，
+最后发现是 Office.js 的坑（per-shape load adjustments 不 work、load('tags') + sync 在 Mac LTSC 抛异常）
+混在业务逻辑里，调试要靠 console.log 反推根因。
+
+**新结构**：
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  dialog.js (UI 层)                                           │
+│  - 事件绑定、渲染、toast、debug log                           │
+│  - 极薄，每个 handler 5-10 行                                 │
+└──────────────────────────────────────────────────────────────┘
+                              │ 调用
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│  src/lib/radius-core.js (实现层)                             │
+│  - 所有 feature：writeRadius / applyLayout / applyPipette    │
+│  - 业务判断：strict 拦截、lock 联动、padding 公式、关联父子   │
+│  - 第一参数必是 driver（与 Office.js 解耦）                   │
+│  - 零 Office.js 调用 → 可 100% 单元测试                       │
+└──────────────────────────────────────────────────────────────┘
+                              │ 调用
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│  src/lib/ppt-driver.js (交互层)  ← 新文件                    │
+│  - createDriver(ctx) 工厂，导出 box/adj/load/sync/tagValue/   │
+│    addTag/deleteTag 等小方法                                  │
+│  - 每个方法假定"已 load + sync 过"，方法本身不调 load          │
+│  - 零业务逻辑（不知道 strict / lock / layout 是什么）          │
+│  - PPT 验过一次没 bug 后不再修改                              │
+└──────────────────────────────────────────────────────────────┘
+                              │ 调
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Office.js + PowerPoint (LTSC Mac)                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**关键约束**：
+- **driver 不知道任何业务概念**——它只懂"形状"、"标签 key"、"调整值 0~1 分数"。
+  不知道 `LOCK_TAG_KEY` / `LAYOUT_PARENT_TAG_KEY` 这些 key 字符串，也不管 strict
+  标记是 `'1'` 还是 `'true'`，那是实现层的事。
+- **实现层不 import Office.js**——所有形状读 / 写 / load / sync 都走 driver 方法。
+  想测 feature 就 mock 一个 driver 对象喂进去。
+- **UI 层是搬运工**——`onClick → 开 driver → 调 feature 函数 → 渲染结果`。
+
+**driver API 形态**（10 个左右方法）：
+```js
+function createDriver(ctx) {
+  return {
+    // 加载 + 同步
+    load: (proxy, fields) => proxy.load(fields),  // 传 'items/...' 路径
+    sync: () => ctx.sync(),
+
+    // 读（假定已 load + sync）
+    box: (s) => ({ left, top, width, height }),
+    adjFraction: (s) => s.adjustments.count > 0 ? s.adjustments.get(0).value : 0,
+    isRoundRect: (s) => s.adjustments.count > 0,
+    shapeId: (s) => s.id,
+
+    // 写
+    setBox: (s, box) => { ... },        // left/top/width/height
+    setAdjFraction: (s, frac) => s.adjustments.set(0, frac),
+    addTag: (s, key, value) => s.tags.add(key, value),
+    deleteTag: (s, key) => s.tags.delete(key),
+
+    // 读 tag（async，需要 sync 走完才能拿值）
+    readTag: async (s, key) => { ... },
+  };
+}
+```
+
+### 2.3 迁移顺序（一个 feature 一个 feature 走）
+
+每步都跑测试 + PPT 验一次再进下一步：
+
+1. **driver 基础 + R 角调整**（最小可用）
+2. **lock / strict 联动**（writeRadius 加 strict 拦截 + lock 同步 fixed value）
+3. **layout mode**（applyLayout / syncLayoutChildrenR）
+4. **pipette + history**
+5. **删 dialog.js 旧逻辑**
+
+### 2.4 单元测试策略
+
+- `test/test-radius-core.js`（已存在，103 个）：纯算法层测试（computeLayout、computeLinkedSubR 等）
+- `test/test-mock-harness.js`（已存在，70 个）：mock PowerPoint run 上下文，端到端测 feature
+- `test/test-driver-integration.js`（**待新增**）：mock driver 对象 + 实现层 feature 函数的集成测试
+  - 不再需要 mock 整个 PowerPoint.run，只 mock 10 个 driver 方法
+  - 覆盖率从纯算法扩到全部 feature 路径
+
+### 2.5 当前状态（2026-07-24）
+
+- [x] 实现层纯算法 + mock PowerPoint 集成（173 个测试全过）
+- [x] dialog.js 当前混合业务逻辑 + Office.js 调用（迁移未完成）
+- [ ] **driver 层文件未抽出**（chat 内已讨论，待实施）
+- [ ] UI 层重构（迁移完成后 dialog.js 应缩到 ~500 行）
+
+
 
 ## 3. 目录结构
 
@@ -102,6 +205,70 @@ const v = sh.adjustments.get(0).value;
 
 **注意**：`shape.tags.getItem('key').load('value')` 是 work 的——tag 不是 ClientResult 代理。两者 API 行为不同。
 
+### 4.2.1 集合层 load 'items/adjustments' 不填 .value（v1.2.5 实测踩坑）
+
+```js
+// ❌ 错：集合层 load adjustments + sync 后，.value 还没填
+shapes.load('items/id, items/adjustments');
+await ctx.sync();
+for (const sh of shapes.items) {
+  const v = sh.adjustments.get(0).value;  // 抛「尚未加载结果对象的值」
+}
+
+// ❌ 错：批量 per-shape load 后单 sync（v1.2.6 实测）—— 第二个 shape 的 getItem 抛 GeneralException
+shapes.load('items/id, items/adjustments');
+await ctx.sync();
+for (const sh of shapes.items) {
+  if (sh.adjustments.count > 0) sh.adjustments.load('items/value');
+}
+await ctx.sync();  // ← 这个 sync 失败：selectedShapes.getItem(...) 抛 GeneralException
+
+// ❌ 错：set + sync 之后立即读旧 proxy（v1.2.7 实测）—— proxy 不会自动 reload value
+sh.adjustments.set(0, 0.5);
+await ctx.sync();
+const adjProxy = sh.adjustments.get(0);  // 早 get 的旧 proxy
+const v = adjProxy.value;  // 0（不是 0.5）—— proxy 没自动 reload
+
+// ❌ 错：v1.2.8 也错的——capture proxy 在最前面，set+sync+load+sync+读 proxy
+//   Mac LTSC proxy 是 snapshot 风格，set 不会更新旧 proxy
+const adjProxy = sh.adjustments.get(0);
+sh.adjustments.set(0, 0.5);
+await ctx.sync();
+sh.adjustments.load('items/value');
+await ctx.sync();
+const v = adjProxy.value;  // 还是 0——旧 proxy 怎么 reload 都不会更新
+
+// ✅ 对：per-shape get(0) + per-shape sync（v1.0 模式，慢但正确）
+shapes.load('items/id, items/adjustments');
+await ctx.sync();
+for (const sh of shapes.items) {
+  if (sh.adjustments.count === 0) continue;
+  // 关键：get(0) 先存变量，再 per-shape sync，再读那个变量
+  const adjResult = sh.adjustments.get(0);
+  await ctx.sync();
+  const v = adjResult.value;  // ✅
+}
+
+// ✅ 对：set 之后读，每次读之前 fresh get(0)（v1.2.9 实测）
+// 关键洞察：Mac LTSC 上 `sh.adjustments.get(0)` 返回的 proxy 是 snapshot 风格，
+// 后面 set/load/sync 都不会更新这个旧 proxy。**每次读都要 fresh get(0)**。
+sh.adjustments.set(0, 0.5);
+await ctx.sync();
+sh.adjustments.load('items/value');
+await ctx.sync();
+const v = sh.adjustments.get(0).value;  // ✅ 0.5（fresh get，新 proxy 读最新 value）
+```
+
+v1.2.5 烟囱测试时 lock monitor 暴露的 bug——每 10ms 轮询 4 个 shape 全部失败。
+- driver 层加 `driver.adjFraction(s)` 内部 try/catch 返回 0（defensive，不 throw）
+- driver 层加 `driver.loadAdjValue(s)` 辅助（单 shape 情况 OK，批量会炸）
+- v1.2.7 monitor 改回 v1.0 模式：per-shape get(0) + per-shape sync
+- v1.2.8 烟囱测试 setAdjFraction 暴露「proxy 不自动 reload」：v1.2.7 修法不够，**set+sync 后必须再 load('items/value') + sync**
+
+**绝对禁止**：
+- ❌ 批量 per-shape `sh.adjustments.load('items/value')` 排队然后单 sync（v1.2.6 实测炸）
+- ❌ `setAdjFraction` 之后用旧 proxy 读（同 sync 内 proxy 不会自动 reload value）—— 必须 reload + 再 sync
+
 ### 4.3 写 .pptx 持久化用 `shape.tags`（Mac LTSC 唯一 work 的方案）
 
 `customProperties` 和 `customXmlParts` 在 **task pane 和 dialog 上下文都不可用**（Mac LTSC）：
@@ -146,6 +313,52 @@ shapes.load('items/adjustments');
 await ctx.sync();
 for (const sh of shapes.items) {
   if (sh.adjustments.count > 0) {
+    sh.adjustments.load('items/value');  // ← 显式 load，task pane 必加
+    await ctx.sync();
+    const v = sh.adjustments.get(0).value;  // ✅
+  }
+}
+```
+
+（dialog 上下文里这步可能不必要；task pane 必须显式 load。）
+
+**写时不需要**：只有读 `.value` 时才需要这个显式 load；写时 `sh.adjustments.set(0, newVal)` 不需要。
+
+### 4.4.1 v1.2 新坑：per-shape load `adjustments` 不 work，必须 collection-level load（2026-07-24 实测）
+
+**Mac LTSC task pane 上下文**：`shape.adjustments.count` 在 per-shape load 之后**永远 = 0**。必须在 collection 级别（`sel.load('items/adjustments')` 或 `slide.load('shapes/items/adjustments, ...')`）才 work。
+
+```js
+// ❌ 错：v1.2 applyLayoutToChildren 用了这个，.count 永远 0
+parentSh.load('left, top, width, height, adjustments');
+await ctx.sync();
+parentSh.adjustments.count  // 永远 0，即使父是 Rounded Rectangle
+
+// ✅ 对：collection-level load 一次性 load 所有需要的字段
+const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
+activeSlide.load('shapes/items/id, shapes/items/left, shapes/items/width, shapes/items/height, shapes/items/adjustments');
+await ctx.sync();
+const parentSh = idToShape.get(parentId);
+parentSh.adjustments.count  // ✅ 1 (圆角矩形) / 0 (普通矩形)
+```
+
+**v1.0 / v1.1 monitor 用的都是 collection-level load**，所以 work。v1.2 applyLayout 用了 per-shape load，导致 R 角联动算出 subR = 0（用户状态卡能看到父 R 角 1.62cm，但 apply 时读不到）。
+
+**v1.2 commit `fix/v1.2-load-adjustments-collection` 已修**。
+
+**这是 v1.0 唯一一个 hotfix 的坑**（commit `d6bba1a`），`refreshSelection` 里第一次读 adjustments.value 时漏了显式 load。
+
+```js
+// ❌ 错：task pane 里 .value 报 "结果对象的值尚未加载"
+shapes.load('items/adjustments');
+await ctx.sync();
+const v = sh.adjustments.get(0).value;  // ❌ 报错
+
+// ✅ 对：显式 load 子项（每个 roundRect 都要做）
+shapes.load('items/adjustments');
+await ctx.sync();
+for (const sh of shapes.items) {
+  if (sh.adjustments.count > 0) {
     sh.adjustments.load('items/value');  // ← 显式 load
     await ctx.sync();
     const v = sh.adjustments.get(0).value;  // ✅
@@ -165,7 +378,77 @@ for (const sh of shapes.items) {
 const isRoundRect = sh.adjustments.count > 0;
 ```
 
-### 4.6 选区 API
+### 4.5.1 不要在 `writeRadiusToShape` 里 `ctxShape.load('tags')` + `await ctx.sync()`（2026-07-24 实测踩坑）
+
+v1.2 `writeRadiusToShape` 一开始加了 `ctxShape.load('tags'); await ctx.sync();` 想「保险」预 load tags，
+结果在 Mac LTSC task pane 抛未捕获异常，被外层 catch 吞了返回 `reason='exception'`——所有 R 角写入
+全部静默失败（位置/尺寸写成功，R 角写不进去）。用户报告「批量修改 R 角时无法识别是圆角矩形」。
+
+**根因**：
+- 所有 4 个 caller（applyLayoutToChildren / syncLayoutChildrenR / onApply / applyPipetteToSelection）
+  都已经在 `PowerPoint.run` 外层 `sel.load('items/.../tags')` 或 `slide.load('shapes/items/.../tags')`，
+  collection-level 已经 load 过 tags
+- v1.0 working 代码（lock monitor、onApply、applyPipette）**从未**做这个额外的 per-shape `load('tags')`，
+  直接 `sh.tags.getItem(KEY).load('value')` + `await ctx.sync()` 就 work
+- 额外的 `ctxShape.load('tags')` + `await ctx.sync()` 在 Mac LTSC 上可能跟 collection-level load 冲突
+  或 load 路径不被支持，抛 `GeneralException` / `InvalidArgument`
+
+**正确写法**：
+```js
+async function writeRadiusToShape(ctxShape, targetCm, opts) {
+  try {
+    // 1. 读 lock + strict —— 直接 getItem + load value，不做 ctxShape.load('tags')
+    let isLocked = false, isStrict = false;
+    try {
+      const lockTag = ctxShape.tags.getItem(LOCK_TAG_KEY);
+      lockTag.load('value');
+      await ctx.sync();
+      if (lockTag.value && parseFloat(lockTag.value) > 0) isLocked = true;
+    } catch (_) {}
+    try {
+      const strictTag = ctxShape.tags.getItem(LOCK_STRICT_TAG_KEY);
+      strictTag.load('value');
+      await ctx.sync();
+      if (strictTag.value === '1') isStrict = true;
+    } catch (_) {}
+    ...
+```
+
+**绝对禁止**：
+- ❌ `ctxShape.load('tags'); await ctx.sync();` 在 `writeRadiusToShape` 函数体内
+- ❌ 任何在 caller 已经 collection-level load 过 tags 的情况下，再做 per-shape `load('tags')` 的双重 load
+
+**调试技巧**：如果以后又出现 `reason='exception'` 但 caller 只 log `reason`，**第一时间**检查
+`writeRadiusToShape` 的 catch 块有没有把 `e.message` 主动 `console.log` 出来——大概率就是某个被吞的
+Office.js 异常。加 `console.log('[writeRadius] EXCEPTION:', msg, '| stack:', stack)` 立即显形。
+
+### 4.5.2 driver.box vs driver.size — 契约要清楚（2026-07-24 实测踩坑）
+
+driver 有两个返回 size 相关的读方法：
+
+| 方法 | 返回 | caller 必须 load 的字段 |
+| --- | --- | --- |
+| `driver.size(s)` | `{width, height}` | `s.width, s.height` |
+| `driver.box(s)`  | `{left, top, width, height}` | `s.left, s.top, s.width, s.height` |
+
+**踩坑历史**：v1.2.2 第一次 PPT 测，`onApply` load 的是
+`items/id, items/width, items/height, items/adjustments, items/tags`
+**没 load `items/left, items/top`**。`writeRadius` 调 `driver.box(shape)` 访问 `s.left`
+直接抛 `"属性"left"不可用。读取属性的值之前，请先对包含对象调用 load 方法"`，被 catch 吞了返回
+`reason='exception'`。
+
+**修法**：
+- 业务函数按需选方法：写 R 角只需要 `minSideCm` → 用 `driver.size`（只要 width/height）
+- layout apply 需要算子位置 → 用 `driver.box`（要 4 个字段），caller load 时记得加 `items/left, items/top`
+- driver 注释里写清楚每个方法的 load 契约
+
+**绝对禁止**：
+- ❌ 业务函数无脑调 `driver.box` 然后在 caller 漏 load left/top → 永远走不到正常路径
+- ❌ 业务函数调 `driver.box` 但 caller 只 load 了部分字段
+
+**测试覆盖**：`test/test-driver-integration.js` 有专门的回归测试
+「writeRadius 不需要 left/top 被 load」——故意把 left/top 改成访问就抛异常的 getter，
+确认 writeRadius 走 driver.size 不读 left/top。### 4.6 选区 API
 
 | API | Mac LTSC task pane |
 | --- | --- |
@@ -302,3 +585,31 @@ tail -f /tmp/serve.log
 - API 范围：PowerPointApi 1.1 ~ 1.10
 - 已验证可用：`getSelectedShapes`（1.6）、`Adjustments.get/set`（1.10）、`shape.tags`（1.10）、`customXmlParts`（Common API，**不可用**）、`customProperties`（1.7，**不可用**）
 - Microsoft 365 用户理论上也能跑，但有些行为可能跟 LTSC 不一样
+
+### 4.6 v1.2 防误触设计原则：最高优先级 + 任何路径都不能跳过（2026-07-24 实测决定）
+
+**原则**：strict tag = "1" 的形状，R 角写入**永远**被拦截。任何 R 角写入路径都不能跳过（layout apply / 样式刷 / 联动 hook 都不行），必须由用户手动关闭防误触。
+
+**v1.1 行为**：
+- onApply：选区里有任何 strict → 全部拒绝
+- 样式刷：选区里有任何 strict → 全部拒绝
+
+**v1.2 新增**：
+- `writeRadiusToShape(ctxShape, targetCm, opts)` 统一函数：
+  - 写 R 角前**必查** strict tag
+  - 命中 → 返回 `{ok: false, reason: 'strict'}`，不写 PPT
+  - **不允许 skipStrict 选项**（已经移除，函数签名里没有这个字段）
+- applyLayoutToChildren：进入 PowerPoint.run **之前**先扫选区内存（`selectedShapes[i].strictLocked`），有 strict → 拒绝整个 apply（不写位置/尺寸，不写 R 角，不写 tag）
+  - 写 R 角时（writeRadiusToShape 内部）作为**第二道防线**再检查（实时读 tag，防 race）
+- renderLayoutPanel：「进入组合时」判断 — 选区里有 strict → 「建布局」按钮禁用 + hint 提示「🔒 N 个启用了防误触，请先关闭」
+- renderLayoutSetupList：strict 形状行**红框 + 🔒 标记** + title 提示
+- syncLayoutChildrenR：strict 永远拦截（命中就跳过，layout 联动时 R 角不更新该子）
+
+**绝对禁止**：
+- 不要在 writeRadiusToShape 加 `skipStrict` 选项
+- 不要在 applyLayoutToChildren / applyPipetteToSelection / syncLayoutChildrenR 加 bypass 逻辑
+- 防误触是用户主动选择开启的，程序不能"贴心地"自动覆盖
+
+**两道防线模式**（applyLayoutToChildren 是范例）：
+1. 内存层：PowerPoint.run 之前检查 `selectedShapes[i].strictLocked`
+2. PPT 层：PowerPoint.run 内 writeRadiusToShape 检查 tag（防 race / 防用户中途切状态）
