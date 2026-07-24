@@ -623,6 +623,84 @@ async function run() {
     assert.ok(Math.abs(c1._adjFraction - 0.3) < 0.01, `expected 0.3, got ${c1._adjFraction}`);
   });
 
+  console.log('\n=== syncLayoutChildrenR(driver) — 联动子 R 角 ===');
+
+  await test('syncLayoutChildrenR basic subtract：父 R=0.8, padding=0.3 → 子 R=0.5', async () => {
+    const parent = makeMockShape({ id: 'p_sync1', width: 200, height: 100, isRoundRect: true });
+    const c1 = makeMockShape({ id: 'c_sync1', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const c2 = makeMockShape({ id: 'c_sync2', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [parent, c1, c2] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_sync1', ['c_sync1', 'c_sync2'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 2);
+    // 短边 60pt = 2.117cm, 子 R = 0.5cm, adjFraction = 0.5/2.117 = 0.236
+    for (const c of [c1, c2]) {
+      assert.ok(Math.abs(c._adjFraction - 0.236) < 0.01, `expected 0.236, got ${c._adjFraction}`);
+    }
+  });
+
+  await test('syncLayoutChildrenR same mode：子 R = 父 R', async () => {
+    const c1 = makeMockShape({ id: 'c_same1', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [c1] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_same', ['c_same1'], 0, 'same', 0.8);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 1);
+    // 子 R = 0.8cm, 短边 60pt = 2.117cm, adjFraction = 0.8/2.117 = 0.378
+    assert.ok(Math.abs(c1._adjFraction - 0.378) < 0.01, `expected 0.378, got ${c1._adjFraction}`);
+  });
+
+  await test('syncLayoutChildrenR off mode：什么都不做', async () => {
+    const c1 = makeMockShape({ id: 'c_off', width: 80, height: 60, isRoundRect: true, adjFraction: 0.1 });
+    const m = makeMockDriverWithSlide({ shapes: [c1] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_off', ['c_off'], 0, 'off', 0.8);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 0);
+    // adjFraction 不变
+    assert.strictEqual(c1._adjFraction, 0.1, 'off mode should not change child R');
+  });
+
+  await test('syncLayoutChildrenR parentRcm=0：不写（off 路径）', async () => {
+    const c1 = makeMockShape({ id: 'c_zero', width: 80, height: 60, isRoundRect: true, adjFraction: 0.5 });
+    const m = makeMockDriverWithSlide({ shapes: [c1] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_zero', ['c_zero'], 0, 'subtract', 0);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 0);
+    assert.strictEqual(c1._adjFraction, 0.5, 'parentRcm=0 should not change child R');
+  });
+
+  await test('syncLayoutChildrenR stale childId 过滤', async () => {
+    const c1 = makeMockShape({ id: 'c_real', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [c1] });
+    // 传一个不存在的 c_stale
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_stale', ['c_stale', 'c_real'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 1, 'stale skipped, only c_real applied');
+    // c1 应该被写
+    assert.ok(c1._adjFraction > 0, 'c_real should be written');
+  });
+
+  await test('syncLayoutChildrenR strict child 跳过（不 fail）', async () => {
+    const cStrict = makeMockShape({ id: 'c_strict', width: 80, height: 60, isRoundRect: true, adjFraction: 0, tags: { radiusLockStrict_v1: '1' } });
+    const cOk = makeMockShape({ id: 'c_ok', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [cStrict, cOk] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_strict', ['c_strict', 'c_ok'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    // strict 被跳，c_ok 被应用
+    assert.strictEqual(cStrict._adjFraction, 0, 'strict child R unchanged');
+    assert.ok(cOk._adjFraction > 0, 'c_ok should be written');
+  });
+
+  await test('syncLayoutChildrenR 非 roundRect child 跳过（不 fail）', async () => {
+    const cRect = makeMockShape({ id: 'c_rect', width: 80, height: 60, isRoundRect: false });
+    const cOk = makeMockShape({ id: 'c_ok2', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [cRect, cOk] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p_rect', ['c_rect', 'c_ok2'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    // 非 roundRect 不算 fail（c_ok 算 applied）
+    assert.strictEqual(cRect._adjFraction, 0, 'rect child R unchanged (was 0)');
+    assert.ok(cOk._adjFraction > 0, 'c_ok should be written');
+  });
+
   console.log('\n==================================================');
   console.log(`结果: ${passed} passed, ${failed} failed`);
   console.log('==================================================');

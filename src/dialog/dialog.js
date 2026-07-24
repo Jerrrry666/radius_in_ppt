@@ -371,42 +371,18 @@
   // parentRcm: 父当前 R 角（cm）
   // 只在当前 slide 操作（不跨页）
   // 用统一函数 writeRadiusToChildren 自动处理 strict/lock 同步
+  // v1.3.2 迁移：PowerPoint.run 部分全部走 radius-core.syncLayoutChildrenR
   async function syncLayoutChildrenR(parentId, childIds, paddingCm, linkRMode, parentRcm) {
-    let applied = 0;
-    let failed = 0;
-    if (linkRMode === 'off' || !parentRcm) return { ok: true, applied: 0, failed: 0 };
     try {
-      await PowerPoint.run(async (ctx) => {
-        const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-        activeSlide.load('shapes/items/id, shapes/items/width, shapes/items/height, shapes/items/adjustments, shapes/items/tags');
-        await ctx.sync();
-        const idToShape = new Map();
-        for (const sh of activeSlide.shapes.items) {
-          idToShape.set(sh.id, sh);
-        }
-        for (const childId of childIds) {
-          const csh = idToShape.get(childId);
-          if (!csh) continue;
-          let subRcm;
-          if (linkRMode === 'same') {
-            subRcm = parentRcm;
-          } else {
-            subRcm = Math.max(0, parentRcm - paddingCm);
-          }
-          // 用统一函数（自动处理 strict/lock 同步）
-          // strict 永远拦截（最高优先级），命中就跳过
-          const r = await writeRadiusToShape(csh, subRcm, {});
-          if (r.ok) applied++;
-          else if (r.reason === 'strict') {
-            console.log('[syncLayoutChildrenR] skip strict child', childId);
-          } else if (r.reason !== 'not-roundRect' && r.reason !== 'no-size') failed++;
-        }
-        await ctx.sync();
+      return await PowerPoint.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
+        return await window.RadiusCore.syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRMode, parentRcm);
       });
     } catch (e) {
-      return { ok: false, applied, failed, error: e.message || String(e) };
+      const msg = e && e.message ? e.message : String(e);
+      console.log('[syncLayoutChildrenR] OUTER ERROR:', msg);
+      return { ok: false, applied: 0, failed: 0, error: msg };
     }
-    return { ok: true, applied, failed };
   }
 
   // 检测选区里是否有 layout 父 → 同步其子 R 角（onApply / applyPipette 末尾调用）

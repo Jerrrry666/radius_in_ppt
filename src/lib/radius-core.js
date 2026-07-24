@@ -633,6 +633,59 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
   }
 }
 
+// ---------------- syncLayoutChildrenR driver 版（Office.js 上下文） ----------------
+
+/**
+ * 同步 layout 子的 R 角（driver 版）
+ *
+ * 行为：
+ *   1. 集合层 load slide shapes（id, width, height, adjustments, tags）
+ *   2. 对每个 childId 找 shape（过滤掉 stale / 不在当前 slide 的）
+ *   3. 按 linkRMode 算子 R = 父 R（same）或 父 R - padding（subtract）
+ *   4. 调 writeRadius 写——自动处理 strict 拦截 + lock 同步 fixed value
+ *
+ * @param {Object} driver
+ * @param {string} parentId
+ * @param {Array} childIds
+ * @param {number} paddingCm
+ * @param {string} linkRMode - 'same' | 'subtract' | 'off'
+ * @param {number} parentRcm
+ * @returns {Promise<{ok, applied, failed, error?}>}
+ */
+async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRMode, parentRcm) {
+  if (linkRMode === 'off' || !parentRcm) return { ok: true, applied: 0, failed: 0 };
+  let applied = 0;
+  let failed = 0;
+  try {
+    const slide = driver.activeSlide();
+    driver.load(slide, 'shapes/items/id, shapes/items/width, shapes/items/height, shapes/items/adjustments, shapes/items/tags');
+    await driver.sync();
+    const idToShape = new Map();
+    for (const sh of driver.slideShapes(slide).items) {
+      const id = driver.shapeId(sh);
+      if (id != null) idToShape.set(id, sh);
+    }
+    for (const childId of childIds) {
+      const csh = idToShape.get(childId);
+      if (!csh) continue;  // skip stale（不在当前 slide / 已删）
+      const subRcm = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - paddingCm);
+      const r = await writeRadius(driver, csh, subRcm, {});
+      if (r.ok) {
+        applied++;
+      } else if (r.reason === 'strict') {
+        console.log('[syncLayoutChildrenR/driver] skip strict child', childId);
+      } else if (r.reason !== 'not-roundRect' && r.reason !== 'no-size') {
+        failed++;
+      }
+    }
+    await driver.sync();
+    return { ok: true, applied, failed };
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    return { ok: false, applied, failed, error: msg };
+  }
+}
+
 
 
 
@@ -762,6 +815,7 @@ if (typeof module !== 'undefined' && module.exports) {
     writeLockState,
     reapplyLock,
     applyLayout,
+    syncLayoutChildrenR,
     writeRadiusToShapePure,
     applyLayoutPure,
   };
@@ -791,6 +845,7 @@ if (typeof window !== 'undefined') {
     writeLockState,
     reapplyLock,
     applyLayout,
+    syncLayoutChildrenR,
     writeRadiusToShapePure,
     applyLayoutPure,
   };
