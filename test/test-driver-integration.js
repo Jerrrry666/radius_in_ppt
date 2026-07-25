@@ -1,24 +1,32 @@
 /*
- * test-driver-integration.js — driver + radius-core 集成测试（新框架）
+ * test-driver-integration.js — driver + radius-core 集成测试（v1.3 重整后唯一端到端测试）
  *
  * 框架：fixtures.js + test-harness.js
  *   - fixtures.js 提供 5+ 标准 R 角矩形（含 locked / strict / 普通 / 非圆角 / 边界）
  *   - test-harness.js 提供 createHarness：driver 包装层，记录所有 driver 方法调用
  *
  * 测试风格：调业务方法 → 验证 driver 反应 + shape 状态
- *   - assertCalled(method)        → 该 driver 方法被调至少 1 次
+ *   - assertCalled(method)         → 该 driver 方法被调至少 1 次
  *   - assertNotCalled(method)      → 该 driver 方法没被调
  *   - assertCallCount(method, n)   → 该 driver 方法被调 n 次
  *   - assertShape(shape, expected) → shape 状态符合预期
  *
- * 覆盖：
+ * 覆盖（v1.3 去重后 54 个）：
  *   1. writeRadius(driver, ...) — 5+ R 角矩形的各种分支
- *   2. readLockState / writeLockState — 状态读写
- *   3. reapplyLock — 反算 adj
- *   4. applyLayout — 父+子的端到端
- *   5. syncLayoutChildrenR — 联动子 R 角
- *   6. driver API 一致性 / 边界
- *   7. 自测场景：5+ R 角矩形一次操作多个
+ *   2. writeRadius 边界 — 0 尺寸 / 非圆角 / NaN / Infinity / layoutParentId
+ *   3. writeRadius driver 异常 — reason=exception 带 error
+ *   4. 批量：5 个普通 / 5 个混合状态
+ *   5. readLockState / writeLockState — 各种 tag 状态读写
+ *   6. reapplyLock — 反算 adj + clamp + 边界
+ *   7. applyLayout — 父+子的端到端（2x2 / off / same / 父不在 / 子不足 / stale / writeParentTag=false / infeasible）
+ *   8. syncLayoutChildrenR — subtract / same / off / stale / strict / 非圆角
+ *   9. driver API 一致性 / 边界
+ *   10. 自测场景：5+ R 角矩形一次操作多个
+ *
+ * v1.3 重整说明：
+ *   - 删了 test-mock-harness.js（70 个测试）—— 重复
+ *   - 删了 radius-core.writeRadiusToShapePure + applyLayoutPure —— 业务只走 driver 路径
+ *   - 纯算法（computeLayout / valueToCm / 业务规则）挪到 test-radius-core.js
  */
 
 const assert = require('assert');

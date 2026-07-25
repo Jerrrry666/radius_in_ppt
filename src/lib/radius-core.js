@@ -7,13 +7,10 @@
  *   - 纯逻辑 + 业务判断（strict 拦截、lock 同步、padding 公式）
  *   - 零 Office.js import → mock 一个 driver 对象就能 100% 单元测试
  *
- * 与 writeRadiusToShapePure 的区别：
- *   - writeRadius(driver, shape, ...) 走 driver API（真实 Office.js 路径）
- *   - writeRadiusToShapePure(shape, ...) 走普通对象（mock 端到端测试用）
- *
  * 模块边界：
- *   - dialog.js 仍内联一些旧逻辑（迁移进行中，步骤 1-5 见 AGENTS.md 2.3）
- *   - 测试覆盖：布局 math、联动公式、单位换算、边界条件
+ *   - dialog.js 是 UI 层（事件绑定 / 渲染 / 调 feature）
+ *   - ppt-driver.js 是交互层（Office.js 薄封装）
+ *   - radius-core 不知道任何 Office.js 概念
  */
 
 const PT_PER_CM = 28.3464567;        // 1 cm = 28.3464567 pt
@@ -155,20 +152,19 @@ function computeFinalRadius(childMinSideCm, linkRMode, parentRcm, paddingCm) {
   return { finalCm, adj, skipped: false };
 }
 
-// ---------------- 写 R 角的行为规则（mock 用） ----------------
+// ---------------- 写 R 角的行为规则（纯函数） ----------------
 
 /**
  * 决定是否应该拒绝写 R 角
- * 模拟 writeRadiusToShape 的 strict 拦截逻辑
- * @param {Object} shape - { id, isStrict, isLocked, lockedCm }
- * @param {string} operation - 'apply' | 'layout' | 'pipette' | 'sync'
+ * 模拟 writeRadius 的 strict 拦截逻辑（供 dialog.js 在 PowerPoint.run 之前做第一道防线）
+ * @param {Object} shape - { isStrict, isRoundRect, minSideCm }
  * @returns {Object} { allow, reason }
  *   - allow: false + reason='strict' → 拒绝
  *   - allow: false + reason='no-size' → 拒绝
  *   - allow: false + reason='not-roundRect' → 拒绝
  *   - allow: true → 可以写
  */
-function shouldRejectWriteRadius(shape, operation) {
+function shouldRejectWriteRadius(shape) {
   // 防误触：永远拦截（最高优先级）
   if (shape.isStrict) {
     return { allow: false, reason: 'strict', message: '🔒 此形状启用了防误触，必须用户手动关闭' };
@@ -225,86 +221,12 @@ function syncFixedValueIfLocked(shape, newCm) {
   return { newLockedCm: shape.lockedCm || 0, synced: false };
 }
 
-// ---------------- 统一写 R 角函数（纯函数版，可被 mock 测试） ----------------
-
-/**
- * 写 R 角的纯函数版：操作一个普通对象（mock shape 或 proxy shape）
- *
- * shape 协议：
- *   - shape.width, shape.height: number (pt)
- *   - shape.adjustments.count: number
- *   - shape.adjustments.get(0).value: number (0~1)
- *   - shape.adjustments.set(0, value): void
- *   - shape.tags: { [key]: value } (普通对象)
- *
- * 行为：
- *   1. 读 lock tag → isLocked
- *   2. 读 strict tag → isStrict（**永远拦截**，不可跳过）
- *   3. clamp + 写 R 角
- *   4. 如果 locked → 同步 fixed value（修改 shape.tags[LOCK_TAG_KEY]）
- *   5. 如果 layoutParentId → 写子 tag（shape.tags[LAYOUT_CHILD_TAG_KEY]）
- *
- * @returns {Object} { ok, newCm, wasLocked, wasStrict, reason }
- */
-async function writeRadiusToShapePure(shape, targetCm, opts) {
-  opts = opts || {};
-  const layoutParentId = opts.layoutParentId;
-  const clamp = opts.clamp !== false;
-
-  // 1. 读 lock + strict
-  const tags = shape.tags || {};
-  let isLocked = false;
-  let lockedCm = 0;
-  if (tags[LOCK_TAG_KEY]) {
-    const cm = parseFloat(tags[LOCK_TAG_KEY]);
-    if (Number.isFinite(cm) && cm > 0) {
-      isLocked = true;
-      lockedCm = cm;
-    }
-  }
-  const isStrict = tags[LOCK_STRICT_TAG_KEY] === '1';
-
-  // 2. strict 永远拦截
-  if (isStrict) {
-    return { ok: false, reason: 'strict', isStrict: true, wasLocked: isLocked };
-  }
-
-  // 3. clamp + 写 R 角
-  if (!shape.adjustments || shape.adjustments.count === 0) {
-    return { ok: false, reason: 'not-roundRect' };
-  }
-  const minSideCm = Math.min(shape.width || 0, shape.height || 0) / PT_PER_CM;
-  if (minSideCm <= 0) {
-    return { ok: false, reason: 'no-size' };
-  }
-  let newCm = clamp ? Math.min(targetCm, minSideCm / 2) : targetCm;
-  if (newCm < 0) newCm = 0;
-  const newAdj = (newCm / minSideCm) * ADJ_SCALE;
-  if (!Number.isFinite(newAdj)) {
-    return { ok: false, reason: 'invalid-adj' };
-  }
-  shape.adjustments.set(0, newAdj);
-
-  // 4. 同步 fixed value（如果 locked）
-  if (isLocked) {
-    shape.tags[LOCK_TAG_KEY] = String(newCm);
-  }
-
-  // 5. 写子 tag
-  if (layoutParentId) {
-    shape.tags[LAYOUT_CHILD_TAG_KEY] = layoutParentId;
-  }
-
-  return { ok: true, newCm, wasLocked: isLocked, wasStrict: false, lockedCm };
-}
-
 // ---------------- 统一写 R 角函数（driver 版，Office.js 上下文） ----------------
 
 /**
  * 写 R 角的 driver 版：操作真实的 Office.js shape proxy
  *
- * 与 writeRadiusToShapePure 的区别：
- *   - 通过 driver 间接访问 shape 属性（driver.size / driver.isRoundRect / driver.setAdjFraction / driver.readTag / driver.addTag）
+ * 通过 driver 间接访问 shape 属性（driver.size / driver.isRoundRect / driver.setAdjFraction / driver.readTag / driver.addTag）
  *   - 不直接 import Office.js
  *   - 跟 mock 测的纯函数版返回相同形状的 { ok, newCm, wasLocked, wasStrict, reason, error }
  *
@@ -701,104 +623,7 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
 
 
 
-// ---------------- applyLayoutToChildren 端到端 mock 版本 ----------------
-
-/**
- * 端到端模拟 applyLayoutToChildren：在一个 mock slide 里执行完整的 layout apply
- *
- * @param {Object} mockSlide - { shapes: { [id]: shape } }
- * @param {string} parentId
- * @param {Object} params - { rows, cols, padding, gutter, linkRMode }
- * @param {Array} childIds
- * @param {Object} opts - { syncR, writeParentTag }
- * @returns {Object} { ok, applied, failed, warn, strictCount }
- */
-async function applyLayoutPure(mockSlide, parentId, params, childIds, opts) {
-  opts = opts || {};
-  const writeParentTag = opts.writeParentTag !== false;
-  const syncR = opts.syncR !== false;
-
-  // 第一道防线：strict 拒绝
-  const strictChildren = childIds
-    .map((id) => mockSlide.shapes[id])
-    .filter((s) => s && s.tags && s.tags[LOCK_STRICT_TAG_KEY] === '1');
-  if (strictChildren.length > 0) {
-    return { ok: false, applied: 0, failed: 0, warn: '🔒 strict 拒绝', strictCount: strictChildren.length };
-  }
-
-  const parent = mockSlide.shapes[parentId];
-  if (!parent) {
-    return { ok: false, applied: 0, failed: 0, warn: 'parent not found' };
-  }
-
-  // 读父 R
-  let parentAdj = 0;
-  if (parent.adjustments && parent.adjustments.count > 0) {
-    parentAdj = parent.adjustments.get(0).value;
-  }
-  const parentMinSideCm = Math.min(parent.width, parent.height) / PT_PER_CM;
-  const parentRcm = parentAdj * parentMinSideCm;
-
-  // 算 layout
-  const layout = computeLayout(
-    { left: parent.left, top: parent.top, width: parent.width, height: parent.height },
-    params.rows, params.cols, params.padding, params.gutter
-  );
-  if (!layout.feasible) {
-    return { ok: false, applied: 0, failed: 0, warn: layout.reason };
-  }
-
-  // 检查子数量
-  const need = params.rows * params.cols;
-  if (childIds.length < need) {
-    return { ok: false, applied: 0, failed: 0, warn: '子形状不足' };
-  }
-
-  let applied = 0;
-  let failed = 0;
-  const lockedChildCm = [];
-  for (let k = 0; k < need; k++) {
-    const csh = mockSlide.shapes[childIds[k]];
-    if (!csh) { failed++; continue; }
-    const pos = layout.positions[k];
-
-    // 写位置/尺寸
-    csh.left = pos.left;
-    csh.top = pos.top;
-    csh.width = pos.w;
-    csh.height = pos.h;
-
-    // 写 R 角（按 linkRMode 公式）
-    if (syncR && params.linkRMode && params.linkRMode !== 'off') {
-      const childMinSideCm = Math.min(pos.w, pos.h) / PT_PER_CM;
-      const subRcm = computeLinkedSubR(parentRcm, params.padding, params.linkRMode);
-      const r = await writeRadiusToShapePure(csh, subRcm, { layoutParentId: parentId });
-      if (!r.ok && r.reason !== 'not-roundRect' && r.reason !== 'no-size') {
-        failed++;
-      } else {
-        applied++;
-        if (r.wasLocked) lockedChildCm.push({ id: childIds[k], newCm: r.newCm });
-      }
-    } else {
-      applied++;
-    }
-  }
-
-  // 写父 tag
-  if (writeParentTag) {
-    parent.tags = parent.tags || {};
-    parent.tags[LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
-      rows: params.rows,
-      cols: params.cols,
-      padding: params.padding,
-      gutter: params.gutter,
-      linkRMode: params.linkRMode || 'subtract',
-      childIds: childIds.slice(0, need),
-    });
-  }
-
-  return { ok: true, applied, failed, warn: '', lockedCount: lockedChildCm.length };
-}
+//     全部由 driver 集成测试覆盖。）
 
 // ---------------- 导出（Node.js + browser 都支持） ----------------
 
@@ -828,8 +653,6 @@ if (typeof module !== 'undefined' && module.exports) {
     reapplyLock,
     applyLayout,
     syncLayoutChildrenR,
-    writeRadiusToShapePure,
-    applyLayoutPure,
   };
 }
 if (typeof window !== 'undefined') {
@@ -858,7 +681,5 @@ if (typeof window !== 'undefined') {
     reapplyLock,
     applyLayout,
     syncLayoutChildrenR,
-    writeRadiusToShapePure,
-    applyLayoutPure,
   };
 }

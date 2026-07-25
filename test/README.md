@@ -3,13 +3,14 @@
 ## 跑测试
 
 ```bash
-# 跑所有测试
 npm test
+```
 
-# 单独跑
-node test/test-radius-core.js        # 103 个 — 纯算法
-node test/test-mock-harness.js       # 70 个 — mock harness 端到端
-node test/test-driver-integration.js # 54 个 — driver 集成（新框架）
+只跑一个：
+
+```bash
+node test/test-radius-core.js         # 46 个 — 纯算法
+node test/test-driver-integration.js   # 54 个 — driver 集成（新框架）
 ```
 
 ## 测试结构
@@ -17,14 +18,18 @@ node test/test-driver-integration.js # 54 个 — driver 集成（新框架）
 ```
 test/
 ├── README.md
-├── fixtures.js                       # 标准 R 角矩形 fixture（5+ 形状）
-├── test-harness.js                   # driver harness + call tracker
-├── test-radius-core.js               # 纯算法测试（103 个）
-├── test-mock-harness.js              # Mock 端到端测试（70 个）
-└── test-driver-integration.js        # driver + 业务方法集成（54 个）
+├── fixtures.js                       # 标准 5+ R 角矩形 fixture
+├── test-harness.js                   # driver harness + call tracker + test runner
+├── test-radius-core.js               # 46 个 — 纯算法（computeLayout / 单位换算 / 业务规则）
+└── test-driver-integration.js        # 54 个 — driver + 业务方法集成
 ```
 
-## 写新功能怎么测（v1.3+ 流程）
+**v1.3 重整后**：
+- 删了 `test-mock-harness.js`（70 个）—— 跟 driver 集成完全重复
+- 删了 `radius-core.writeRadiusToShapePure` / `applyLayoutPure` —— 业务只走 driver 路径
+- 100 个测试，**全面不重复**
+
+## 写新功能怎么测（v1.3 流程）
 
 底层（ppt-driver.js）和图形交互（dialog.js）已经稳了。新功能不用每次都连真 PPT 测，按下面三步走：
 
@@ -33,7 +38,7 @@ test/
 ```js
 const { createHarness, makeStandardFixture } = require('./test-harness');
 const f = makeStandardFixture();
-// 拿 5+ 标准 R 角矩形：
+// 标准 5+ R 角矩形：
 //   f.shapes.r1_basic          — 普通 R 角矩形（5×3cm）
 //   f.shapes.r2_medium         — 已有 R 角（8×4cm, adj=0.1）
 //   f.shapes.r3_large          — 大矩形（12×8cm, adj=0.2）
@@ -89,7 +94,7 @@ h.assertShape(f.shapes.r1_basic, {             // shape 状态对
 ### `createHarness({ shapes })`
 
 返回：
-- `driver` — 真实 createDriver + 全部方法被 recordCall 包装
+- `driver` — 真实 createDriver + 全部 16 个方法被 recordCall 包装
 - `calls` — `[{method, args, time}]` 数组
 - `shapes` — 输入的 shape 数组
 - `snapshot()` — 当前所有 shape 的 {id, width, height, left, top, adjFraction, tags}
@@ -120,50 +125,41 @@ await t.run();
 
 ## 覆盖范围
 
-### 1. 纯算法层（test-radius-core.js，103 个）
+### 1. 纯算法（test-radius-core.js，46 个）
 
 | 类别 | 数量 | 例子 |
 | --- | --- | --- |
-| `computeLayout` 布局 math | 24 | 2×2, 1×3, 3×2, 不可行, 1×1, 非零起点 |
-| 单位换算 | 7 | cm↔cm, %↔cm |
-| 联动公式 | 11 | subtract, same, off 各种边界 |
-| clamp + adj | 14 | clamp 到短边一半, adj 转换, computeFinalRadius 端到端 |
-| strict/lock 行为 | 13 | 单 shape, onApply, layout apply, lock 同步 |
-| 集成场景 | 22 | 2×2 layout, 1×3 layout, 拒绝场景, lock 同步, 用户样例 |
+| `computeLayout` 布局 math | 5 | 2×2 / 1×3 / 3×2 / 1×1 / 不可行 |
+| 单位换算 | 6 | cm↔cm / %↔cm / 边界 |
+| 联动公式 `computeLinkedSubR` | 5 | subtract（3 边界）/ same（1）/ off（2）|
+| `clampRadius` | 4 | 不超 / 超 / 负值 / minSide=0 |
+| `cmToAdj` | 3 | 基础 / 短边一半 / minSide=0 |
+| `computeFinalRadius` | 5 | off / subtract / same / clamp / parentR<padding |
+| 业务规则 `shouldRejectWriteRadius` | 4 | 普通 / strict / 非圆角 / 0 尺寸 |
+| 业务规则 `shouldRejectOnApply` | 4 | 空 / 全普通 / 含 strict / 非 roundRect strict 不算 |
+| 业务规则 `shouldRejectLayoutApply` | 2 | 含 strict 子 / 父 strict 不影响 |
+| 业务规则 `syncFixedValueIfLocked` | 3 | unlocked / locked / locked 写 0 |
+| 集成场景 | 5 | 2×2 / 1×3 / 拒绝 / lock 同步 / 用户样例 |
 
-### 2. Mock 端到端（test-mock-harness.js，70 个）
+### 2. driver 集成（test-driver-integration.js，54 个）
 
-直接调 `writeRadiusToShapePure` + `applyLayoutPure`（纯函数版，绕过 driver）。
-
-| 类别 | 数量 | 验证 |
-| --- | --- | --- |
-| `writeRadiusToShapePure` 基础 | 8 | 写入、clamp、adj 转换 |
-| strict 拦截 | 4 | strict 永远拦截，adj/lock tag 都不动 |
-| locked 同步 fixed value | 4 | lock tag 同步到新 R 角 |
-| `applyLayoutPure` 端到端 | 12 | 位置/尺寸/R 角/tag 全部写对 |
-| strict 拒绝整个 apply | 6 | 含 strict 子 → 整个 apply 拒绝，位置/尺寸/tag 都不动 |
-| locked 子同步 | 4 | lock tag 同步到新 R 角 |
-| 边界 | 12 | 父不是 roundRect、子不足、跨 slide、linkRMode=off |
-
-### 3. driver 集成（test-driver-integration.js，54 个）— v1.3 新框架
-
-**新框架**：用 `fixtures.js` 标准 5+ R 角矩形 + `createHarness` 包装 driver。
+**框架**：用 `fixtures.js` 标准 5+ R 角矩形 + `createHarness` 包装 driver。
 
 测试风格：调业务方法 → 验证 driver 反应 + shape 状态。
 
 | 类别 | 数量 | 验证 |
 | --- | --- | --- |
 | writeRadius 基础 | 5+ | 每个 fixture 一个用例（basic/medium/large/tiny/wide） |
-| writeRadius strict/locked | 3 | strict/locked/locked+strict 各 1 |
-| writeRadius 边界 | 5 | 0 尺寸、非圆角、NaN、Infinity、layoutParentId |
+| writeRadius strict/locked | 3 | strict / locked / locked+strict |
+| writeRadius 边界 | 5 | 0 尺寸 / 非圆角 / NaN / Infinity / layoutParentId |
 | writeRadius driver 异常 | 1 | reason=exception, error 含 message |
 | 批量 5+ | 2 | 5 个全成功 / 5 个混合状态 |
 | readLockState / writeLockState | 8 | 各种 tag 状态读写 |
 | reapplyLock | 5 | 基础 / clamp / 0 尺寸 / 非圆角 / 负数 |
 | applyLayout | 8 | 2x2 / off / same / 父不在 / 子不足 / stale / writeParentTag=false / infeasible |
 | syncLayoutChildrenR | 7 | subtract / same / off / parentRcm=0 / stale / strict / 非圆角 |
-| driver API 一致性 | 4 | 16 方法、adjFraction defensive、size vs box、v1.2.2 回归 |
-| **自测场景** | **4** | **5+ 形状组合 / clamp 边界 / reapplyLock / 多 slide** |
+| driver API 一致性 | 4 | 16 方法 / adjFraction defensive / size vs box / v1.2.2 回归 |
+| 自测场景 | 4 | 5+ 形状组合 / clamp 边界 / reapplyLock / 多 slide |
 
 ## 测试覆盖原则
 
@@ -240,9 +236,11 @@ driver = {
 
   // 读（假定已 load + sync）
   shapeId(s),               // s.id
+  size(s),                  // { width, height }
   box(s),                   // { left, top, width, height }
   isRoundRect(s),           // s.adjustments.count > 0
   adjFraction(s),           // s.adjustments.get(0).value (0~1)
+  loadAdjValue(s),          // s.adjustments.load('items/value')
 
   // 写（假定已 load）
   setBox(s, box),
@@ -257,7 +255,7 @@ driver = {
 
 ## mock shape 协议
 
-`writeRadiusToShapePure` 接受一个普通对象 `shape`：
+`writeRadiusToShapePure` 接受一个普通对象 `shape`（**v1.3 已删，业务只走 driver 路径**）：
 
 ```js
 shape = {
@@ -275,4 +273,4 @@ shape = {
 }
 ```
 
-测试用 `makeFixtureShape({...})`（fixtures.js）或 `makeMockShape({...})`（test-mock-harness.js）创建 mock shape。
+测试用 `makeFixtureShape({...})`（fixtures.js）创建 mock shape。

@@ -1,259 +1,217 @@
 /*
- * test-radius-core.js — R 角调整 v1.2 核心算法测试
+ * test-radius-core.js — R 角调整 v1.3+ 纯算法测试
  *
  * 跑：node test/test-radius-core.js
  * 跑（npm）：npm test
  *
- * 测试目标：
- *   1. 布局 math（computeLayout）
- *   2. 单位换算（valueToCm / cmToValue）
- *   3. R 角联动公式（subtract / same / off）
- *   4. clamp + adj 转换
- *   5. strict/lock 行为规则
- *   6. onApply / layout apply 拒绝逻辑
- *   7. 端到端集成场景
+ * 测试目标（纯函数，无 driver / Office.js 依赖）：
+ *   1. 布局 math（computeLayout）— 各种 grid + 边界
+ *   2. 单位换算（valueToCm / cmToValue）— cm ↔ %
+ *   3. R 角联动公式（computeLinkedSubR）— subtract / same / off
+ *   4. clamp + adj 转换（clampRadius / cmToAdj / computeFinalRadius）
+ *   5. 业务规则（shouldRejectWriteRadius / shouldRejectOnApply / shouldRejectLayoutApply / syncFixedValueIfLocked）
+ *
+ * 不测：
+ *   - writeRadius / applyLayout / syncLayoutChildrenR — 走 driver 集成测试
+ *   - writeRadiusToShapePure / applyLayoutPure — v1.3 已删（业务只走 driver 路径）
+ *
+ * 用新框架（fixtures + test-harness）:
+ *   - 用 createTestRunner() 而不是手写 test() 框架
+ *   - 共享 PT_PER_CM / cm helper
  */
 
-const core = require('../src/lib/radius-core.js');
+const path = require('path');
+const assert = require('assert');
+const RC = require(path.join(__dirname, '..', 'src', 'lib', 'radius-core.js'));
+const { createTestRunner, PT_PER_CM } = require('./test-harness');
 
-let passed = 0;
-let failed = 0;
-let currentSuite = '';
+const t = createTestRunner();
+const toPt = (c) => c * PT_PER_CM;  // cm → pt
+const toCm = (pt) => pt / PT_PER_CM;  // pt → cm（纯算法测试用，fixtures.js 的 cm 方向相反）
 
-function suite(name) {
-  currentSuite = name;
-  console.log('\n=== ' + name + ' ===');
-}
-function test(name, actual, expected, tol) {
-  tol = tol || 1e-9;
-  let ok;
-  if (Array.isArray(expected)) {
-    ok = Array.isArray(actual) && actual.length === expected.length;
-    if (ok) {
-      for (let i = 0; i < actual.length; i++) {
-        if (typeof expected[i] === 'number') {
-          if (Math.abs(actual[i] - expected[i]) > tol) { ok = false; break; }
-        } else if (actual[i] !== expected[i]) { ok = false; break; }
-      }
-    }
-  } else if (typeof expected === 'object' && expected !== null) {
-    ok = actual !== null && typeof actual === 'object';
-    if (ok) {
-      for (const k in expected) {
-        if (typeof expected[k] === 'number') {
-          if (Math.abs(actual[k] - expected[k]) > tol) { ok = false; break; }
-        } else if (actual[k] !== expected[k]) { ok = false; break; }
-      }
-    }
-  } else if (typeof expected === 'number') {
-    ok = typeof actual === 'number' && Math.abs(actual - expected) <= tol;
-  } else {
-    ok = actual === expected;
-  }
-  if (ok) {
-    console.log('  ✓ ' + name);
-    passed++;
-  } else {
-    console.log('  ✗ ' + name);
-    console.log('    actual:   ' + JSON.stringify(actual));
-    console.log('    expected: ' + JSON.stringify(expected));
-    failed++;
-  }
-}
-function approx(a, b, tol) { return Math.abs(a - b) <= (tol || 1e-4); }
-function pt(cm) { return cm * core.PT_PER_CM; }
-function cm(pt) { return pt / core.PT_PER_CM; }
+// ============================================================
+// 1. computeLayout — 布局 math
+// ============================================================
 
-// =====================================================
-// 1. computeLayout（布局 math）
-// =====================================================
-suite('computeLayout — 基础 2×2');
-{
-  const parent = { left: 0, top: 0, width: pt(12), height: pt(8) };
-  const r = core.computeLayout(parent, 2, 2, 0.5, 0.3);
-  test('feasible', r.feasible, true);
-  test('subW cm', cm(r.subW), 5.35, 0.01);  // (12 - 1 - 0.3) / 2 = 5.35
-  test('subH cm', cm(r.subH), 3.35, 0.01);  // (8 - 1 - 0.3) / 2 = 3.35
-  test('positions count', r.positions.length, 4);
-  // 第 0 个位置：(padding, padding)
-  test('pos #0 left cm', cm(r.positions[0].left), 0.5, 0.01);
-  test('pos #0 top cm', cm(r.positions[0].top), 0.5, 0.01);
-  // 第 1 个位置：(padding + subW + gutter, padding)
-  test('pos #1 left cm', cm(r.positions[1].left), 0.5 + 5.35 + 0.3, 0.01);
-  // 第 2 个位置：(padding, padding + subH + gutter)
-  test('pos #2 top cm', cm(r.positions[2].top), 0.5 + 3.35 + 0.3, 0.01);
-  // 第 3 个位置：右下角
-  test('pos #3 left cm', cm(r.positions[3].left), 0.5 + 5.35 + 0.3, 0.01);
-  test('pos #3 top cm', cm(r.positions[3].top), 0.5 + 3.35 + 0.3, 0.01);
-}
+t.test('computeLayout 2×2 基础：subW/subH 跟 4 个位置都对', () => {
+  const r = RC.computeLayout({ left: 0, top: 0, width: toPt(12), height: toPt(8) }, 2, 2, 0.5, 0.3);
+  assert.strictEqual(r.feasible, true);
+  assert.strictEqual(r.positions.length, 4);
+  assert.ok(Math.abs(toCm(r.subW) - 5.35) < 0.01);
+  assert.ok(Math.abs(toCm(r.subH) - 3.35) < 0.01);
+  // 4 个位置：(padding, padding) / (padding+subW+gutter, padding) / (padding, padding+subH+gutter) / 右下
+  assert.ok(Math.abs(toCm(r.positions[0].left) - 0.5) < 0.01);
+  assert.ok(Math.abs(toCm(r.positions[0].top) - 0.5) < 0.01);
+  assert.ok(Math.abs(toCm(r.positions[1].left) - 0.5 - 5.35 - 0.3) < 0.01);
+  assert.ok(Math.abs(toCm(r.positions[2].top) - 0.5 - 3.35 - 0.3) < 0.01);
+});
 
-suite('computeLayout — 1×3 横向');
-{
-  const parent = { left: 0, top: 0, width: pt(12), height: pt(4) };
-  const r = core.computeLayout(parent, 1, 3, 0.3, 0.2);
-  test('feasible', r.feasible, true);
-  test('subW cm', cm(r.subW), (12 - 0.6 - 0.4) / 3, 0.01);  // (12 - 2*0.3 - 2*0.2) / 3
-  test('subH cm', cm(r.subH), 4 - 0.6, 0.01);              // 4 - 2*0.3
-  test('positions count', r.positions.length, 3);
-  // 第 0 个：左
-  test('pos #0 left cm', cm(r.positions[0].left), 0.3, 0.01);
-  // 第 2 个：右（用容差避免浮点精度）
-  test('pos #2 left cm', cm(r.positions[2].left), 12 - 0.3 - cm(r.subW), 0.05);
-  // 验证：最后子形状的右边沿 = 父 left + 父 width - padding（右）
-  // 即 lastPos.left + subW = 父 width - padding
-  const lastPos = r.positions[r.positions.length - 1];
-  test('最后 left + subW = 父 width - padding (右)', cm(lastPos.left + lastPos.w), 12 - 0.3, 0.01);
-}
+t.test('computeLayout 1×3 横向：第 0 个在左，最后一个右边沿贴父右 padding', () => {
+  const r = RC.computeLayout({ left: 0, top: 0, width: toPt(12), height: toPt(4) }, 1, 3, 0.3, 0.2);
+  assert.strictEqual(r.positions.length, 3);
+  assert.ok(Math.abs(toCm(r.subW) - (12 - 0.6 - 0.4) / 3) < 0.01);
+  assert.ok(Math.abs(toCm(r.positions[0].left) - 0.3) < 0.01);
+  // 最后位置：left + subW = 12 - padding
+  const last = r.positions[2];
+  assert.ok(Math.abs(toCm(last.left + last.w) - (12 - 0.3)) < 0.01);
+});
 
-suite('computeLayout — 3×2 + 非零起点');
-{
-  const parent = { left: pt(5), top: pt(3), width: pt(10), height: pt(6) };
-  const r = core.computeLayout(parent, 3, 2, 0.5, 0.3);
-  test('feasible', r.feasible, true);
-  test('subW cm', cm(r.subW), (10 - 1 - 0.3) / 2, 0.01);
-  test('subH cm', cm(r.subH), (6 - 1 - 0.6) / 3, 0.01);
-  // 第 0 个：(5 + 0.5, 3 + 0.5) cm
-  test('pos #0 left cm', cm(r.positions[0].left), 5.5, 0.01);
-  test('pos #0 top cm', cm(r.positions[0].top), 3.5, 0.01);
-  // 第 5 个：右下角
-  test('pos #5 idx', r.positions[5].idx, 5);
-}
+t.test('computeLayout 3×2 非零起点：pos #0 起点 = parent.left+padding', () => {
+  const r = RC.computeLayout({ left: toPt(5), top: toPt(3), width: toPt(10), height: toPt(6) }, 3, 2, 0.5, 0.3);
+  assert.strictEqual(r.positions[0].idx, 0);
+  assert.ok(Math.abs(toCm(r.positions[0].left) - 5.5) < 0.01);
+  assert.ok(Math.abs(toCm(r.positions[0].top) - 3.5) < 0.01);
+  assert.strictEqual(r.positions[5].idx, 5);
+});
 
-suite('computeLayout — 不可行（padding 太大）');
-{
-  const parent = { left: 0, top: 0, width: pt(2), height: pt(2) };
-  const r = core.computeLayout(parent, 2, 2, 1, 0.1);
-  test('feasible', r.feasible, false);
-  test('positions empty', r.positions.length, 0);
-  test('reason 非空', r.reason.length > 0, true);
-}
+t.test('computeLayout 1×1：subW = 父 width - 2padding', () => {
+  const r = RC.computeLayout({ left: 0, top: 0, width: toPt(10), height: toPt(6) }, 1, 1, 0.5, 0.3);
+  assert.strictEqual(r.positions.length, 1);
+  assert.ok(Math.abs(toCm(r.subW) - 9) < 0.01);
+  assert.ok(Math.abs(toCm(r.subH) - 5) < 0.01);
+});
 
-suite('computeLayout — 单行单列 (1×1)');
-{
-  const parent = { left: 0, top: 0, width: pt(10), height: pt(6) };
-  const r = core.computeLayout(parent, 1, 1, 0.5, 0.3);
-  test('feasible', r.feasible, true);
-  test('subW cm', cm(r.subW), 9, 0.01);  // 10 - 1
-  test('subH cm', cm(r.subH), 5, 0.01);  // 6 - 1
-  test('positions count', r.positions.length, 1);
-  test('pos #0 (0.5, 0.5) cm', cm(r.positions[0].left), 0.5, 0.01);
-}
+t.test('computeLayout 不可行：padding 太大 → feasible=false + reason', () => {
+  const r = RC.computeLayout({ left: 0, top: 0, width: toPt(2), height: toPt(2) }, 2, 2, 1, 0.1);
+  assert.strictEqual(r.feasible, false);
+  assert.strictEqual(r.positions.length, 0);
+  assert.ok(r.reason.length > 0);
+});
 
-// =====================================================
-// 2. 单位换算
-// =====================================================
-suite('valueToCm / cmToValue');
-{
-  test('cm→cm 1.5', core.valueToCm(1.5, 'cm', 0), 1.5);
-  test('cm→cm 0', core.valueToCm(0, 'cm', 0), 0);
-  test('%→cm 50% of 4cm', core.valueToCm(50, '%', 4), 2, 0.01);
-  test('%→cm 20% of 5cm', core.valueToCm(20, '%', 5), 1, 0.01);
-  test('cm→% of 4cm', core.cmToValue(2, '%', 4), 50, 0.01);
-  test('cm→% of 0', core.cmToValue(2, '%', 0), 0);  // 边界：refMinSide=0 → 0
-  test('cm→cm (pass through)', core.cmToValue(1.5, 'cm', 0), 1.5);
-}
+// ============================================================
+// 2. valueToCm / cmToValue — 单位换算
+// ============================================================
 
-// =====================================================
-// 3. R 角联动公式
-// =====================================================
-suite('computeLinkedSubR — subtract (v1.0 公式)');
-{
-  test('parentR=1.5, padding=0.3 → 1.2', core.computeLinkedSubR(1.5, 0.3, 'subtract'), 1.2, 0.01);
-  test('parentR=1.0, padding=1.5 → 0 (clamp ≥ 0)', core.computeLinkedSubR(1.0, 1.5, 'subtract'), 0, 0.01);
-  test('parentR=0.5, padding=0.3 → 0.2', core.computeLinkedSubR(0.5, 0.3, 'subtract'), 0.2, 0.01);
-  test('parentR=0 → 0', core.computeLinkedSubR(0, 0.3, 'subtract'), 0, 0.01);
-  test('parentR=2, padding=0 → 2', core.computeLinkedSubR(2, 0, 'subtract'), 2, 0.01);
-}
-suite('computeLinkedSubR — same (严格 45° 等宽)');
-{
-  test('parentR=1.5 → 1.5 (无 padding 减)', core.computeLinkedSubR(1.5, 0.3, 'same'), 1.5, 0.01);
-  test('parentR=0 → 0', core.computeLinkedSubR(0, 0.3, 'same'), 0, 0.01);
-  test('parentR=1, padding=10 → 1 (不 clamp)', core.computeLinkedSubR(1, 10, 'same'), 1, 0.01);
-}
-suite('computeLinkedSubR — off');
-{
-  test('任意 → 0', core.computeLinkedSubR(1.5, 0.3, 'off'), 0);
-  test('0/0 → 0', core.computeLinkedSubR(0, 0, 'off'), 0);
-}
+t.test('valueToCm cm 直通', () => assert.strictEqual(RC.valueToCm(1.5, 'cm', 0), 1.5));
+t.test('valueToCm % 转 cm：50% of 4cm = 2cm', () => assert.ok(Math.abs(RC.valueToCm(50, '%', 4) - 2) < 0.01));
+t.test('valueToCm % 转 cm：20% of 5cm = 1cm', () => assert.ok(Math.abs(RC.valueToCm(20, '%', 5) - 1) < 0.01));
+t.test('cmToValue % 转回：2cm of 4cm = 50%', () => assert.ok(Math.abs(RC.cmToValue(2, '%', 4) - 50) < 0.01));
+t.test('cmToValue refMinSide=0 防御 → 0', () => assert.strictEqual(RC.cmToValue(2, '%', 0), 0));
+t.test('cmToValue cm 直通', () => assert.strictEqual(RC.cmToValue(1.5, 'cm', 0), 1.5));
 
-// =====================================================
-// 4. clamp + adj 转换
-// =====================================================
-suite('clampRadius');
-{
-  test('target 1.5, minSide 4 → 1.5 (不超短边一半)', core.clampRadius(1.5, 4), 1.5);
-  test('target 3.0, minSide 4 → 2.0 (clamp 到 短边一半)', core.clampRadius(3.0, 4), 2.0);
-  test('target -0.5, minSide 4 → -0.5 (允许负值，让外面处理)', core.clampRadius(-0.5, 4), -0.5);
-  test('target 1, minSide 0 → 1 (无 minSide 时不 clamp)', core.clampRadius(1, 0), 1);
-  test('target 0 → 0', core.clampRadius(0, 4), 0);
-}
-suite('cmToAdj');
-{
-  test('R=1cm, minSide=4cm → adj=0.25', core.cmToAdj(1, 4), 0.25, 0.001);
-  test('R=0, minSide=4 → adj=0', core.cmToAdj(0, 4), 0);
-  test('R=2cm, minSide=4cm → adj=0.5 (短边一半)', core.cmToAdj(2, 4), 0.5, 0.001);
-  test('R=1, minSide=0 → adj=0', core.cmToAdj(1, 0), 0);
-}
-suite('computeFinalRadius');
-{
-  // linkRMode = 'off' → skipped
-  const r1 = core.computeFinalRadius(4, 'off', 1.5, 0.5);
-  test('off → skipped=true', r1.skipped, true);
-  test('off → finalCm=0', r1.finalCm, 0);
+// ============================================================
+// 3. computeLinkedSubR — 联动公式
+// ============================================================
 
-  // linkRMode = 'subtract'（默认公式）
-  const r2 = core.computeFinalRadius(4, 'subtract', 1.5, 0.5);
-  test('subtract → skipped=false', r2.skipped, false);
-  test('subtract, parentR=1.5, padding=0.5 → finalCm=1.0', r2.finalCm, 1.0, 0.01);
-  test('subtract → adj=0.25 (1/4)', r2.adj, 0.25, 0.001);
+t.test('computeLinkedSubR subtract：parentR=1.5, padding=0.3 → 1.2', () => {
+  assert.ok(Math.abs(RC.computeLinkedSubR(1.5, 0.3, 'subtract') - 1.2) < 0.01);
+});
+t.test('computeLinkedSubR subtract：parentR < padding → 0（不能负）', () => {
+  assert.strictEqual(RC.computeLinkedSubR(1.0, 1.5, 'subtract'), 0);
+});
+t.test('computeLinkedSubR subtract：parentR=0 → 0', () => {
+  assert.strictEqual(RC.computeLinkedSubR(0, 0.3, 'subtract'), 0);
+});
+t.test('computeLinkedSubR same：parentR=1.5, padding=10 → 1.5（不 clamp）', () => {
+  assert.strictEqual(RC.computeLinkedSubR(1.5, 10, 'same'), 1.5);
+});
+t.test('computeLinkedSubR off：任意 → 0', () => {
+  assert.strictEqual(RC.computeLinkedSubR(1.5, 0.3, 'off'), 0);
+  assert.strictEqual(RC.computeLinkedSubR(0, 0, 'off'), 0);
+});
 
-  // linkRMode = 'same'
-  const r3 = core.computeFinalRadius(4, 'same', 1.5, 0.5);
-  test('same, parentR=1.5 → finalCm=1.5', r3.finalCm, 1.5, 0.01);
-  test('same → adj=0.375 (1.5/4)', r3.adj, 0.375, 0.001);
+// ============================================================
+// 4. clampRadius / cmToAdj / computeFinalRadius
+// ============================================================
 
-  // clamp：parentR 超子短边一半
-  const r4 = core.computeFinalRadius(2, 'subtract', 5, 0);  // parentR=5, minSide=2 → 最多 1
-  test('clamp: parentR=5, minSide=2 → finalCm=1', r4.finalCm, 1, 0.01);
+t.test('clampRadius 不超短边一半：target=1.5, minSide=4 → 1.5', () => {
+  assert.strictEqual(RC.clampRadius(1.5, 4), 1.5);
+});
+t.test('clampRadius 超短边一半：target=3, minSide=4 → 2（=4/2）', () => {
+  assert.strictEqual(RC.clampRadius(3, 4), 2);
+});
+t.test('clampRadius 负值：target=-0.5 → -0.5（不静默处理，让外面判断）', () => {
+  assert.strictEqual(RC.clampRadius(-0.5, 4), -0.5);
+});
+t.test('clampRadius minSide=0：不 clamp（target 直通）', () => {
+  assert.strictEqual(RC.clampRadius(1, 0), 1);
+});
 
-  // subtract：parentR < padding → 0
-  const r5 = core.computeFinalRadius(4, 'subtract', 0.3, 1.0);
-  test('subtract, parentR=0.3 < padding=1.0 → finalCm=0', r5.finalCm, 0, 0.01);
-}
+t.test('cmToAdj：R=1cm / minSide=4cm = 0.25', () => {
+  assert.ok(Math.abs(RC.cmToAdj(1, 4) - 0.25) < 0.001);
+});
+t.test('cmToAdj 短边一半 = 0.5', () => {
+  assert.ok(Math.abs(RC.cmToAdj(2, 4) - 0.5) < 0.001);
+});
+t.test('cmToAdj minSide=0 防御 → 0', () => {
+  assert.strictEqual(RC.cmToAdj(1, 0), 0);
+});
 
-// =====================================================
-// 5. strict/lock 行为规则
-// =====================================================
-suite('shouldRejectWriteRadius');
-{
-  test('普通 roundRect, 非 strict → allow', core.shouldRejectWriteRadius({ isStrict: false, isRoundRect: true, minSideCm: 4 }), { allow: true });
-  test('strict → reject', core.shouldRejectWriteRadius({ isStrict: true, isRoundRect: true, minSideCm: 4 }).allow, false);
-  test('strict 拒绝 reason', core.shouldRejectWriteRadius({ isStrict: true, isRoundRect: true, minSideCm: 4 }).reason, 'strict');
-  test('非 roundRect → reject (not-roundRect)', core.shouldRejectWriteRadius({ isStrict: false, isRoundRect: false, minSideCm: 4 }).reason, 'not-roundRect');
-  test('minSide=0 → reject (no-size)', core.shouldRejectWriteRadius({ isStrict: false, isRoundRect: true, minSideCm: 0 }).reason, 'no-size');
-}
-suite('shouldRejectOnApply');
-{
-  test('空选区 → 不拒绝', core.shouldRejectOnApply([]), { shouldReject: false, strictCount: 0 });
-  test('5 个普通 → 不拒绝', core.shouldRejectOnApply([
-    { isRoundRect: true, isStrict: false },
-    { isRoundRect: true, isStrict: false },
-    { isRoundRect: true, isStrict: false },
-    { isRoundRect: true, isStrict: false },
-    { isRoundRect: true, isStrict: false },
-  ]), { shouldReject: false, strictCount: 0 });
-  test('1 个 strict → 全部拒绝', core.shouldRejectOnApply([
+t.test('computeFinalRadius off → skipped=true, finalCm=0', () => {
+  const r = RC.computeFinalRadius(4, 'off', 1.5, 0.5);
+  assert.strictEqual(r.skipped, true);
+  assert.strictEqual(r.finalCm, 0);
+});
+t.test('computeFinalRadius subtract：parentR=1.5, padding=0.5 → finalCm=1.0, adj=0.25', () => {
+  const r = RC.computeFinalRadius(4, 'subtract', 1.5, 0.5);
+  assert.strictEqual(r.skipped, false);
+  assert.ok(Math.abs(r.finalCm - 1.0) < 0.01);
+  assert.ok(Math.abs(r.adj - 0.25) < 0.001);
+});
+t.test('computeFinalRadius same：parentR=1.5 → finalCm=1.5, adj=0.375', () => {
+  const r = RC.computeFinalRadius(4, 'same', 1.5, 0.5);
+  assert.ok(Math.abs(r.finalCm - 1.5) < 0.01);
+  assert.ok(Math.abs(r.adj - 0.375) < 0.001);
+});
+t.test('computeFinalRadius clamp：parentR=5, minSide=2 → finalCm=1（不能超 1）', () => {
+  const r = RC.computeFinalRadius(2, 'subtract', 5, 0);
+  assert.ok(Math.abs(r.finalCm - 1) < 0.01);
+});
+t.test('computeFinalRadius subtract parentR < padding：parentR=0.3, padding=1 → finalCm=0', () => {
+  const r = RC.computeFinalRadius(4, 'subtract', 0.3, 1.0);
+  assert.strictEqual(r.finalCm, 0);
+});
+
+// ============================================================
+// 5. 业务规则（纯函数：被 dialog.js 第一道防线 + radius-core 内部用）
+// ============================================================
+
+t.test('shouldRejectWriteRadius 普通 → allow=true', () => {
+  const r = RC.shouldRejectWriteRadius({ isStrict: false, isRoundRect: true, minSideCm: 4 });
+  assert.strictEqual(r.allow, true);
+});
+t.test('shouldRejectWriteRadius strict → 拒绝 reason=strict（最高优先级）', () => {
+  const r = RC.shouldRejectWriteRadius({ isStrict: true, isRoundRect: true, minSideCm: 4 });
+  assert.strictEqual(r.allow, false);
+  assert.strictEqual(r.reason, 'strict');
+});
+t.test('shouldRejectWriteRadius 非圆角 → reason=not-roundRect', () => {
+  const r = RC.shouldRejectWriteRadius({ isStrict: false, isRoundRect: false, minSideCm: 4 });
+  assert.strictEqual(r.reason, 'not-roundRect');
+});
+t.test('shouldRejectWriteRadius 0 尺寸 → reason=no-size', () => {
+  const r = RC.shouldRejectWriteRadius({ isStrict: false, isRoundRect: true, minSideCm: 0 });
+  assert.strictEqual(r.reason, 'no-size');
+});
+
+t.test('shouldRejectOnApply 空选区 → 不拒绝', () => {
+  const r = RC.shouldRejectOnApply([]);
+  assert.deepStrictEqual(r, { shouldReject: false, strictCount: 0 });
+});
+t.test('shouldRejectOnApply 5 个全普通 → 不拒绝', () => {
+  const shapes = Array(5).fill({ isRoundRect: true, isStrict: false });
+  const r = RC.shouldRejectOnApply(shapes);
+  assert.deepStrictEqual(r, { shouldReject: false, strictCount: 0 });
+});
+t.test('shouldRejectOnApply 含 1 个 strict → 全部拒绝', () => {
+  const r = RC.shouldRejectOnApply([
     { isRoundRect: true, isStrict: false },
     { isRoundRect: true, isStrict: true },
     { isRoundRect: true, isStrict: false },
-  ]), { shouldReject: true, strictCount: 1 });
-  test('非 roundRect 严格不算', core.shouldRejectOnApply([
-    { isRoundRect: false, isStrict: true },  // 不是 roundRect，不算 strict
+  ]);
+  assert.strictEqual(r.shouldReject, true);
+  assert.strictEqual(r.strictCount, 1);
+});
+t.test('shouldRejectOnApply 非 roundRect 的 strict 不算', () => {
+  // {isRoundRect:false, isStrict:true} 不是圆角矩形，strict 标签没意义
+  const r = RC.shouldRejectOnApply([
+    { isRoundRect: false, isStrict: true },
     { isRoundRect: true, isStrict: false },
-  ]), { shouldReject: false, strictCount: 0 });
-}
-suite('shouldRejectLayoutApply');
-{
+  ]);
+  assert.deepStrictEqual(r, { shouldReject: false, strictCount: 0 });
+});
+
+t.test('shouldRejectLayoutApply 2×2 含 strict 子 → 整个拒绝', () => {
   const shapes = [
     { id: 'p', layoutRole: 'parent', isStrict: false },
     { id: 'c1', layoutRole: null, isStrict: false },
@@ -261,138 +219,118 @@ suite('shouldRejectLayoutApply');
     { id: 'c3', layoutRole: null, isStrict: false },
     { id: 'c4', layoutRole: null, isStrict: false },
   ];
-  const r = core.shouldRejectLayoutApply(shapes, 'p', ['c1', 'c2', 'c3', 'c4']);
-  test('2×2 含 strict 子 → 拒绝', r.shouldReject, true);
-  test('strict 子数', r.strictShapes.length, 1);
-  test('strict 子是 c2', r.strictShapes[0].id, 'c2');
-
-  // 父是 strict 不影响
-  const shapes2 = [
-    { id: 'p', layoutRole: 'parent', isStrict: true },
+  const r = RC.shouldRejectLayoutApply(shapes, 'p', ['c1', 'c2', 'c3', 'c4']);
+  assert.strictEqual(r.shouldReject, true);
+  assert.strictEqual(r.strictShapes.length, 1);
+  assert.strictEqual(r.strictShapes[0].id, 'c2');
+});
+t.test('shouldRejectLayoutApply 父 strict 不影响（strict 标签只看子）', () => {
+  const shapes = [
+    { id: 'p', layoutRole: 'parent', isStrict: true },  // 父 strict
     { id: 'c1', layoutRole: null, isStrict: false },
     { id: 'c2', layoutRole: null, isStrict: false },
   ];
-  const r2 = core.shouldRejectLayoutApply(shapes2, 'p', ['c1', 'c2']);
-  test('父 strict 不影响', r2.shouldReject, false);
-}
-suite('syncFixedValueIfLocked');
-{
-  test('unlocked → 不同步', core.syncFixedValueIfLocked({ isLocked: false, lockedCm: 0 }, 1.5), { newLockedCm: 0, synced: false });
-  test('locked, 写 1.5 → 同步 1.5', core.syncFixedValueIfLocked({ isLocked: true, lockedCm: 1.0 }, 1.5), { newLockedCm: 1.5, synced: true });
-  test('locked, 写 0 → 同步 0', core.syncFixedValueIfLocked({ isLocked: true, lockedCm: 1.0 }, 0), { newLockedCm: 0, synced: true });
-}
+  const r = RC.shouldRejectLayoutApply(shapes, 'p', ['c1', 'c2']);
+  assert.strictEqual(r.shouldReject, false);
+});
 
-// =====================================================
-// 6. 集成场景
-// =====================================================
-suite('集成场景 — 1 大 + 4 小 (2×2) layout apply');
-{
-  // 父 12×8cm R=1.62cm，padding 0.5，gutter 0.3
-  const parentBox = { left: 0, top: 0, width: pt(12), height: pt(8) };
+t.test('syncFixedValueIfLocked unlocked → 不同步', () => {
+  assert.deepStrictEqual(
+    RC.syncFixedValueIfLocked({ isLocked: false, lockedCm: 0 }, 1.5),
+    { newLockedCm: 0, synced: false }
+  );
+});
+t.test('syncFixedValueIfLocked locked → 同步到 newCm', () => {
+  assert.deepStrictEqual(
+    RC.syncFixedValueIfLocked({ isLocked: true, lockedCm: 1.0 }, 1.5),
+    { newLockedCm: 1.5, synced: true }
+  );
+});
+t.test('syncFixedValueIfLocked locked 写 0 → 同步到 0（user 把 R 角拉到 0 也要同步）', () => {
+  assert.deepStrictEqual(
+    RC.syncFixedValueIfLocked({ isLocked: true, lockedCm: 1.0 }, 0),
+    { newLockedCm: 0, synced: true }
+  );
+});
+
+// ============================================================
+// 集成场景（纯函数组合）
+// ============================================================
+
+t.test('集成：2×2 layout + subtract 联动公式 — 4 个子 subR 跟公式一致', () => {
+  // 父 12×8cm, R=1.62cm, padding=0.5
+  const parentBox = { left: 0, top: 0, width: toPt(12), height: toPt(8) };
   const parentRcm = 1.62;
   const padding = 0.5;
-  const gutter = 0.3;
-  const rows = 2, cols = 2;
 
-  const layout = core.computeLayout(parentBox, rows, cols, padding, gutter);
-  test('feasible', layout.feasible, true);
+  const layout = RC.computeLayout(parentBox, 2, 2, padding, 0.3);
+  assert.strictEqual(layout.feasible, true);
 
-  // 4 个子
   for (let k = 0; k < 4; k++) {
     const pos = layout.positions[k];
-    const subWcm = cm(pos.w);
-    const subHcm = cm(pos.h);
-    const childMinSideCm = Math.min(subWcm, subHcm);
-    const final = core.computeFinalRadius(childMinSideCm, 'subtract', parentRcm, padding);
-    const expectedSubR = Math.max(0, parentRcm - padding);  // 1.12
-    test(`子 #${k} subR=1.12cm (subtract 公式)`, final.finalCm, expectedSubR, 0.01);
-    // 验证：子 R 不能超过子短边一半
-    test(`子 #${k} subR 不超子短边一半`, final.finalCm <= childMinSideCm / 2 + 0.01, true);
+    const childMinSideCm = Math.min(toCm(pos.w), toCm(pos.h));
+    const final = RC.computeFinalRadius(childMinSideCm, 'subtract', parentRcm, padding);
+    // 公式：subR = max(0, parentR - padding) = 1.12
+    assert.ok(Math.abs(final.finalCm - 1.12) < 0.01, `子 #${k} subR=${final.finalCm} 应为 1.12`);
+    // clamp 验证：不能超子短边一半
+    assert.ok(final.finalCm <= childMinSideCm / 2 + 0.01);
   }
-}
+});
 
-suite('集成场景 — 1 大 + 3 小 (1×3) layout apply');
-{
-  const parentBox = { left: 0, top: 0, width: pt(15), height: pt(5) };
+t.test('集成：1×3 layout + same 联动公式 — 3 个子 subR 都 = parentR', () => {
+  const parentBox = { left: 0, top: 0, width: toPt(15), height: toPt(5) };
   const parentRcm = 1.0;
-  const padding = 0.3;
-  const gutter = 0.2;
-  const rows = 1, cols = 3;
+  const layout = RC.computeLayout(parentBox, 1, 3, 0.3, 0.2);
 
-  const layout = core.computeLayout(parentBox, rows, cols, padding, gutter);
-  test('feasible', layout.feasible, true);
-  test('positions count', layout.positions.length, 3);
-  // 每个子
   for (let k = 0; k < 3; k++) {
     const pos = layout.positions[k];
-    const subWcm = cm(pos.w);
-    const subHcm = cm(pos.h);
-    const childMinSideCm = Math.min(subWcm, subHcm);
-    const final = core.computeFinalRadius(childMinSideCm, 'same', parentRcm, padding);
-    test(`1×3 子 #${k} same 模式: subR=parentR=1.0`, final.finalCm, 1.0, 0.01);
+    const childMinSideCm = Math.min(toCm(pos.w), toCm(pos.h));
+    const final = RC.computeFinalRadius(childMinSideCm, 'same', parentRcm, 0.3);
+    assert.strictEqual(final.finalCm, 1.0, `子 #${k} same 模式 subR=parentR=1.0`);
   }
-}
+});
 
-suite('集成场景 — apply 拒绝场景（防误触优先）');
-{
-  // 场景 1: onApply 有 strict
-  const r1 = core.shouldRejectOnApply([
+t.test('集成：apply 拒绝场景 — strict 优先于其它', () => {
+  // onApply 选区含 strict → 全部拒绝
+  const r1 = RC.shouldRejectOnApply([
     { isRoundRect: true, isStrict: false },
     { isRoundRect: true, isStrict: true },
   ]);
-  test('onApply 选区含 strict → 全部拒绝', r1.shouldReject, true);
-
-  // 场景 2: layout apply 有 strict 子
-  const r2 = core.shouldRejectLayoutApply(
-    [
-      { id: 'p', layoutRole: 'parent', isStrict: false },
-      { id: 'c1', isStrict: false },
-      { id: 'c2', isStrict: true },
-    ],
-    'p',
-    ['c1', 'c2']
+  assert.strictEqual(r1.shouldReject, true);
+  // layout apply 含 strict 子 → 拒绝
+  const r2 = RC.shouldRejectLayoutApply(
+    [{ id: 'p', layoutRole: 'parent', isStrict: false }, { id: 'c1', isStrict: false }, { id: 'c2', isStrict: true }],
+    'p', ['c1', 'c2']
   );
-  test('layout 含 strict 子 → 拒绝整个 apply', r2.shouldReject, true);
-
-  // 场景 3: 全部解锁 → 不拒绝
-  const r3 = core.shouldRejectOnApply([
+  assert.strictEqual(r2.shouldReject, true);
+  // 全解锁 → 不拒绝
+  const r3 = RC.shouldRejectOnApply([
     { isRoundRect: true, isStrict: false },
     { isRoundRect: true, isStrict: false },
   ]);
-  test('全解锁 → 不拒绝', r3.shouldReject, false);
-}
+  assert.strictEqual(r3.shouldReject, false);
+});
 
-suite('集成场景 — lock 同步 fixed value');
-{
-  // 场景：lock 形状被 R 角联动公式更新 → fixed value 同步
-  const before = { id: 'c1', isRoundRect: true, isStrict: false, isLocked: true, lockedCm: 0.5 };
-  // 联动公式：subR = 1.12cm（减去 0.5 padding）
+t.test('集成：lock 同步 fixed value — 写 R 角后 lockedCm 跟 newCm 同步', () => {
+  // 模拟 writeRadius 内部：写完 R 角 + 同步 fixed value
+  const before = { isLocked: true, lockedCm: 0.5 };
   const newSubRcm = 1.12;
-  // writeRadiusToShape 内部：写 R 角 + 同步 fixed value
-  const sync = core.syncFixedValueIfLocked(before, newSubRcm);
-  test('locked 形状：fixed value 同步到新 R 角', sync.newLockedCm, 1.12, 0.01);
-  test('synced=true', sync.synced, true);
+  const sync = RC.syncFixedValueIfLocked(before, newSubRcm);
+  assert.strictEqual(sync.newLockedCm, 1.12);
+  assert.strictEqual(sync.synced, true);
 
-  // 场景：unlock 形状 → 不动 lockedCm
-  const before2 = { id: 'c2', isRoundRect: true, isStrict: false, isLocked: false, lockedCm: 0 };
-  const sync2 = core.syncFixedValueIfLocked(before2, newSubRcm);
-  test('unlocked 形状：fixed value 不动', sync2.synced, false);
-}
+  const before2 = { isLocked: false, lockedCm: 0 };
+  const sync2 = RC.syncFixedValueIfLocked(before2, newSubRcm);
+  assert.strictEqual(sync2.synced, false);
+});
 
-suite('集成场景 — 用户给的样例（2×2 嵌套等距缩进）');
-{
-  // 用户原始需求：外层 12×8cm R=1cm，内层缩进 0.5cm → 内层 R 应该是 0.5cm
-  // 父 R = 1.0, padding = 0.5 → subR = max(0, 1.0 - 0.5) = 0.5
-  const parentR = 1.0;
-  const padding = 0.5;
-  const subR = core.computeLinkedSubR(parentR, padding, 'subtract');
-  test('用户样例：父 R=1, padding=0.5 → subR=0.5', subR, 0.5, 0.01);
-}
+t.test('集成：用户样例 — 父 R=1, padding=0.5, subtract → subR=0.5', () => {
+  // v1.0 用户原始需求：外层 12×8cm R=1cm，内层缩进 0.5cm → 内层 R=0.5cm
+  assert.strictEqual(RC.computeLinkedSubR(1.0, 0.5, 'subtract'), 0.5);
+});
 
-// =====================================================
-// 输出
-// =====================================================
-console.log('\n' + '='.repeat(50));
-console.log('结果: ' + passed + ' passed, ' + failed + ' failed');
-console.log('='.repeat(50));
-process.exit(failed > 0 ? 1 : 0);
+// ============================================================
+// 跑
+// ============================================================
+
+t.run().catch((e) => { console.error(e); process.exit(1); });

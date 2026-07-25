@@ -8,7 +8,7 @@
 | 指标 | 值 |
 | --- | --- |
 | 当前里程碑 | v1.3+ 测试框架重构（driver + radius-core 全 driver 化）|
-| 单元测试 | **227 / 0**（算法 103 + mock harness 70 + driver 集成 54，全用新框架）|
+| 单元测试 | **100 / 0**（算法 46 + driver 集成 54，去重后无重复）|
 | Driver 烟囱测试 | **14 / 14** |
 | End-to-end PPT 验证 | **6 / 7**（#6 布局 R 角联动 / #7 pipette 刷入 是 feature bug，待修）|
 | 未来 feature 测试策略 | 走 `npm test` + 代码 review，**不再 PPT 实测** |
@@ -144,12 +144,11 @@ radius_in_ppt/
 │   ├── build-dmg.sh                   # 打包 .dmg
 │   └── sign-and-notarize.sh           # 公证
 ├── assets/                            # ribbon icon（5 个尺寸，manifest.xml 引用）
-├── test/                              # 单元测试（227 个）
-│   ├── fixtures.js                   # 标准 5+ R 角矩形（v1.3）
-│   ├── test-harness.js               # driver call tracker + assertion（v1.3）
-│   ├── test-radius-core.js
-│   ├── test-mock-harness.js
-│   ├── test-driver-integration.js    # 重写用新框架（54 个）
+├── test/                              # 单元测试（100 个，v1.3 去重后）
+│   ├── fixtures.js                   # 标准 5+ R 角矩形
+│   ├── test-harness.js               # driver call tracker + assertion
+│   ├── test-radius-core.js           # 纯算法（46）
+│   ├── test-driver-integration.js    # driver 集成（54）
 │   └── README.md
 ├── dist/                              # build 输出（git ignore）
 ├── AGENTS.md                          # 三层架构 + Mac LTSC 踩坑
@@ -170,16 +169,17 @@ radius_in_ppt/
 
 ```bash
 cd /Users/ma/Documents/minimax/radius_in_ppt
-npm test                                            # 跑全部 3 个测试文件（227 个）
-node test/test-radius-core.js                       # 仅算法（103 个）
-node test/test-mock-harness.js                      # 仅 mock harness（70 个）
-node test/test-driver-integration.js                # 仅 driver 集成（54 个，新框架）
+npm test                                            # 跑全部 2 个测试文件（100 个）
+node test/test-radius-core.js                       # 仅算法（46 个）
+node test/test-driver-integration.js                # 仅 driver 集成（54 个）
 ```
 
-**测试框架**（v1.3 重构）：
+**测试框架**（v1.3 重整后）：
 
 - `test/fixtures.js` — 标准 5+ R 角矩形 fixture（basic/medium/large/tiny/wide + locked/strict/locked+strict + clamp 边界 + 0 尺寸 + 非圆角 + layout 父子）
 - `test/test-harness.js` — driver call tracker + snapshot + assertion helpers（`assertCalled` / `assertNotCalled` / `assertCallCount` / `assertShape`）
+- 2 个测试文件：纯算法（test-radius-core.js，46）+ driver 集成（test-driver-integration.js，54）
+- **v1.3 重整**：删了 test-mock-harness.js（70 个，跟 driver 集成 100% 重复）+ 删了 radius-core.writeRadiusToShapePure / applyLayoutPure（业务只走 driver 路径）
 
 写法新功能测试：
 

@@ -1,9 +1,9 @@
 {
   "name": "radius-in-ppt-tests",
   "version": "1.2.0",
-  "description": "R 角调整 v1.2+ — 单元测试（算法 + mock harness + driver 集成）",
+  "description": "R 角调整 v1.3+ — 单元测试（算法 + driver 集成）",
   "scripts": {
-    "test": "node test/test-radius-core.js && node test/test-mock-harness.js && node test/test-driver-integration.js"
+    "test": "node test/test-radius-core.js && node test/test-driver-integration.js"
   },
   "private": true
 }
