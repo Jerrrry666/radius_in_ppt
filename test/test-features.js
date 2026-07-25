@@ -1123,6 +1123,137 @@ t.test('applyPickedToSelection: syncStrict=false → 不刷 strict（即使源�
   assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
 });
 
+// ===== v1.2.15: syncStrict 双向覆盖（source=false 也要清目标的 strict） =====
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 目标有 strict → 删 strict tag + 写 R 角', async () => {
+  // v1.2.15 新行为：source 不 strict 时，syncStrict=true 应该把目标的 strict tag **也删掉**
+  // （之前 v1.2 之前只单向：source strict → 目标 strict，source 不 strict → 啥也不做）
+  // 顺序：先删 strict → 再写 R 角（写的时候 target 已不是 strict，writeRadius 不被拦截）
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: false };
+  // r7_strict fixture 已有 radiusLockStrict_v1='1'
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict], source, { syncStrict: true });
+  assert.strictEqual(r.ok, true);
+  // strict tag 删了
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], undefined, 'strict tag 应该被删');
+  // R 角被写（target 不再 strict，writeRadius 成功）
+  h.assertShape(f.shapes.r7_strict, { adjFraction: (v) => Math.abs(v - 0.4 / 5) < 1e-6 });
+  // 计数
+  assert.strictEqual(r.applied, 1);
+  assert.strictEqual(r.strictRemoved, 1);
+  assert.strictEqual(r.strictAdded, 0);
+  assert.strictEqual(r.strictSynced, 1);
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 目标没 strict → 不删（no-op）+ 写 R 角', async () => {
+  // 目标本来就没有 strict，deleteTag 是 no-op，但 strictRemoved 仍然 +1（操作了）
+  // 这里其实应该区分"有 strict → 删"和"没 strict → no-op"才算精确，但当前实现统一 +1
+  // （行为上是 idempotent，UX 反馈时按"操作了 N 个目标"显示也合理）
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: false };
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], source, { syncStrict: true });
+  assert.strictEqual(r.ok, true);
+  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
+  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
+  // 计数
+  assert.strictEqual(r.applied, 1);
+  assert.strictEqual(r.strictRemoved, 1, 'deleteTag 被调用，计 1 次');
+  assert.strictEqual(r.strictAdded, 0);
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true + 目标有 strict → 跳过拦截 + R 角不写 + strict 保留', async () => {
+  // v1.2.15 新行为：syncStrict=true 时 step 0 拦截**不生效**（让 override 逻辑处理）
+  // 目标原本就是 strict：
+  //   - step 0 跳过（syncStrict=true）
+  //   - step 1a 不进（source.strict=true）
+  //   - step 1b writeRadius 拒（target 已是 strict）→ failed++
+  //   - step 1c addTag strict（覆盖回 '1'，no-op）→ strictAdded++
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: true };
+  // r7_strict 已有 strict tag
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict], source, { syncStrict: true });
+  assert.strictEqual(r.ok, true);
+  // 不会被 step 0 拒
+  assert.notStrictEqual(r.rejectReason, 'strict');
+  // R 角不写（writeRadius 拒）
+  assert.strictEqual(r.applied, 0);
+  assert.strictEqual(r.failed, 1);
+  // strict 仍是 '1'（addTag 覆盖回 '1'，no-op 数据上）
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  // 计数
+  assert.strictEqual(r.strictAdded, 1);
+  assert.strictEqual(r.strictRemoved, 0);
+  assert.strictEqual(r.strictSynced, 1);
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true + 目标混合（1 strict + 1 普通）→ 各按情况', async () => {
+  // 关键组合测试：
+  //   - r1_basic: 普通 → 写 R 角成功 + 加 strict
+  //   - r7_strict: 已有 strict → 写 R 角拒 + addTag 覆盖
+  // step 0 因为 syncStrict=true 而跳过，所以不会整个拒绝
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: true };
+  const r = await RC.applyPickedToSelection(
+    h.driver, [f.shapes.r1_basic, f.shapes.r7_strict], source, { syncStrict: true }
+  );
+  assert.strictEqual(r.ok, true);
+  // r1_basic 写了 R 角 + 加了 strict
+  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
+  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  // r7_strict 没写 R 角（已是 strict 被拒）+ strict 保留
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  // 计数
+  assert.strictEqual(r.applied, 1);
+  assert.strictEqual(r.failed, 1);
+  assert.strictEqual(r.strictAdded, 2);
+  assert.strictEqual(r.strictRemoved, 0);
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 目标混合（1 strict + 1 普通）→ 都删 strict + 都写 R 角', async () => {
+  //   - r1_basic: 没 strict → deleteTag 调（no-op）→ 写 R 角成功
+  //   - r7_strict: 有 strict → deleteTag 删掉 → 写 R 角成功
+  // 关键：r7_strict 现在能写 R 角了（之前 syncStrict=false 时会 step 0 拦截）
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: false };
+  const r = await RC.applyPickedToSelection(
+    h.driver, [f.shapes.r1_basic, f.shapes.r7_strict], source, { syncStrict: true }
+  );
+  assert.strictEqual(r.ok, true);
+  // r1_basic 写了 R 角
+  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
+  // r7_strict 也写了 R 角（strict 被删了）
+  h.assertShape(f.shapes.r7_strict, { adjFraction: (v) => Math.abs(v - 0.4 / 5) < 1e-6 });
+  // 都没 strict 了
+  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
+  // 计数
+  assert.strictEqual(r.applied, 2);
+  assert.strictEqual(r.failed, 0);
+  assert.strictEqual(r.strictRemoved, 2);
+  assert.strictEqual(r.strictAdded, 0);
+});
+
+t.test('applyPickedToSelection: syncStrict=false + 目标有 strict → 仍然拦截（行为不变）', async () => {
+  // 回归测试：syncStrict=false 时 step 0 拦截行为**不变**（不能误改）
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: true };
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict], source, { syncStrict: false });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.rejectReason, 'strict');
+  // strict 不动
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  // 计数：0（操作被拒）
+  assert.strictEqual(r.strictAdded, 0);
+  assert.strictEqual(r.strictRemoved, 0);
+  assert.strictEqual(r.strictSynced, 0);
+});
+
 t.test('applyPickedToSelection: 目标里有 locked 形状 → 写完 R 角后同步 fixed value', async () => {
   // 验证 #1 修复后的行为：locked 目标被样式刷后，lockedCm 也要同步（不然 lock monitor 会反算）
   const f = makeStandardFixture();

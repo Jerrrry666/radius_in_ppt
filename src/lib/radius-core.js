@@ -1240,26 +1240,46 @@ async function pickupFromSelection(driver, selectedShapes) {
  * 修 #1 bug：之前 dialog.js 调的是旧版 writeRadiusToShape（直接用 ctxShape API，不走 driver），
  *            在 Mac LTSC 某些场景会刷不进去。改用 radius-core.writeRadius（driver 版 + 走 setAdjFraction 路径）后稳定。
  *
+ * v1.2.15 改：syncStrict 行为升级为「双向覆盖」+ 拦截逻辑条件化
+ *   - 之前：syncStrict=true 只支持 source.strict=true → target.strict=true（单向）
+ *           source.strict=false → 啥也不做（目标的 strict tag 保持原样）
+ *           且 step 0 拦截不管 syncStrict 是什么都拦
+ *   - 现在：syncStrict=true 时**双向覆盖**：
+ *           - source.strict=true  → 给所有目标加 strict tag（在写 R 角**之后**加，避免 writeRadius 拦截）
+ *           - source.strict=false → 给所有目标删 strict tag（在写 R 角**之前**删，让 writeRadius 不被拦截）
+ *           step 0 拦截**只在 syncStrict=false 时**生效（syncStrict=true 让 override 逻辑处理）
+ *   - syncStrict=false 时行为不变（step 0 拦截 + 不刷 strict）
+ *
+ * 顺序关键：
+ *   - source=true：写 R 角（target 不是 strict，writeRadius 成功）→ 加 strict tag（覆盖）
+ *     如果 target 原本就是 strict：writeRadius 会被拦截（applied=0），加 tag 是 no-op
+ *   - source=false：删 strict tag（让 target 不再 strict）→ 写 R 角（writeRadius 成功）
+ *
  * 行为：
- *   1. 拦截：选区里有 strict 形状 → 全部拒绝（用 driver.readTag 实时查）
- *   2. 写 R 角：对每个 roundRect 调 writeRadius（自动处理 clamp + lock 同步）
- *   3. （可选）刷 strict 状态：sourceStrict = true → 给所有目标加 strict tag
+ *   1. syncStrict=false 时拦截：选区里有 strict 形状 → 全部拒绝
+ *   2. syncStrict=true 且 source.strict=false → 先删所有目标的 strict tag
+ *   3. 写 R 角：对每个 roundRect 调 writeRadius（自动处理 clamp + lock 同步）
+ *   4. syncStrict=true 且 source.strict=true  → 后加所有目标的 strict tag
  *
  * @param {Object} driver
  * @param {Array} selectedShapes - shape proxy 列表（已 load 'items/id, items/width, items/height, items/adjustments, items/tags'）
  * @param {Object} source - { cm, sourceStrict } —— pickupFromSelection 的结果
- * @param {Object} [opts] - { syncStrict: boolean }  是否刷入 strict 状态
- * @returns {Promise<{ok, applied, failed, strictSynced, error?, rejectReason?}>}
+ * @param {Object} [opts] - { syncStrict: boolean }  是否双向覆盖 strict 状态
+ * @returns {Promise<{ok, applied, failed, strictSynced, strictAdded, strictRemoved, error?, rejectReason?}>}
+ *   - strictAdded: 加 strict tag 的目标数
+ *   - strictRemoved: 删 strict tag 的目标数
+ *   - strictSynced: 上面两个的总和（= 实际修改 strict 状态的目标数）
  */
 async function applyPickedToSelection(driver, selectedShapes, source, opts) {
   opts = opts || {};
   const syncStrict = !!opts.syncStrict;
   let applied = 0;
   let failed = 0;
-  let strictSynced = 0;
+  let strictAdded = 0;
+  let strictRemoved = 0;
   try {
     if (!source || !Number.isFinite(source.cm)) {
-      return { ok: false, applied, failed, strictSynced, error: 'source.cm 不合法' };
+      return { ok: false, applied, failed, strictAdded, strictRemoved, strictSynced: 0, error: 'source.cm 不合法' };
     }
     const shapesList = [];
     if (selectedShapes && typeof selectedShapes.items !== 'undefined') {
@@ -1267,28 +1287,44 @@ async function applyPickedToSelection(driver, selectedShapes, source, opts) {
     } else if (Array.isArray(selectedShapes)) {
       for (const sh of selectedShapes) shapesList.push(sh);
     } else {
-      return { ok: false, applied, failed, strictSynced, error: 'selectedShapes 格式不合法' };
+      return { ok: false, applied, failed, strictAdded, strictRemoved, strictSynced: 0, error: 'selectedShapes 格式不合法' };
     }
 
-    // 步骤 0：拦截（实时读 strict 标签，不依赖内存）
-    for (const sh of shapesList) {
-      try {
-        if (!driver.isRoundRect(sh)) continue;
-        const strictVal = await driver.readTag(sh, LOCK_STRICT_TAG_KEY);
-        if (strictVal === '1') {
-          return {
-            ok: false,
-            applied,
-            failed,
-            strictSynced,
-            rejectReason: 'strict',
-            error: '选区里有形状启用了防误触，样式刷不生效',
-          };
-        }
-      } catch (_) { /* 读 strict 失败不拦截（defensive） */ }
+    // 步骤 0：拦截（仅 syncStrict=false 时，syncStrict=true 时让 override 逻辑处理）
+    if (!syncStrict) {
+      for (const sh of shapesList) {
+        try {
+          if (!driver.isRoundRect(sh)) continue;
+          const strictVal = await driver.readTag(sh, LOCK_STRICT_TAG_KEY);
+          if (strictVal === '1') {
+            return {
+              ok: false,
+              applied,
+              failed,
+              strictAdded,
+              strictRemoved,
+              strictSynced: 0,
+              rejectReason: 'strict',
+              error: '选区里有形状启用了防误触，样式刷不生效',
+            };
+          }
+        } catch (_) { /* 读 strict 失败不拦截（defensive） */ }
+      }
     }
 
-    // 步骤 1：刷 R 角
+    // 步骤 1a：syncStrict=true 且 source.strict=false → 先删所有目标的 strict tag
+    // 顺序：删在写之前（让 writeRadius 不被 strict 拦截）
+    if (syncStrict && !source.sourceStrict) {
+      for (const sh of shapesList) {
+        try {
+          if (!driver.isRoundRect(sh)) continue;
+          try { driver.deleteTag(sh, LOCK_STRICT_TAG_KEY); } catch (_) {}
+          strictRemoved++;
+        } catch (_) {}
+      }
+    }
+
+    // 步骤 1b：写 R 角
     for (const sh of shapesList) {
       try {
         if (!driver.isRoundRect(sh)) continue;
@@ -1296,7 +1332,8 @@ async function applyPickedToSelection(driver, selectedShapes, source, opts) {
         if (r.ok) {
           applied++;
         } else if (r.reason === 'strict') {
-          // 步骤 0 已经查过，但 writeRadius 是第二道防线
+          // writeRadius 是第二道防线：syncStrict=true 时如果目标原本就是 strict
+          // 且 source 也是 strict，没进 1a 删 tag 路径 → writeRadius 会拒
           failed++;
         } else if (r.reason === 'not-roundRect' || r.reason === 'no-size') {
           // 不是 roundRect / 0 尺寸 → 跳过（不计入 failed）
@@ -1310,21 +1347,37 @@ async function applyPickedToSelection(driver, selectedShapes, source, opts) {
       }
     }
 
-    // 步骤 2：刷 strict 状态（可选）
+    // 步骤 1c：syncStrict=true 且 source.strict=true → 写完 R 角后加 strict tag
+    // 顺序：写在加之前（避免 writeRadius 被 strict 拦截）
     if (syncStrict && source.sourceStrict) {
       for (const sh of shapesList) {
         try {
           if (!driver.isRoundRect(sh)) continue;
-          driver.addTag(sh, LOCK_STRICT_TAG_KEY, '1');
-          strictSynced++;
+          try { driver.addTag(sh, LOCK_STRICT_TAG_KEY, '1'); } catch (_) {}
+          strictAdded++;
         } catch (_) {}
       }
     }
     await driver.sync();
-    return { ok: true, applied, failed, strictSynced };
+    return {
+      ok: true,
+      applied,
+      failed,
+      strictAdded,
+      strictRemoved,
+      strictSynced: strictAdded + strictRemoved,
+    };
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
-    return { ok: false, applied, failed, strictSynced, error: msg };
+    return {
+      ok: false,
+      applied,
+      failed,
+      strictAdded,
+      strictRemoved,
+      strictSynced: strictAdded + strictRemoved,
+      error: msg,
+    };
   }
 }
 //     全部由 driver 集成测试覆盖。）

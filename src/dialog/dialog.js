@@ -2376,10 +2376,11 @@
 
   // 把 pipetteSource 应用到选区里所有 roundRect
   //
-  // v1.3.6 迁移：所有 3 步都走 radius-core.applyPickedToSelection（单 PowerPoint.run 完成）：
-  //   步骤 0 — 拦截：选区里有任何目标启用了防误触 → 整个样式刷拒绝（不论是否勾选「刷防误触状态」）
-  //   步骤 1 — 第一次"应用"：刷 R 角到所有目标 + 同步 fixed value（已 lock 的目标）
-  //   步骤 2 — 第二次"应用"：根据【刷防误触状态】勾选决定是否把源 strict 状态写到目标
+  // v1.3.6 迁移：所有步骤走 radius-core.applyPickedToSelection（单 PowerPoint.run 完成）
+  // v1.2.15 改：勾选【刷防误触状态】= 双向覆盖（source strict → target strict；source 不 strict → target 也不 strict）
+  //   - syncStrict=false：步骤 0 拦截（任一目标 strict → 全拒）→ 写 R 角（targets now not strict）→ 不动 strict
+  //   - syncStrict=true 且 source.strict=false：跳过拦截 → 先删所有 target 的 strict → 写 R 角
+  //   - syncStrict=true 且 source.strict=true：跳过拦截 → 写 R 角（不 strict 的会成功）→ 后加 strict
   //
   // 关键：radius-core.applyPickedToSelection 内部用 driver.readTagsBulk 一次拿全部 tag，
   //       避开 per-call readTag + sync 在 for 循环内累积（v1.2.6 + v1.3.6 Mac LTSC 坑，
@@ -2424,9 +2425,15 @@
 
     // toast
     const lockHint = '';  // radius-core.applyPickedToSelection 已经处理 lock 同步
-    const strictHint = result.strictSynced > 0
-      ? `，${result.strictSynced} 个防误触状态已同步`
-      : '';
+    // v1.2.15：strict 同步提示分"开启"和"解除"（双向覆盖后用户更要知道发生了什么）
+    let strictHint = '';
+    if (result.strictAdded > 0 && result.strictRemoved > 0) {
+      strictHint = `，${result.strictAdded} 个开启防误触，${result.strictRemoved} 个解除`;
+    } else if (result.strictAdded > 0) {
+      strictHint = `，${result.strictAdded} 个开启防误触`;
+    } else if (result.strictRemoved > 0) {
+      strictHint = `，${result.strictRemoved} 个解除防误触`;
+    }
     showToast(`🪣 样式刷应用了 ${result.applied} 个圆角矩形${result.failed > 0 ? `，${result.failed} 个失败` : ''}${lockHint}${strictHint}`);
     await refreshSelection();
     // v1.2: layout 父被刷 R 角 → 同步子 R 角

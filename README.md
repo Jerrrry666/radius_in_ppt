@@ -5,25 +5,29 @@
 > 支持「锁定 R 角绝对值」「防误触」「样式刷」「5 次历史」
 > 和 **v1.2 新增的「布局模式」**（rows × cols 网格 + 边距/间距滑块 + R 角联动）。
 
-## 📌 v1.2 更新（2026-07-25）
+## 📌 v1.3 更新（2026-07-26）
 
-v1.1 把"按设计意图批量设 R 角"做完了，v1.2 把"嵌套圆角矩形分布"从手算升级为滑块实时拖动。
+v1.2 把"嵌套圆角矩形分布"做完了，v1.3 专注把布局 / 样式刷的细节做顺手，并完成 dialog.js / radius-core 全 driver 化 + Step 3-4 迁移收尾。
 
-**本次新增**：
-- **布局模式（rows × cols 网格）** — 选 1 父 + N 子，拖滑块实时分布子矩形的位置/尺寸，**完全不用手算**
-- **边距 / 间距滑块** — padding（子到父边界的距离）+ gutter（子与子的距离），可拖动可输入
-- **R 角联动** — 子 R 角按 `max(0, 父R − padding)` 公式自动算（linkRMode: off / same / subtract 三档）
-- **嵌套状态持久化** — 父挂 JSON（rows/cols/padding/gutter/linkR/childIds）+ 子挂 `parentShapeId` 双向 tag，跟 .pptx 走
-- **手动设置父子** — 进组合 → 选父 → "建布局"按钮，自动 capture 当前选区为子列表
-- **stale childIds 过滤** — 写父 tag 前自动过滤不在当前 slide 的子形状（关掉 PPT → 中间页删子 → 不写坏 JSON）
+**布局模式精修**：
+- **行 / 列互斥联动** — 一条滑块就够，列自动 = 子数 ÷ 行（rows × cols = N 严格成立，不留空位）
+- **行的可取值改为离散列表** — N 的所有正因子（datalist tick 提示），例如 N=4 → [1, 2, 4]，不会出现 3×2=6 那种"多空位"的情况
+- **边距 / 间距锁链联动**（Photoshop 风格）— 中间一个锁链 icon 跨两行垂直居中，激活后间距 = 边距
+- **链接状态 gutter 禁用** — 锁链激活时 gutter 控件整体变灰 + 不可交互（直接消除"间距被改 → 锁链改回 → 形状没改回"那类竞态 bug）
 
-**架构升级**（v1.2.0-v1.3.5）：
-- **三层架构落地** — `dialog.js`（UI）+ `src/lib/radius-core.js`（实现，~880 行）+ `src/lib/ppt-driver.js`（交互，16 方法）
-- **driver 层 verified** — 16 方法全 PPT 烟囱测试 14/14 ✅
-- **单元测试 112/0** — 103 算法 + 70 mock harness + 109 driver 集成，全过
-- **未来 feature 走单测** — 之后 Step 3c/4/5 不再 PPT 实测，信任 `npm test` + 代码 review
+**样式刷 strict 双向覆盖**：
+- **勾选「刷防误触状态」= 双向覆盖** — 源 strict=true → 目标 strict=true；源 strict=false → 目标 strict=false
+- 顺序关键：source=true 时**先写 R 角再加 strict**（避免 writeRadius 被拦截）；source=false 时**先删 strict 再写 R 角**（让 writeRadius 不被拦截）
 
-完整变更日志：[`changelogs/v1.2.md`](./changelogs/v1.2.md)（含 v1.2.0 → v1.3.5 全部 hotfix）　·　主日志：[`LOG.md`](./LOG.md)　·　路线图：[`plans/feature-roadmap.md`](./plans/feature-roadmap.md)
+**架构收尾**（v1.3.0）：
+- **dialog.js / radius-core 全 driver 化** — 8 个 driver 版函数替代 dialog.js 散落的 ctxShape 操作
+- **Step 3-4 迁移完成** — layout tag 读写 + pipette 全部走 driver
+- **修 3 个遗留 bug** — 样式刷吸取后无法刷入 / 布局 R 角联动 4 子只写 2 / lockMonitor `GeneralException`
+- **AGENTS.md §1.0 新规则** — AI commit/push 权限限制（教训：v1.2.14 第一次部署位置错 → 撤回要 force-push 改写公共历史）
+
+**测试 210/0** — 95 features + 115 radius-core（这次加 6 个新测覆盖双向 strict 覆盖）
+
+完整变更日志：[`changelogs/v1.3.md`](./changelogs/v1.3.md)（含 v1.2.8 → v1.3.0 全部 hotfix）　·　历史：[`changelogs/v1.2.md`](./changelogs/v1.2.md)　·　主日志：[`LOG.md`](./LOG.md)　·　路线图：[`plans/feature-roadmap.md`](./plans/feature-roadmap.md)
 
 ## 它解决什么问题
 
@@ -63,10 +67,14 @@ PowerPoint 自带的「圆角矩形」形状：
 | **v1.2** 布局模式 | 1 父 + N 子，rows×cols 网格 + padding/gutter 滑块 + R 角联动 |
 | **v1.2** R 角联动 | 子 R 角按 `max(0, 父R − padding)` 公式自动算；off/same/subtract 三档 |
 | **v1.2** 嵌套状态持久化 | 父挂 JSON + 子挂 parentShapeId 双向 tag，跟 .pptx 走 |
+| **v1.3** 行/列互斥联动 | 一条滑块就够，列 = 子数 ÷ 行（rows × cols = N 严格成立） |
+| **v1.3** 行离散因子列表 | 行的可取值 = N 的正因子（[1, 2, 4] / [1, 2, 3, 6] / 质数 [1, N]），不留空位 |
+| **v1.3** 边距/间距锁链联动 | Photoshop 风格锁链 icon，激活后间距 = 边距；链接状态 gutter 整体禁用（避免误操作竞态） |
+| **v1.3** 样式刷 strict 双向覆盖 | 勾选后源 strict 状态**覆盖**到目标（双向：源开启→目标开启，源未开启→目标也解除） |
 | 使用数值固定 R 角 | 按钮开启/关闭；开启后 PPT 内拖尺寸按比例反算回固定值 |
 | 防误触 | 独立 toggle；开启时自动用当前 R 角作 fixed value；拒绝 task pane 改值 + 拖 R 角滑块反算 |
 | R 角预设库 | 5 个用户自定义预设，名称/数值可编辑，一键应用 |
-| R 角样式刷 | 吸取 1 个 roundRect 的 R 角，连刷到其他目标；可选「刷防误触状态」同步源防误触 |
+| R 角样式刷 | 吸取 1 个 roundRect 的 R 角，连刷到其他目标；可选「刷防误触状态」双向覆盖 |
 | 多选支持 | 同时作用于选中的所有圆角矩形；非圆角矩形被跳过并提示 |
 | 形状列表 | 任务窗格里实时显示每个选中形状的当前 R 角（PPT 内编辑会同步） |
 | 锁定自动重应用 | setInterval 轮询，区分「拖尺寸」和「拖 R 角滑块」两种拖动 |
@@ -80,10 +88,10 @@ radius_in_ppt/
 ├── src/
 │   ├── dialog/                        # task pane UI（dialog 是历史命名）
 │   │   ├── dialog.html
-│   │   ├── dialog.js                  # ~2500 行（含 v1.0-v1.2 全部逻辑，Step 5 重构目标 ~500）
+│   │   ├── dialog.js                  # ~2580 行（v1.3 收尾后，Step 5 重构目标 ~500）
 │   │   └── dialog.css
 │   └── lib/                           # v1.2 抽出的实现层 + 交互层
-│       ├── radius-core.js             # ~880 行，纯算法 + driver 版 feature 函数
+│       ├── radius-core.js             # ~1470 行，纯算法 + 10 个 driver 版 feature 函数
 │       └── ppt-driver.js              # 109 行，16 个 Office.js 交互方法
 ├── app/MacOS/RadiusInPpt              # bash 启动器
 ├── tools/
@@ -93,20 +101,22 @@ radius_in_ppt/
 │   ├── build-dmg.sh                   # 可选：打包成 .dmg
 │   └── sign-and-notarize.sh           # 可选：代码签名 + 公证
 ├── assets/                            # ribbon icon（5 个尺寸，manifest.xml 引用）
-├── test/                              # 单元测试（112 个）
-│   ├── test-radius-core.js            #   103 个纯算法
+├── test/                              # 单元测试（210 个）
+│   ├── test-radius-core.js            #   115 个纯算法
 │   ├── test-mock-harness.js           #   70 个 mock PowerPoint run 上下文
-│   ├── test-driver-integration.js     #  109 个 mock driver + radius-core 集成
+│   ├── test-driver-integration.js     # 109 个 mock driver + radius-core 集成
+│   ├── test-features.js               #  95 个 feature 行为（v1.3 收尾后新增）
 │   └── README.md
 ├── dist/                              # build 输出（git ignore）
 │   └── RadiusInPpt.app
-├── AGENTS.md                          # 必读：三层架构 + Mac LTSC 踩坑
+├── AGENTS.md                          # 必读：三层架构 + Mac LTSC 踩坑 + §1.0 commit/push 权限
 ├── LOG.md                             # 主日志（状态/已完成/待办/Bug/规划）
 ├── README.md                          # 本文件
 ├── changelogs/                        # 子日志（per-version 详细变更）
 │   ├── v1.0.md
 │   ├── v1.1.md
-│   └── v1.2.md                        # 含 v1.2.0 → v1.3.5 全部 hotfix
+│   ├── v1.2.md                        # v1.2.0 → v1.2.7 主功能 + 早期 hotfix
+│   └── v1.3.md                        # v1.2.8 → v1.3.0 全部 hotfix + v1.3 收尾 + 新 feature
 ├── plans/
 │   └── feature-roadmap.md             # v1.1+ 路线图
 └── package.json                       # npm test 跑 3 个测试文件
@@ -118,10 +128,10 @@ radius_in_ppt/
 dialog.js (UI 层)          事件绑定 / 渲染 / toast / debug log
        │
        ▼
-radius-core.js (实现层)    8 个 driver 版函数：writeRadius / readLockState /
+radius-core.js (实现层)    10 个 driver 版函数：writeRadius / readLockState /
                            writeLockState / reapplyLock / applyLayout /
-                           syncLayoutChildrenR / writeRadiusToShapePure /
-                           applyLayoutPure
+                           syncLayoutChildrenR / pickupFromSelection /
+                           applyPickedToSelection / applyLayoutPure / ...
                            零 Office.js 调用 → 100% 单元测试
        │
        ▼
@@ -213,6 +223,14 @@ v1.1 把"锁定"拆成两个独立开关：
 - 切换选区时自动重应用（lock monitor 50ms 轮询检测拖动）
 - 锁定信息存到形状自己的 `shape.tags`（OOXML `<p:tagLst>`），跨设备/换机器都保留
 
+### 样式刷 strict 双向覆盖（v1.3）
+
+勾选「刷防误触状态」时，**源的 strict 状态会覆盖到目标（双向）**：
+- 源 strict=true → 所有目标加 strict tag（**写完 R 角之后**加，避免 writeRadius 拦截）
+- 源 strict=false → 所有目标删 strict tag（**写 R 角之前**删，让 writeRadius 不被 strict 拦截）
+
+不勾选时行为不变：选区里有任何目标启用了 strict → 整个样式刷拒绝（防误触铁律）。
+
 ## 关键技术点
 
 ### 单位换算
@@ -245,15 +263,16 @@ Office Add-in 对**生产环境**要求 HTTPS，但对 `localhost` / `127.0.0.1`
 
 ```bash
 cd /Users/ma/Documents/minimax/radius_in_ppt
-npm test                                            # 跑全部 3 个测试文件（112 个）
-node test/test-radius-core.js                       # 仅算法（103 个）
+npm test                                            # 跑全部 4 个测试文件（210 个）
+node test/test-radius-core.js                       # 仅算法（115 个）
 node test/test-mock-harness.js                      # 仅 mock harness（70 个）
 node test/test-driver-integration.js                # 仅 driver 集成（109 个）
+node test/test-features.js                          # 仅 feature 行为（95 个）
 ```
 
 **烟囱测试（PPT 内）**：任务窗格 → 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified。
 
-**未来 feature 走单测**：v1.3.5 起，所有新 feature 不再 PPT 实测，信任 `npm test` + 代码 review。
+**未来 feature 走单测**：v1.3.0 起，所有新 feature 不再 PPT 实测，信任 `npm test` + 代码 review。
 
 ## 兼容性
 
