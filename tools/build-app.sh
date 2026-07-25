@@ -78,11 +78,6 @@ cp -R "$ROOT/assets" "$RES_DIR/"
 cp "$ROOT/manifest.xml" "$RES_DIR/"
 mkdir -p "$RES_DIR/tools"
 cp "$ROOT/tools/serve.js" "$RES_DIR/tools/"
-# v1.2.2 新增：LaunchAgent 守护脚本 + plist 模板（用户双击 .app 时装上）
-#   每 30s 检查 PowerPoint 跑没跑 + wef 缺不缺 manifest，缺就自动恢复
-cp "$ROOT/tools/guard.sh" "$RES_DIR/tools/"
-chmod +x "$RES_DIR/tools/guard.sh"
-cp "$ROOT/tools/com.jerrrry666.radiusinppt.guard.plist" "$RES_DIR/tools/"
 # 注意：纯 task pane + Office.js 路线，无第三方依赖
 
 # 5. 生成 .icns

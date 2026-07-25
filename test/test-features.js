@@ -553,6 +553,258 @@ t.test('syncLayoutChildrenR 非圆角 child 跳过', async () => {
 });
 
 // ============================================================
+// detectLayoutParentChanges + syncLayoutChildrenR 串联：bug #6 集成
+// ============================================================
+//
+// 复现 bug #6：用户选父 + 子 → 在 PPT 里直接拖父的 R 角黄色滑块（不走 task pane）
+//   1. monitorTick 之前：lastCm 已知父 R=0.8cm
+//   2. 用户拖到 1.5cm
+//   3. monitorTick 看到 currentCm=1.5，detectLayoutParentChanges 返回 [parentId, lastCm=0.8, newCm=1.5]
+//   4. caller 调 syncLayoutChildrenR(driver, parentId, childIds, padding, mode, newCm=1.5)
+//   5. 子 R 角应该被重写
+//
+// 这个测试覆盖了"monitorTick 末尾的联动 hook 逻辑"，但因为 monitorTick 在 dialog.js 里
+// 不便直接测，所以用两个函数串联来证明：detectLayoutParentChanges 输出 → syncLayoutChildrenR 输入
+// 两者能正确对接。
+
+t.test('集成：bug #6 — 拖父 R 角 → detectLayoutParentChanges 触发 → syncLayoutChildrenR 写子 R', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+
+  // 父初始 R = 0.3 * 8 = 2.4cm（fixture 设定），子 R = 0（fixture 设定）
+  // 上次 knownCm = 2.4（monitorTick 上一轮已记）
+  const knownCm = { parent_p1: 2.4 };
+
+  // 模拟 monitorTick 看到 currentCm 变成 1.5（用户拖动）
+  // selectedShapes 内存：layoutRole='parent', currentCm=1.5
+  const selectedShapes = [{ id: 'parent_p1', layoutRole: 'parent', currentCm: 1.5 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, selectedShapes);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].parentId, 'parent_p1');
+  assert.strictEqual(changes[0].lastCm, 2.4);
+  assert.strictEqual(changes[0].newCm, 1.5);
+
+  // 模拟 dialog.js：拿到 changes 后调 syncLayoutChildrenR（用 newCm 作为 parentRcm）
+  // fixture 的 layout tag 没挂在 childIds 上，所以这里手动喂
+  // padding=0.3, linkRMode='subtract', parentRcm=1.5 → subRcm = max(0, 1.5 - 0.3) = 1.2
+  const r = await RC.syncLayoutChildrenR(
+    h.driver,
+    'parent_p1',
+    ['lc1', 'lc2'],
+    0.3,
+    'subtract',
+    changes[0].newCm  // = 1.5
+  );
+  assert.strictEqual(r.ok, true);
+  // lc1 短边 1.5cm，新 R = 1.2cm → adj = 1.2/1.5
+  // 但 PowerPoint 几何约束：R 不能超过短边一半（0.75cm），clamp 到 0.75cm → adj = 0.5
+  h.assertShape(f.layoutChildren[0], { adjFraction: 0.75 / 1.5 });
+  h.assertShape(f.layoutChildren[1], { adjFraction: 0.75 / 1.5 });
+});
+
+t.test('集成：bug #6 — 父 R 角没变（detectLayoutParentChanges 返回空）→ 不调 syncLayoutChildrenR', async () => {
+  // 模拟：monitorTick 看到 currentCm 跟上次一样（容差内）→ 不应触发联动
+  const knownCm = { parent_p1: 1.0 };
+  const selectedShapes = [{ id: 'parent_p1', layoutRole: 'parent', currentCm: 1.0001 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, selectedShapes);
+  assert.strictEqual(changes.length, 0);
+  // caller 应该不调 syncLayoutChildrenR（节省一次 PowerPoint.run）
+});
+
+t.test('集成：bug #6 — 首次见到（lastCm null）只记录不触发 sync', async () => {
+  // 模拟：monitorTick 第一次跑（lastCm 是空）→ 不应触发 sync
+  const knownCm = {};
+  const selectedShapes = [{ id: 'parent_p1', layoutRole: 'parent', currentCm: 1.0 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, selectedShapes);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].lastCm, null);
+  // caller 应该把 lastCm 记到 1.0，但不调 syncLayoutChildrenR（避免启动时无意义重写）
+});
+
+t.test('集成：bug #6 — 父 R 角 linkRMode=off → detect 检测到变化但 syncLayoutChildrenR 跳过', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+
+  // 父 R 角变了
+  const knownCm = { parent_p1: 2.4 };
+  const selectedShapes = [{ id: 'parent_p1', layoutRole: 'parent', currentCm: 1.5 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, selectedShapes);
+  assert.strictEqual(changes.length, 1);
+
+  // 但 dialog.js 里如果父的 layoutParams.linkRMode = 'off' → 调 syncLayoutChildrenR 时传 'off' → 啥也不做
+  // 模拟：调用前先把子 R 角改成非 0（验证 syncLayoutChildrenR 真的不写）
+  f.layoutChildren[0]._adjFraction = 0.5;  // 当前 R 角 = 0.5 * 1.5 = 0.75cm
+  const r = await RC.syncLayoutChildrenR(
+    h.driver,
+    'parent_p1',
+    ['lc1', 'lc2'],
+    0.3,
+    'off',  // 联动关闭
+    changes[0].newCm
+  );
+  assert.strictEqual(r.ok, true);
+  // 子的 adjFraction 应该不变（syncLayoutChildrenR linkRMode=off 直接 return）
+  h.assertShape(f.layoutChildren[0], { adjFraction: 0.5 });
+  h.assertShape(f.layoutChildren[1], { adjFraction: 0 });  // 之前就是 0
+});
+
+// ============================================================
+// loadLayoutTags + saveLayoutTags — refreshSelection 链路
+// ============================================================
+
+t.test('loadLayoutTags: 读父 + 子 tag 完整', async () => {
+  const f = makeStandardFixture();
+  // 模拟 PPT 状态：父有 layout tag + 4 个子有 child tag
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
+    rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract',
+    childIds: ['lc1', 'lc2', 'lc3', 'lc4'],
+  });
+  for (const c of f.layoutChildren) {
+    c._tags[RC.LAYOUT_CHILD_TAG_KEY] = 'parent_p1';
+  }
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.loadLayoutTags(h.driver, h.slide.shapes);
+  assert.strictEqual(r.ok, true);
+  // 父
+  assert.ok(r.parents['parent_p1']);
+  assert.strictEqual(r.parents['parent_p1'].rows, 2);
+  assert.strictEqual(r.parents['parent_p1'].cols, 2);
+  assert.deepStrictEqual(r.parents['parent_p1'].childIds, ['lc1', 'lc2', 'lc3', 'lc4']);
+  // 子
+  assert.strictEqual(r.childOf['lc1'], 'parent_p1');
+  assert.strictEqual(r.childOf['lc2'], 'parent_p1');
+  assert.strictEqual(r.childOf['lc3'], 'parent_p1');
+  assert.strictEqual(r.childOf['lc4'], 'parent_p1');
+  // 没 stale
+  assert.deepStrictEqual(r.staleParents['parent_p1'] || [], []);
+});
+
+t.test('loadLayoutTags: stale childId 过滤（已删 / 跨 slide）', async () => {
+  const f = makeStandardFixture();
+  // 父 tag 里写了 4 个子，但实际只有 2 个在 slide（lc3, lc4 已被删 / 跨 slide）
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
+    rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract',
+    childIds: ['lc1', 'lc2', 'lc3_stale', 'lc4_stale'],
+  });
+  // 子 tag 也不在了
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.loadLayoutTags(h.driver, h.slide.shapes);
+  assert.strictEqual(r.ok, true);
+  // parents['parent_p1'].childIds 应该只剩 lc1 + lc2（stale 被过滤）
+  assert.deepStrictEqual(r.parents['parent_p1'].childIds, ['lc1', 'lc2']);
+  // staleParents 报告哪些被剔除了
+  assert.deepStrictEqual(r.staleParents['parent_p1'], ['lc3_stale', 'lc4_stale']);
+});
+
+t.test('loadLayoutTags: 父 tag 损坏 → 跳过（不 throw）', async () => {
+  const f = makeStandardFixture();
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = 'garbage-not-json';
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.loadLayoutTags(h.driver, h.slide.shapes);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.parents['parent_p1'], undefined);  // 解析失败 → 没 parents
+});
+
+t.test('loadLayoutTags: 父 tag 缺 childIds → 跳过', async () => {
+  const f = makeStandardFixture();
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({ rows: 2, cols: 2 });
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.loadLayoutTags(h.driver, h.slide.shapes);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.parents['parent_p1'], undefined);
+});
+
+t.test('loadLayoutTags: 兼容旧版 linkR boolean', async () => {
+  const f = makeStandardFixture();
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
+    rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkR: false, childIds: ['lc1'],
+  });
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.loadLayoutTags(h.driver, h.slide.shapes);
+  assert.strictEqual(r.parents['parent_p1'].linkRMode, 'off');
+});
+
+t.test('saveLayoutTags: 写父 + 子 tag 完整', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.saveLayoutTags(
+    h.driver, h.slide,
+    'parent_p1',
+    { rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract' },
+    ['lc1', 'lc2', 'lc3', 'lc4']
+  );
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.writtenChildIds, ['lc1', 'lc2', 'lc3', 'lc4']);
+  assert.deepStrictEqual(r.staleChildIds, []);
+  // 父 tag 写了
+  const parentTag = JSON.parse(f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY]);
+  assert.strictEqual(parentTag.rows, 2);
+  assert.strictEqual(parentTag.cols, 2);
+  assert.strictEqual(parentTag.linkRMode, 'subtract');
+  assert.deepStrictEqual(parentTag.childIds, ['lc1', 'lc2', 'lc3', 'lc4']);
+  // 子 tag 写了
+  for (const c of f.layoutChildren) {
+    assert.strictEqual(c._tags[RC.LAYOUT_CHILD_TAG_KEY], 'parent_p1');
+  }
+});
+
+t.test('saveLayoutTags: stale childId 跳过（不写 tag，不报错）', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.saveLayoutTags(
+    h.driver, h.slide,
+    'parent_p1',
+    { rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract' },
+    ['lc1', 'lc2', 'stale_id_1', 'stale_id_2']
+  );
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.writtenChildIds, ['lc1', 'lc2']);
+  assert.deepStrictEqual(r.staleChildIds, ['stale_id_1', 'stale_id_2']);
+  // 父 tag 里 childIds 只剩 valid 的
+  const parentTag = JSON.parse(f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY]);
+  assert.deepStrictEqual(parentTag.childIds, ['lc1', 'lc2']);
+  // 子 tag 只写了 lc1, lc2
+  assert.strictEqual(f.layoutChildren[0]._tags[RC.LAYOUT_CHILD_TAG_KEY], 'parent_p1');
+  assert.strictEqual(f.layoutChildren[1]._tags[RC.LAYOUT_CHILD_TAG_KEY], 'parent_p1');
+});
+
+t.test('saveLayoutTags: 父不在当前 slide → 返回错误，不写任何 tag', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.saveLayoutTags(
+    h.driver, h.slide,
+    'parent_NOT_EXIST',
+    { rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract' },
+    ['lc1']
+  );
+  assert.strictEqual(r.ok, false);
+  // 任何 tag 都不应该被写
+  assert.strictEqual(f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY], undefined);
+  assert.strictEqual(f.layoutChildren[0]._tags[RC.LAYOUT_CHILD_TAG_KEY], undefined);
+});
+
+t.test('集成：saveLayoutTags → loadLayoutTags round-trip 一致', async () => {
+  // 写完再读，验证数据完整保留
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  await RC.saveLayoutTags(
+    h.driver, h.slide,
+    'parent_p1',
+    { rows: 3, cols: 2, padding: 0.4, gutter: 0.1, linkRMode: 'same' },
+    ['lc1', 'lc2', 'lc3', 'lc4']
+  );
+  // 重置 calls（harness 内部 recordCall 全程都在）
+  h.reset();
+  const r = await RC.loadLayoutTags(h.driver, h.slide.shapes);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.parents['parent_p1'].rows, 3);
+  assert.strictEqual(r.parents['parent_p1'].cols, 2);
+  assert.strictEqual(r.parents['parent_p1'].linkRMode, 'same');
+  assert.deepStrictEqual(r.parents['parent_p1'].childIds, ['lc1', 'lc2', 'lc3', 'lc4']);
+  assert.strictEqual(r.childOf['lc1'], 'parent_p1');
+});
+
+// ============================================================
 // 自测场景：5+ R 角矩形组合操作
 // ============================================================
 

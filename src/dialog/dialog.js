@@ -78,7 +78,11 @@
     lastHeight: {},    // shapeId -> 上次读到的 height（pt）
     lastAdj: {},       // shapeId -> 上次读到的 adj
     stableCount: {},   // shapeId -> adj 连续稳定次数
+    lastCm: {},        // shapeId -> 上次读到的 currentCm（cm）—— 仅 layout 父用
+    parentRDirty: false,  // 是否有 layout 父 R 角变化需要联动
+    parentRSyncTimer: null,  // 节流 timer（避免 10ms tick 频繁触发新 run）
   };
+  const PARENT_R_SYNC_DEBOUNCE_MS = 200;  // 父 R 角变化 → 同步子的节流窗口
 
   // ---------------- 单位换算 ----------------
 
@@ -1427,6 +1431,12 @@
     lockMonitor.lastHeight = {};
     lockMonitor.lastAdj = {};
     lockMonitor.stableCount = {};
+    lockMonitor.lastCm = {};
+    lockMonitor.parentRDirty = false;
+    if (lockMonitor.parentRSyncTimer) {
+      clearTimeout(lockMonitor.parentRSyncTimer);
+      lockMonitor.parentRSyncTimer = null;
+    }
     lockMonitor.timer = setInterval(monitorTick, interval);
   }
 
@@ -1439,6 +1449,12 @@
     lockMonitor.lastHeight = {};
     lockMonitor.lastAdj = {};
     lockMonitor.stableCount = {};
+    lockMonitor.lastCm = {};
+    lockMonitor.parentRDirty = false;
+    if (lockMonitor.parentRSyncTimer) {
+      clearTimeout(lockMonitor.parentRSyncTimer);
+      lockMonitor.parentRSyncTimer = null;
+    }
   }
 
   // 反算某个 shape 的 adj（被 onApply / 样式刷 / 重置时调用，让 monitor 同步状态）
@@ -1455,6 +1471,7 @@
     let needRefreshUI = false;  // 是否有 shape 的 currentCm 变了，需要重画 UI
     let recomputedIds = [];     // 拖尺寸被反算的
     let updatedLockIds = [];    // 拖 R 角滑块被"更新固定值"的
+    let layoutParentChanges = [];  // v1.3.6：layout 父 R 角变化（→ 同步子）
     try {
       await PowerPoint.run(async (ctx) => {
         // v1.2.2 driver + radius-core：lock monitor 走新分层
@@ -1569,9 +1586,52 @@
       } else if (updatedLockIds.length > 0) {
         showToast(`🪄 使用数值固定 R 角已跟随 R 角滑块更新（${updatedLockIds.length} 个）`);
       }
+
+      // v1.3.6 修 #6：layout 父 R 角变化 → 同步子 R 角
+      // 场景：用户在 PPT 里直接拖父的 R 角黄色滑块（不走 task pane 的 onApply），
+      //       monitorTick 检测到 currentCm 变化，detectLayoutParentChanges 返回变化的父，
+      //       调 syncLayoutChildrenRIfNeeded 联动子 R 角
+      // 首次见到（lastCm = null）只记录不触发 sync（避免启动时无意义重写子 R 角）
+      try {
+        const changes = window.RadiusCore.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+        let hasRealChange = false;
+        for (const c of changes) {
+          if (c.lastCm == null) {
+            // 首次见到：只记 lastCm，不触发 sync
+            lockMonitor.lastCm[c.parentId] = c.newCm;
+            continue;
+          }
+          // 真正变了：更新 lastCm + 标 dirty
+          lockMonitor.lastCm[c.parentId] = c.newCm;
+          hasRealChange = true;
+        }
+        if (hasRealChange) {
+          lockMonitor.parentRDirty = true;
+          scheduleParentRSync();
+        }
+      } catch (e) {
+        console.warn('[monitorTick] detectLayoutParentChanges error:', e && e.message ? e.message : e);
+      }
     } catch (e) {
       console.warn('lock monitor error:', e);
     }
+  }
+
+  // v1.3.6 修 #6：节流调 syncLayoutChildrenRIfNeeded（避免 10ms tick 频繁开新 PowerPoint.run）
+  // 200ms 窗口：用户在拖父 R 角滑块时（≈ 60fps）一次拖完最多触发 5 次，但节流后实际只跑 1 次
+  function scheduleParentRSync() {
+    if (lockMonitor.parentRSyncTimer) return;  // 已经有 pending 的 timer
+    lockMonitor.parentRSyncTimer = setTimeout(async () => {
+      lockMonitor.parentRSyncTimer = null;
+      if (!lockMonitor.parentRDirty) return;
+      lockMonitor.parentRDirty = false;
+      try {
+        await syncLayoutChildrenRIfNeeded();
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        console.log('[scheduleParentRSync] error:', msg);
+      }
+    }, PARENT_R_SYNC_DEBOUNCE_MS);
   }
 
   // ---------------- UI helpers ----------------

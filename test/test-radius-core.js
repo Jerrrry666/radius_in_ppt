@@ -330,6 +330,170 @@ t.test('集成：用户样例 — 父 R=1, padding=0.5, subtract → subR=0.5', 
 });
 
 // ============================================================
+// 6. detectLayoutParentChanges — monitorTick → 联动 trigger 检测
+// ============================================================
+
+t.test('detectLayoutParentChanges: layout 父 R 角变了 → 返回 changed 列表', () => {
+  // 模拟：monitorTick 看到 layout 父 currentCm 从 1.0 变成 1.5
+  const knownCm = { p1: 1.0 };
+  const sel = [{ id: 'p1', layoutRole: 'parent', currentCm: 1.5 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.deepStrictEqual(changes[0], { parentId: 'p1', lastCm: 1.0, newCm: 1.5 });
+});
+
+t.test('detectLayoutParentChanges: 父 R 角没变（容差内） → 返回空', () => {
+  // monitorTick 浮点抖动：当前 1.0001 vs 上次 1.0（容差 1e-3）→ 不算变
+  const knownCm = { p1: 1.0 };
+  const sel = [{ id: 'p1', layoutRole: 'parent', currentCm: 1.0001 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentChanges: 首次见到（lastCm null） → 算变了（caller 决定要不要同步）', () => {
+  const knownCm = {};  // 之前没记过
+  const sel = [{ id: 'p1', layoutRole: 'parent', currentCm: 1.0 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.deepStrictEqual(changes[0], { parentId: 'p1', lastCm: null, newCm: 1.0 });
+});
+
+t.test('detectLayoutParentChanges: 父 currentCm 是 null → 跳过（还没读到 R 角）', () => {
+  const knownCm = { p1: 1.0 };
+  const sel = [{ id: 'p1', layoutRole: 'parent', currentCm: null }];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentChanges: 非 layout 父（layoutRole != "parent"） → 跳过', () => {
+  // 子或普通形状 R 角变了不算（联动只针对父 → 子）
+  const knownCm = { c1: 0.5 };
+  const sel = [
+    { id: 'c1', layoutRole: 'child', currentCm: 0.6 },
+    { id: 'r1', layoutRole: null, currentCm: 0.7 },
+  ];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentChanges: 多个 layout 父混合 → 只返回有变化的', () => {
+  const knownCm = { p1: 1.0, p2: 2.0, p3: 3.0 };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', currentCm: 1.0 },  // 没变
+    { id: 'p2', layoutRole: 'parent', currentCm: 2.5 },  // 变了
+    { id: 'p3', layoutRole: 'parent', currentCm: 3.0 },  // 没变
+  ];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].parentId, 'p2');
+  assert.deepStrictEqual(changes[0], { parentId: 'p2', lastCm: 2.0, newCm: 2.5 });
+});
+
+t.test('detectLayoutParentChanges: NaN / Infinity → 跳过（v1.3.5 invalid-adj 防御）', () => {
+  const knownCm = { p1: 1.0, p2: 1.0 };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', currentCm: NaN },
+    { id: 'p2', layoutRole: 'parent', currentCm: Infinity },
+  ];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentChanges: 空选区 → 返回空（不 throw）', () => {
+  const changes = RC.detectLayoutParentChanges({}, []);
+  assert.deepStrictEqual(changes, []);
+  // 非数组（防呆）
+  const changes2 = RC.detectLayoutParentChanges({}, null);
+  assert.deepStrictEqual(changes2, []);
+});
+
+t.test('detectLayoutParentChanges: bug #6 场景 — 拖父 R 角触发联动', () => {
+  // 复现 #6 bug：用户在 PPT 里直接拖父的 R 角黄色滑块
+  // 1. 父初始 currentCm = 1.0（首次见到，caller 决定不主动同步）
+  // 2. 用户拖到 1.5
+  // 3. monitorTick 拿到 detectLayoutParentChanges 结果 → 触发 syncLayoutChildrenRIfNeeded
+  //    → 子 R 角从 0.5 变成 max(0, 1.5 - padding) = 1.0
+  const knownCm = {};
+  // step 1: 首次见到
+  const sel1 = [{ id: 'p1', layoutRole: 'parent', currentCm: 1.0 }];
+  assert.strictEqual(RC.detectLayoutParentChanges(knownCm, sel1).length, 1);
+  // step 2: caller 把 1.0 记到 knownCm
+  knownCm.p1 = 1.0;
+  // step 3: 用户拖到 1.5
+  const sel2 = [{ id: 'p1', layoutRole: 'parent', currentCm: 1.5 }];
+  const changes = RC.detectLayoutParentChanges(knownCm, sel2);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].newCm, 1.5);
+  // 验证联动公式：父 R 1.5, padding 0.5, subtract → subR = 1.0
+  assert.strictEqual(RC.computeLinkedSubR(1.5, 0.5, 'subtract'), 1.0);
+});
+
+// ============================================================
+// 7. parseLayoutParentTagValue / detectStaleChildrenInLayout — 纯函数
+// ============================================================
+
+t.test('parseLayoutParentTagValue: 完整合法 JSON', () => {
+  const tag = JSON.stringify({ rows: 2, cols: 3, padding: 0.5, gutter: 0.3, linkRMode: 'subtract', childIds: ['a', 'b', 'c'] });
+  const r = RC.parseLayoutParentTagValue(tag);
+  assert.deepStrictEqual(r, {
+    rows: 2, cols: 3, padding: 0.5, gutter: 0.3, linkRMode: 'subtract',
+    childIds: ['a', 'b', 'c'],
+  });
+});
+
+t.test('parseLayoutParentTagValue: 缺字段 → null（不 throw）', () => {
+  assert.strictEqual(RC.parseLayoutParentTagValue(null), null);
+  assert.strictEqual(RC.parseLayoutParentTagValue(''), null);
+  assert.strictEqual(RC.parseLayoutParentTagValue('garbage'), null);
+  assert.strictEqual(RC.parseLayoutParentTagValue('{"rows":2}'), null);  // 缺 cols + childIds
+  assert.strictEqual(RC.parseLayoutParentTagValue('{"rows":2,"cols":2,"childIds":"not array"}'), null);
+});
+
+t.test('parseLayoutParentTagValue: 旧版 linkR 兼容（v1.2 前 boolean）', () => {
+  // 旧版可能存的是 linkR: false → 转 'off'；linkR: true/缺省 → 'subtract'
+  const r1 = RC.parseLayoutParentTagValue(JSON.stringify({ rows: 2, cols: 2, padding: 0.5, gutter: 0.3, linkR: false, childIds: [] }));
+  assert.strictEqual(r1.linkRMode, 'off');
+  const r2 = RC.parseLayoutParentTagValue(JSON.stringify({ rows: 2, cols: 2, padding: 0.5, gutter: 0.3, childIds: [] }));
+  assert.strictEqual(r2.linkRMode, 'subtract');
+});
+
+t.test('parseLayoutParentTagValue: childIds 过滤掉非 string', () => {
+  // 旧数据可能混着 number / null
+  const r = RC.parseLayoutParentTagValue(JSON.stringify({ rows: 2, cols: 2, childIds: ['a', 1, null, 'b', ''] }));
+  assert.deepStrictEqual(r.childIds, ['a', 'b']);
+});
+
+t.test('parseLayoutParentTagValue: padding/gutter 缺省 / NaN → 0', () => {
+  const r = RC.parseLayoutParentTagValue(JSON.stringify({ rows: 2, cols: 2, padding: NaN, childIds: [] }));
+  assert.strictEqual(r.padding, 0);
+  const r2 = RC.parseLayoutParentTagValue(JSON.stringify({ rows: 2, cols: 2, gutter: 'bad', childIds: [] }));
+  assert.strictEqual(r2.gutter, 0);
+});
+
+t.test('detectStaleChildrenInLayout: 全 valid → validChildIds 全，staleChildIds 空', () => {
+  const parsed = { rows: 2, cols: 2, childIds: ['a', 'b', 'c', 'd'] };
+  const ids = new Set(['a', 'b', 'c', 'd', 'e']);
+  const r = RC.detectStaleChildrenInLayout(parsed, ids);
+  assert.deepStrictEqual(r.validChildIds, ['a', 'b', 'c', 'd']);
+  assert.deepStrictEqual(r.staleChildIds, []);
+});
+
+t.test('detectStaleChildrenInLayout: 部分 stale（中间页删除 / 跨 slide）→ 分类', () => {
+  // 'a' 和 'c' 已被删（不在选区），'b' 和 'd' 还在
+  const parsed = { rows: 2, cols: 2, childIds: ['a', 'b', 'c', 'd'] };
+  const ids = new Set(['b', 'd', 'e']);
+  const r = RC.detectStaleChildrenInLayout(parsed, ids);
+  assert.deepStrictEqual(r.validChildIds, ['b', 'd']);
+  assert.deepStrictEqual(r.staleChildIds, ['a', 'c']);
+});
+
+t.test('detectStaleChildrenInLayout: null / undefined → 空数组（不 throw）', () => {
+  assert.deepStrictEqual(RC.detectStaleChildrenInLayout(null, new Set()), { validChildIds: [], staleChildIds: [] });
+  assert.deepStrictEqual(RC.detectStaleChildrenInLayout(undefined, new Set()), { validChildIds: [], staleChildIds: [] });
+  assert.deepStrictEqual(RC.detectStaleChildrenInLayout({}, new Set()), { validChildIds: [], staleChildIds: [] });
+});
+
+// ============================================================
 // 跑
 // ============================================================
 

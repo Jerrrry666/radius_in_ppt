@@ -209,6 +209,53 @@ function shouldRejectLayoutApply(selectedShapes, parentId, childIds) {
 }
 
 /**
+ * 检测哪些 layout 父的 R 角变了（用于 monitorTick → syncLayoutChildrenRIfNeeded 联动）
+ *
+ * 场景：用户在 PPT 里**直接拖父的 R 角黄色滑块**（不走 task pane 的 onApply），
+ *       monitorTick 检测到 currentCm 变了，但不会主动同步子 R 角。
+ *       这个函数告诉 caller「哪些 layout 父的 R 角相对上次记的 knownCm 变了」，
+ *       caller 拿到结果后调 syncLayoutChildrenRIfNeeded() 同步子 R 角。
+ *
+ * 行为：
+ *   - 遍历 selectedShapes，找 layoutRole === 'parent' 的形状
+ *   - 对每个父，比较 currentCm vs knownCmMap[id]（容差 0.01 cm）
+ *   - currentCm 为 null/undefined 的（还没读到 R 角的）→ 跳过
+ *   - knownCmMap[id] 为 null/undefined 的（首次见到）→ 算"变了"，让 caller 触发首次同步
+ *
+ * 为什么不放 dialog.js：
+ *   - 纯函数，零副作用（不读 driver / 不写任何状态）
+ *   - 单测覆盖"哪些算变了"的边界（NaN、null、容差边界、首次）
+ *   - dialog.js 只负责维护 knownCmMap + 调 syncLayoutChildrenRIfNeeded
+ *
+ * @param {Object} knownCmMap - { [shapeId]: lastKnownCm }（dialog.js 维护）
+ * @param {Array} selectedShapes - dialog.js 内存里的 selectedShapes
+ *   - 每项至少含 { id, layoutRole, currentCm }
+ * @returns {Array<{parentId, lastCm, newCm}>} 变了哪些父（empty = 没变）
+ */
+function detectLayoutParentChanges(knownCmMap, selectedShapes) {
+  const changes = [];
+  if (!Array.isArray(selectedShapes)) return changes;
+  for (const s of selectedShapes) {
+    if (!s || s.layoutRole !== 'parent') continue;
+    if (s.currentCm == null) continue;
+    const newCm = s.currentCm;
+    const lastCm = knownCmMap && knownCmMap[s.id] != null ? knownCmMap[s.id] : null;
+    // 首次见到（lastCm null）→ 算"变了"（caller 可以选择忽略，或立即同步一次）
+    // 浮点容差：monitorTick 自己用 ADJ_EPSILON=0.0001 做 adj 比较，但 adj 换 cm 后误差是 0.0001 * minSideCm
+    //   对最小 1cm 形状误差 = 0.0001cm，10cm 形状 = 0.001cm —— 1e-3 cm 是合理阈值
+    if (lastCm == null) {
+      changes.push({ parentId: s.id, lastCm: null, newCm });
+      continue;
+    }
+    if (!Number.isFinite(newCm) || !Number.isFinite(lastCm)) continue;
+    if (Math.abs(newCm - lastCm) > 1e-3) {
+      changes.push({ parentId: s.id, lastCm, newCm });
+    }
+  }
+  return changes;
+}
+
+/**
  * 模拟写 R 角后：locked 形状的 fixed value 同步逻辑
  * @param {Object} shape - { isLocked, lockedCm }
  * @param {number} newCm - 写完后的 R 角（cm）
@@ -620,6 +667,207 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
   }
 }
 
+// ---------------- loadLayoutTags driver 版（read + stale 检测） ----------------
+
+/**
+ * 解析父 tag value（JSON 字符串）→ 结构化对象
+ * 解析失败 / 字段缺失 → 返回 null（caller 应该跳过）
+ * @param {string} tagValue
+ * @returns {Object|null} { rows, cols, padding, gutter, linkRMode, childIds } | null
+ */
+function parseLayoutParentTagValue(tagValue) {
+  if (typeof tagValue !== 'string' || tagValue.length === 0) return null;
+  try {
+    const obj = JSON.parse(tagValue);
+    if (!obj || !Number.isFinite(obj.rows) || !Number.isFinite(obj.cols) || !Array.isArray(obj.childIds)) {
+      return null;
+    }
+    return {
+      rows: obj.rows,
+      cols: obj.cols,
+      padding: Number.isFinite(obj.padding) ? obj.padding : 0,
+      gutter: Number.isFinite(obj.gutter) ? obj.gutter : 0,
+      // 兼容旧版 linkR（boolean），v1.2 改用 linkRMode（'subtract' | 'same' | 'off'）
+      linkRMode: ['subtract', 'same', 'off'].includes(obj.linkRMode)
+        ? obj.linkRMode
+        : (obj.linkR === false ? 'off' : 'subtract'),
+      childIds: obj.childIds.filter((x) => typeof x === 'string' && x.length > 0),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 解析父 tag 后过滤出 stale childIds（在 selectedShapeIds 集合里找不到的）
+ * 用于 refreshSelection 修 #6：父 tag 里 childIds 可能包含已被删 / 跨 slide 的子
+ *
+ * @param {Object} parsedTag - parseLayoutParentTagValue 返回的对象
+ * @param {Set} selectedShapeIds - 当前 slide 选区里所有 shape id（含父子）
+ * @returns {Object} { validChildIds: string[], staleChildIds: string[] }
+ */
+function detectStaleChildrenInLayout(parsedTag, selectedShapeIds) {
+  if (!parsedTag || !Array.isArray(parsedTag.childIds)) {
+    return { validChildIds: [], staleChildIds: [] };
+  }
+  const valid = [];
+  const stale = [];
+  for (const cid of parsedTag.childIds) {
+    if (selectedShapeIds.has(cid)) valid.push(cid);
+    else stale.push(cid);
+  }
+  return { validChildIds: valid, staleChildIds: stale };
+}
+
+/**
+ * 读 layout tag（driver 版）—— 给 refreshSelection 用
+ *
+ * 行为：
+ *   1. 对每个 shape，集合层读 layoutParent_v1 + layoutChild_v1 tag
+ *   2. 解析父 tag → parents[id] = {rows, cols, padding, gutter, linkRMode, childIds}
+ *   3. 读子 tag → childOf[id] = parentId
+ *   4. 顺便过滤 stale childIds（在选区里找不到的）→ staleParents[id] = [staleChildId, ...]
+ *
+ * 注意：
+ *   - driver.readTag 在 tag 不存在时返回 null（不 throw），所以 catch 块不会进
+ *   - 选区变化时用 getSelectedShapes() 调用，传入 shapes 给这个函数即可
+ *
+ * @param {Object} driver
+ * @param {Array} selectedShapes - shape proxy 列表（已经 load 过 'items/id'）
+ * @returns {Promise<{
+ *     ok: boolean,
+ *     parents: Object,    // { shapeId: {rows, cols, padding, gutter, linkRMode, childIds} }
+ *     childOf: Object,    // { shapeId: parentId }
+ *     staleParents: Object,  // { parentShapeId: [staleChildId, ...] } —— 父 tag 里有但选区里找不到的子
+ *     error?: string
+ *   }>}
+ */
+async function loadLayoutTags(driver, selectedShapes) {
+  const parents = {};
+  const childOf = {};
+  const staleParents = {};
+  try {
+    // 先收 shape ids（用于 stale 检测）
+    const selectedShapeIds = new Set();
+    const shapesList = [];
+    if (selectedShapes && typeof selectedShapes.items !== 'undefined') {
+      // 集合对象（Office.js proxy）—— 取 items
+      for (const sh of selectedShapes.items) {
+        shapesList.push(sh);
+        if (sh.id != null) selectedShapeIds.add(sh.id);
+      }
+    } else if (Array.isArray(selectedShapes)) {
+      // 数组
+      for (const sh of selectedShapes) {
+        shapesList.push(sh);
+        if (sh && sh.id != null) selectedShapeIds.add(sh.id);
+      }
+    } else {
+      return { ok: false, parents, childOf, staleParents, error: 'selectedShapes 必须有 items 或为数组' };
+    }
+
+    // 读每个 shape 的 layout tag
+    for (const sh of shapesList) {
+      const sid = sh.id;
+      if (sid == null) continue;
+      // 父 tag
+      const parentVal = await driver.readTag(sh, LAYOUT_PARENT_TAG_KEY);
+      if (parentVal) {
+        const parsed = parseLayoutParentTagValue(parentVal);
+        if (parsed) {
+          parents[sid] = parsed;
+          // stale 检测：父 tag 里的 childIds 不在 selectedShapeIds 集合里
+          const { validChildIds, staleChildIds } = detectStaleChildrenInLayout(parsed, selectedShapeIds);
+          if (staleChildIds.length > 0) {
+            // 写回 parents[sid].childIds 只保留 valid 的（caller 拿到的是过滤后的）
+            parents[sid].childIds = validChildIds;
+            staleParents[sid] = staleChildIds;
+          }
+        }
+      }
+      // 子 tag
+      const childVal = await driver.readTag(sh, LAYOUT_CHILD_TAG_KEY);
+      if (typeof childVal === 'string' && childVal.length > 0) {
+        childOf[sid] = childVal;
+      }
+    }
+    return { ok: true, parents, childOf, staleParents };
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    return { ok: false, parents, childOf, staleParents, error: msg };
+  }
+}
+
+// ---------------- saveLayoutTags driver 版（写父 + 子 tag） ----------------
+
+/**
+ * 写 layout tag（driver 版）—— 给 dialog.js 的 saveLayoutTags 用
+ *
+ * 行为：
+ *   1. 在 slide 里找父 + 子
+ *   2. 写父 tag（LAYOUT_PARENT_TAG_KEY）= JSON.stringify({rows, cols, padding, gutter, linkRMode, childIds})
+ *   3. 给每个存在的子写 tag（LAYOUT_CHILD_TAG_KEY）= parentId
+ *   4. stale childIds 会被自动跳过（不在当前 slide 的子不写 tag）
+ *
+ * @param {Object} driver
+ * @param {Object} slide - slide proxy
+ * @param {string} parentId
+ * @param {Object} params - { rows, cols, padding, gutter, linkRMode }
+ * @param {Array} childIds
+ * @returns {Promise<{ok, error?, writtenChildIds?, staleChildIds?}>}
+ */
+async function saveLayoutTags(driver, slide, parentId, params, childIds) {
+  try {
+    // 集合层 load slide shapes（id only）
+    driver.load(slide, 'shapes/items/id');
+    await driver.sync();
+
+    // 建 id → shape 映射
+    const idToShape = new Map();
+    const slideShapesArr = driver.slideShapes(slide).items;
+    for (const sh of slideShapesArr) {
+      if (sh.id != null) idToShape.set(sh.id, sh);
+    }
+
+    // 找父
+    const parentSh = idToShape.get(parentId);
+    if (!parentSh) {
+      return { ok: false, error: '父形状在当前 slide 找不到', writtenChildIds: [], staleChildIds: [] };
+    }
+
+    // 过滤掉 stale childIds
+    const validChildIds = [];
+    const staleChildIds = [];
+    for (const cid of childIds) {
+      if (idToShape.has(cid)) validChildIds.push(cid);
+      else staleChildIds.push(cid);
+    }
+
+    // 写父 tag
+    const payload = JSON.stringify({
+      rows: params.rows,
+      cols: params.cols,
+      padding: Number.isFinite(params.padding) ? params.padding : 0,
+      gutter: Number.isFinite(params.gutter) ? params.gutter : 0,
+      linkRMode: ['subtract', 'same', 'off'].includes(params.linkRMode) ? params.linkRMode : 'subtract',
+      childIds: validChildIds,
+    });
+    driver.addTag(parentSh, LAYOUT_PARENT_TAG_KEY, payload);
+
+    // 写子 tag（只写 valid 的）
+    for (const cid of validChildIds) {
+      const csh = idToShape.get(cid);
+      try { driver.addTag(csh, LAYOUT_CHILD_TAG_KEY, parentId); } catch (_) {}
+    }
+    await driver.sync();
+
+    return { ok: true, writtenChildIds: validChildIds, staleChildIds };
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    return { ok: false, error: msg, writtenChildIds: [], staleChildIds: [] };
+  }
+}
+
 
 
 
@@ -653,6 +901,11 @@ if (typeof module !== 'undefined' && module.exports) {
     reapplyLock,
     applyLayout,
     syncLayoutChildrenR,
+    detectLayoutParentChanges,
+    parseLayoutParentTagValue,
+    detectStaleChildrenInLayout,
+    loadLayoutTags,
+    saveLayoutTags,
   };
 }
 if (typeof window !== 'undefined') {
@@ -681,5 +934,10 @@ if (typeof window !== 'undefined') {
     reapplyLock,
     applyLayout,
     syncLayoutChildrenR,
+    detectLayoutParentChanges,
+    parseLayoutParentTagValue,
+    detectStaleChildrenInLayout,
+    loadLayoutTags,
+    saveLayoutTags,
   };
 }
