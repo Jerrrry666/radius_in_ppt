@@ -307,6 +307,7 @@
   }
 
   // 检测选区里是否有 layout 父 → 同步其子 R 角（onApply / applyPipette 末尾调用）
+  // v1.2.7：改成调 applyLayoutToChildren —— 父 R 角变化时**重算 layout 几何**（autoPadding 触发时子位置/尺寸也变）
   // v1.3.6：v1.2 step 3 调试 log 清理
   async function syncLayoutChildrenRIfNeeded() {
     if (selectedShapes.length === 0) return;
@@ -316,14 +317,14 @@
         // 老 layout（tag 里存了 'subtract'）直接拿到旧值不受影响
         const linkRMode = s.layoutParams.linkRMode || 'same';
         if (linkRMode === 'off') continue;
-        const padding = s.layoutParams.padding;
-        // 按 linkRMode 算子 R = 父 R - padding（subtract）或 父 R（same）
-        const targetSubRcm = linkRMode === 'same'
-          ? (s.currentCm || 0)
-          : Math.max(0, (s.currentCm || 0) - padding);
         const expected = s.layoutParams.rows * s.layoutParams.cols;
         const childIds = s.layoutChildIds.slice(0, expected);
-        await syncLayoutChildrenR(s.id, childIds, padding, linkRMode, targetSubRcm);
+        // v1.2.7：调 applyLayoutToChildren 而不是 syncLayoutChildrenR
+        // 原因：autoPadding 需要重新算 layout 几何（子位置/尺寸），syncLayoutChildrenR 只写 R 角
+        // writeParentTag=false（父 tag 不重写——tag 里存的是 d_init，effectivePadding 是动态算的）
+        // syncR=true（重写子 R 角）
+        const params = { ...s.layoutParams, linkRMode };
+        await applyLayoutToChildren(s.id, params, childIds, { writeParentTag: false, syncR: true });
       }
     }
   }

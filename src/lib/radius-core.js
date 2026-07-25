@@ -25,6 +25,35 @@ const LAYOUT_CHILD_TAG_KEY = 'layoutChild_v1';
 // ---------------- 布局 math ----------------
 
 /**
+ * v1.2.7：自适应 padding 纯函数
+ *
+ * 问题：same 模式（R_sub = R_父）下，当 R_父 过大时子 R 角会被 clamp 到子短边一半，
+ *       几何上不等宽了（破等宽）。
+ * 修法：当 R_父 > min(W, H) / 2 - d_init 时，**自动减小 padding** 让子短边 >= 2*R_父。
+ *
+ * @param {number} parentWidthCm - 父宽 (cm)
+ * @param {number} parentHeightCm - 父高 (cm)
+ * @param {number} parentRcm - 父 R 角 (cm)
+ * @param {number} dInitCm - 用户初始设定的 padding (cm)
+ * @returns {Object} { effectivePaddingCm, dMaxCm, clamped }
+ *   - effectivePaddingCm: 实际 padding（可能 < dInitCm）
+ *   - dMaxCm: d 的上限（保证子 R 角不 clamp）
+ *   - clamped: true 表示 dInitCm > dMaxCm，padding 被自动减小
+ */
+function computeAutoPadding(parentWidthCm, parentHeightCm, parentRcm, dInitCm) {
+  const minSideCm = Math.min(parentWidthCm, parentHeightCm);
+  const dMaxCm = minSideCm / 2 - parentRcm;
+  if (!Number.isFinite(dMaxCm) || dMaxCm <= 0) {
+    // R 父 >= min/2：d_max < 0，clamp padding 到 0
+    return { effectivePaddingCm: 0, dMaxCm, clamped: true };
+  }
+  if (dInitCm > dMaxCm) {
+    return { effectivePaddingCm: dMaxCm, dMaxCm, clamped: true };
+  }
+  return { effectivePaddingCm: Math.max(0, dInitCm), dMaxCm, clamped: false };
+}
+
+/**
  * 纯函数：给定父 box + rows/cols/padding/gutter，算出子形状的尺寸 + 位置
  * @param {Object} parent - { left, top, width, height } (pt)
  * @param {number} rows - 行数 (1-5)
@@ -553,7 +582,16 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
     const parentBox = driver.box(parentSh);
     console.log('[applyLayout/driver] parent box:', JSON.stringify(parentBox), 'Rcm=', parentRcm);
 
-    const layout = computeLayout(parentBox, params.rows, params.cols, params.padding, params.gutter);
+    // v1.2.7：autoPadding — 父 R 角过大时自动减小 padding，保证 same 模式子 R 角不 clamp
+    const parentWcm = parentBox.width / PT_PER_CM;
+    const parentHcm = parentBox.height / PT_PER_CM;
+    const ap = computeAutoPadding(parentWcm, parentHcm, parentRcm, params.padding);
+    const effectivePadding = ap.effectivePaddingCm;
+    if (ap.clamped) {
+      console.log(`[applyLayout/driver] autoPadding: R=${parentRcm.toFixed(3)}cm > d_max=${ap.dMaxCm.toFixed(3)}cm, d ${params.padding}→${effectivePadding.toFixed(3)}cm`);
+    }
+
+    const layout = computeLayout(parentBox, params.rows, params.cols, effectivePadding, params.gutter);
     if (!layout.feasible) {
       warn = layout.reason;
       return { ok: false, applied, failed, warn };
@@ -1132,6 +1170,7 @@ if (typeof module !== 'undefined' && module.exports) {
     LOCK_STRICT_TAG_KEY,
     LAYOUT_CHILD_TAG_KEY,
     computeLayout,
+    computeAutoPadding,
     valueToCm,
     cmToValue,
     computeLinkedSubR,
@@ -1168,6 +1207,7 @@ if (typeof window !== 'undefined') {
     LOCK_STRICT_TAG_KEY,
     LAYOUT_CHILD_TAG_KEY,
     computeLayout,
+    computeAutoPadding,
     valueToCm,
     cmToValue,
     computeLinkedSubR,

@@ -494,6 +494,80 @@ t.test('detectStaleChildrenInLayout: null / undefined → 空数组（不 throw�
 });
 
 // ============================================================
+// 9. computeAutoPadding — v1.2.7 自适应 padding 纯函数
+// ============================================================
+
+t.test('computeAutoPadding: 父 R 小 + d_init 小 → effective = d_init（不调）', () => {
+  // 父 12x8 R=0.3 cm, d_init=0.3 → d_max = 8/2 - 0.3 = 3.7，0.3 < 3.7 → effective = 0.3
+  const r = RC.computeAutoPadding(12, 8, 0.3, 0.3);
+  assert.deepStrictEqual(r, { effectivePaddingCm: 0.3, dMaxCm: 3.7, clamped: false });
+});
+
+t.test('computeAutoPadding: 父 R 接近 min/2 → effective = d_max（clamped）', () => {
+  // 父 12x8 R=3.5 cm, d_init=0.5 → d_max = 8/2 - 3.5 = 0.5，0.5 == 0.5 → effective = 0.5
+  const r = RC.computeAutoPadding(12, 8, 3.5, 0.5);
+  assert.deepStrictEqual(r, { effectivePaddingCm: 0.5, dMaxCm: 0.5, clamped: false });
+});
+
+t.test('computeAutoPadding: 父 R 大 → d_init 超过 d_max → effective = d_max（自动减小）', () => {
+  // 父 12x8 R=3 cm, d_init=0.5 → d_max = 8/2 - 3 = 1，0.5 < 1 → 不调
+  // 父 12x8 R=3.5 cm, d_init=0.5 → d_max = 0.5，d_init 0.5 <= 0.5 → effective 0.5 (clamped false 边界)
+  // 父 12x8 R=3.5 cm, d_init=1 → d_max 0.5, 1 > 0.5 → effective 0.5 (clamped true)
+  const r1 = RC.computeAutoPadding(12, 8, 3, 0.5);
+  assert.deepStrictEqual(r1, { effectivePaddingCm: 0.5, dMaxCm: 1, clamped: false });
+  const r2 = RC.computeAutoPadding(12, 8, 3.5, 1);
+  assert.deepStrictEqual(r2, { effectivePaddingCm: 0.5, dMaxCm: 0.5, clamped: true });
+});
+
+t.test('computeAutoPadding: 父 R >= min/2 → d_max <= 0 → effective = 0（clamped）', () => {
+  // 父 12x8 R=4 cm, d_init=0.3 → d_max = 8/2 - 4 = 0，clamp
+  const r1 = RC.computeAutoPadding(12, 8, 4, 0.3);
+  assert.deepStrictEqual(r1, { effectivePaddingCm: 0, dMaxCm: 0, clamped: true });
+  // 父 12x8 R=5 cm（超过 min/2）→ d_max = -1，clamp
+  const r2 = RC.computeAutoPadding(12, 8, 5, 0.3);
+  assert.deepStrictEqual(r2, { effectivePaddingCm: 0, dMaxCm: -1, clamped: true });
+});
+
+t.test('computeAutoPadding: d_init=0（无 padding）→ effective = 0（不变）', () => {
+  const r = RC.computeAutoPadding(12, 8, 2, 0);
+  assert.deepStrictEqual(r, { effectivePaddingCm: 0, dMaxCm: 2, clamped: false });
+});
+
+t.test('computeAutoPadding: bug #6 场景 — 父 R=0.7, d_init=0.2 → 不调', () => {
+  // 用户实际场景：父 12x8 R=0.7, d_init=0.2
+  // d_max = 4 - 0.7 = 3.3，0.2 < 3.3 → effective = 0.2（不调）
+  const r = RC.computeAutoPadding(12, 8, 0.7, 0.2);
+  assert.deepStrictEqual(r, { effectivePaddingCm: 0.2, dMaxCm: 3.3, clamped: false });
+});
+
+t.test('computeAutoPadding: 临界 — 父 R 增大触发 d 自动减小（user 报的场景）', () => {
+  // 父 12x8 R=0.7, d_init=0.2 → effective 0.2 ✓
+  // 父 12x8 R=2.0, d_init=0.2 → d_max = 4 - 2 = 2，0.2 < 2 → effective 0.2
+  // 父 12x8 R=3.5, d_init=0.2 → d_max = 0.5, 0.2 < 0.5 → effective 0.2
+  // 父 12x8 R=3.9, d_init=0.2 → d_max = 0.1, 0.2 > 0.1 → effective 0.1（**自动减小**）
+  const r1 = RC.computeAutoPadding(12, 8, 0.7, 0.2);
+  assert.strictEqual(r1.clamped, false);
+  const r2 = RC.computeAutoPadding(12, 8, 3.5, 0.2);
+  assert.strictEqual(r2.clamped, false);
+  // 浮点容差：4 - 3.9 = 0.10000000000000009
+  const r3 = RC.computeAutoPadding(12, 8, 3.9, 0.2);
+  assert.ok(Math.abs(r3.effectivePaddingCm - 0.1) < 1e-6, `effectivePaddingCm ${r3.effectivePaddingCm} != 0.1`);
+  assert.ok(Math.abs(r3.dMaxCm - 0.1) < 1e-6, `dMaxCm ${r3.dMaxCm} != 0.1`);
+  assert.strictEqual(r3.clamped, true);
+});
+
+t.test('computeAutoPadding: 负数 / 非法输入 → defensive 返回 0', () => {
+  // 负 R 父 / NaN / 负 W H → 都应该 return safe default
+  const r1 = RC.computeAutoPadding(12, 8, -1, 0.3);
+  // dMax = 4 - (-1) = 5，0.3 < 5 → effective 0.3
+  assert.deepStrictEqual(r1, { effectivePaddingCm: 0.3, dMaxCm: 5, clamped: false });
+  // NaN R 父
+  const r2 = RC.computeAutoPadding(12, 8, NaN, 0.3);
+  // dMax = NaN → !Number.isFinite 命中 → effective 0
+  assert.deepStrictEqual(r2, { effectivePaddingCm: 0, dMaxCm: NaN, clamped: true });
+});
+
+// ============================================================
 // 8. pushHistory — 纯函数
 // ============================================================
 
