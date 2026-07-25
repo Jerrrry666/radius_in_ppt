@@ -1152,47 +1152,19 @@
   // 读选区里所有 shape 的 layout tag
   // 返回：parents = { id: {rows, cols, padding, gutter, linkR, childIds} }
   //      childOf = { id: parentId }
+  // v1.3.6 迁移：PowerPoint.run 部分走 radius-core.loadLayoutTags
+  // thin wrapper：开 PowerPoint.run 拿 selectedShapes proxy → 调 radius-core
+  // radius-core 做读 + stale state 检测，dialog.js 只负责 PowerPoint.run 上下文
   function loadLayoutTagsViaTags() {
     return new Promise((resolve) => {
       PowerPoint.run(async (ctx) => {
         try {
+          const driver = window.PptDriver.createDriver(ctx);
           const sel = ctx.presentation.getSelectedShapes();
           sel.load('items/id');
           await ctx.sync();
-          const parents = {};
-          const childOf = {};
-          for (const sh of sel.items) {
-            // 父
-            try {
-              const t = sh.tags.getItem(LAYOUT_PARENT_TAG_KEY);
-              t.load('value');
-              await ctx.sync();
-              const obj = JSON.parse(t.value);
-              if (obj && Number.isFinite(obj.rows) && Number.isFinite(obj.cols) && Array.isArray(obj.childIds)) {
-                parents[sh.id] = {
-                  rows: obj.rows,
-                  cols: obj.cols,
-                  padding: Number.isFinite(obj.padding) ? obj.padding : 0,
-                  gutter: Number.isFinite(obj.gutter) ? obj.gutter : 0,
-                  // 兼容旧版 linkR（boolean），v1.2 改用 linkRMode（'subtract' | 'same' | 'off'）
-                  linkRMode: ['subtract', 'same', 'off'].includes(obj.linkRMode)
-                    ? obj.linkRMode
-                    : (obj.linkR === false ? 'off' : 'subtract'),
-                  childIds: obj.childIds.filter((x) => typeof x === 'string'),
-                };
-              }
-            } catch (_) { /* 没 parent tag */ }
-            // 子
-            try {
-              const t = sh.tags.getItem(LAYOUT_CHILD_TAG_KEY);
-              t.load('value');
-              await ctx.sync();
-              if (typeof t.value === 'string' && t.value.length > 0) {
-                childOf[sh.id] = t.value;
-              }
-            } catch (_) { /* 没 child tag */ }
-          }
-          resolve({ ok: true, parents, childOf });
+          const r = await window.RadiusCore.loadLayoutTags(driver, sel);
+          resolve(r);
         } catch (e) {
           resolve({ ok: false, error: e });
         }
@@ -1203,40 +1175,19 @@
   // 把 layout 信息写到父 shape 的 tag（包含所有参数 + childIds）
   // 也确保每个子都有 layoutChild_v1 tag 指向父
   // 只在当前 slide 操作（不跨页）
+  // v1.3.6 迁移：PowerPoint.run 部分走 radius-core.saveLayoutTags
   function saveLayoutTags(parentId, params, childIds) {
     return new Promise((resolve) => {
       PowerPoint.run(async (ctx) => {
         try {
+          const driver = window.PptDriver.createDriver(ctx);
           const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
           activeSlide.load('shapes/items/id');
           await ctx.sync();
-          const idToShape = new Map();
-          for (const sh of activeSlide.shapes.items) {
-            idToShape.set(sh.id, sh);
-          }
-          const parentShape = idToShape.get(parentId);
-          if (!parentShape) {
-            resolve({ ok: false, error: 'parent shape not found in current slide' });
-            return;
-          }
-          // 写父 tag
-          const payload = JSON.stringify({
-            rows: params.rows,
-            cols: params.cols,
-            padding: params.padding,
-            gutter: params.gutter,
-            linkRMode: params.linkRMode || 'subtract',
-            childIds: childIds.slice(),
-          });
-          parentShape.tags.add(LAYOUT_PARENT_TAG_KEY, payload);
-          await ctx.sync();
-          // 写子 tag：只在当前 slide 找
-          for (const childId of childIds) {
-            const csh = idToShape.get(childId);
-            if (csh) csh.tags.add(LAYOUT_CHILD_TAG_KEY, parentId);
-          }
-          await ctx.sync();
-          resolve({ ok: true });
+          const r = await window.RadiusCore.saveLayoutTags(
+            driver, activeSlide, parentId, params, childIds || []
+          );
+          resolve(r);
         } catch (e) {
           resolve({ ok: false, error: e });
         }
