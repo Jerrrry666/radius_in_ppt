@@ -1821,7 +1821,10 @@
     let touched = 0;
     for (const s of roundShapes) {
       if (allLocked) {
-        // 关闭使用数值固定 R 角：不写 lock tag；strict 标记也要清掉
+        // 关闭使用数值固定 R 角：显式 null/false，让 writeLockState 走 delete 路径
+        // （v1.3.5 修：原版是空 map → saveLocksViaTags 走 no-op → tag 删不掉）
+        locks[s.id] = null;
+        strict[s.id] = false;
       } else {
         // 开启使用数值固定 R 角：优先用输入框值，否则用当前 R 角
         const inputCm = Number.isFinite(inputVal) && inputVal > 0

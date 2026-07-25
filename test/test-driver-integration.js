@@ -701,6 +701,418 @@ async function run() {
     assert.ok(cOk._adjFraction > 0, 'c_ok should be written');
   });
 
+  // ============================================================
+  // 阶段 2：driver 层彻底检查 — 边界场景覆盖
+  // ============================================================
+
+  console.log('\n=== driver 方法边界（1）— adjFraction / size / box / isRoundRect ===');
+
+  await test('driver.adjFraction non-roundRect → 0', () => {
+    const sh = makeMockShape({ id: 'r1', isRoundRect: false });
+    sh.adjustments.count = 0;
+    const m = makeMockDriver({ shapes: [sh] });
+    assert.strictEqual(m.driver.adjFraction(sh), 0);
+  });
+
+  await test('driver.adjFraction roundRect adj=0 → 0', () => {
+    const sh = makeMockShape({ id: 'r2', isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriver({ shapes: [sh] });
+    assert.strictEqual(m.driver.adjFraction(sh), 0);
+  });
+
+  await test('driver.adjFraction roundRect adj=0.5 → 0.5', () => {
+    const sh = makeMockShape({ id: 'r3', isRoundRect: true, adjFraction: 0.5 });
+    const m = makeMockDriver({ shapes: [sh] });
+    assert.strictEqual(m.driver.adjFraction(sh), 0.5);
+  });
+
+  await test('driver.adjFraction get(0) throw → 0（defensive，不 throw）', () => {
+    const sh = makeMockShape({ id: 'r4', isRoundRect: true });
+    sh.adjustments.get = () => { throw new Error('boom'); };
+    const m = makeMockDriver({ shapes: [sh] });
+    assert.strictEqual(m.driver.adjFraction(sh), 0, 'should return 0, not throw');
+  });
+
+  await test('driver.size 只读 width/height，不读 left/top（用 spy 验证）', () => {
+    const sh = makeMockShape({ id: 'sz1', width: 100, height: 50 });
+    let leftRead = false, topRead = false, widthRead = false, heightRead = false;
+    Object.defineProperty(sh, 'left', { get() { leftRead = true; return 0; }, configurable: true });
+    Object.defineProperty(sh, 'top', { get() { topRead = true; return 0; }, configurable: true });
+    Object.defineProperty(sh, 'width', { get() { widthRead = true; return 100; }, configurable: true });
+    Object.defineProperty(sh, 'height', { get() { heightRead = true; return 50; }, configurable: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const sz = m.driver.size(sh);
+    assert.strictEqual(sz.width, 100);
+    assert.strictEqual(sz.height, 50);
+    assert.ok(widthRead, 'width should be read');
+    assert.ok(heightRead, 'height should be read');
+    assert.ok(!leftRead, 'left should NOT be read');
+    assert.ok(!topRead, 'top should NOT be read');
+  });
+
+  await test('driver.box 读 left/top/width/height 全 4 个（用 spy 验证）', () => {
+    const sh = makeMockShape({ id: 'bx1', width: 100, height: 50 });
+    let leftRead = false, topRead = false;
+    Object.defineProperty(sh, 'left', { get() { leftRead = true; return 10; }, configurable: true });
+    Object.defineProperty(sh, 'top', { get() { topRead = true; return 20; }, configurable: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const bx = m.driver.box(sh);
+    assert.ok(leftRead, 'left should be read');
+    assert.ok(topRead, 'top should be read');
+    assert.strictEqual(bx.left, 10);
+    assert.strictEqual(bx.top, 20);
+  });
+
+  await test('driver.isRoundRect roundRect=true / non-roundRect=false', () => {
+    const sh1 = makeMockShape({ id: 'r5', isRoundRect: true });
+    const sh2 = makeMockShape({ id: 'r6', isRoundRect: false });
+    sh2.adjustments.count = 0;
+    const m = makeMockDriver({ shapes: [sh1, sh2] });
+    assert.strictEqual(m.driver.isRoundRect(sh1), true);
+    assert.strictEqual(m.driver.isRoundRect(sh2), false);
+  });
+
+  await test('driver.setBox 写 4 个字段', () => {
+    const sh = makeMockShape({ id: 'sb1' });
+    const m = makeMockDriver({ shapes: [sh] });
+    m.driver.setBox(sh, { left: 1, top: 2, width: 3, height: 4 });
+    assert.strictEqual(sh.left, 1);
+    assert.strictEqual(sh.top, 2);
+    assert.strictEqual(sh.width, 3);
+    assert.strictEqual(sh.height, 4);
+  });
+
+  await test('driver.setAdjFraction 触发 adjustments.set(0, frac)', () => {
+    const sh = makeMockShape({ id: 'sa1', isRoundRect: true });
+    let captured = null;
+    sh.adjustments.set = (i, v) => { captured = { i, v }; };
+    const m = makeMockDriver({ shapes: [sh] });
+    m.driver.setAdjFraction(sh, 0.123);
+    assert.deepStrictEqual(captured, { i: 0, v: 0.123 });
+  });
+
+  await test('driver.addTag → String 化（即使传数字）', () => {
+    const sh = makeMockShape({ id: 'at1' });
+    const m = makeMockDriver({ shapes: [sh] });
+    m.driver.addTag(sh, 'k', 0.5);  // 数字
+    assert.strictEqual(sh._tags.k, '0.5', 'should be stringified');
+    m.driver.addTag(sh, 'k2', 'plain string');
+    assert.strictEqual(sh._tags.k2, 'plain string');
+  });
+
+  await test('driver.readTag 不存在 key → null（不 throw）', async () => {
+    const sh = makeMockShape({ id: 'rt1' });
+    const m = makeMockDriver({ shapes: [sh] });
+    const v = await m.driver.readTag(sh, 'nonexistent');
+    assert.strictEqual(v, null);
+  });
+
+  await test('driver.deleteTag 不存在 key → 不 throw', () => {
+    const sh = makeMockShape({ id: 'dt1' });
+    const m = makeMockDriver({ shapes: [sh] });
+    // 不 throw
+    m.driver.deleteTag(sh, 'nonexistent');
+    assert.deepStrictEqual(sh._tags, {});
+  });
+
+  console.log('\n=== radius-core.writeRadius(driver) 边界 ===');
+
+  await test('writeRadius NaN targetCm → reason=invalid-adj', async () => {
+    const sh = makeMockShape({ id: 'w_nan', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, NaN);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'invalid-adj');
+  });
+
+  await test('writeRadius -1 targetCm → newCm=0 (clamp)', async () => {
+    const sh = makeMockShape({ id: 'w_neg', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, -1);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.newCm, 0);
+    assert.strictEqual(sh._adjFraction, 0);
+  });
+
+  await test('writeRadius 9999 targetCm → clamp 到 minSideCm/2', async () => {
+    const sh = makeMockShape({ id: 'w_huge', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, 9999);
+    assert.strictEqual(r.ok, true);
+    // minSide = 60pt = 2.117cm, /2 = 1.058cm
+    assert.ok(Math.abs(r.newCm - 60 / RC.PT_PER_CM / 2) < 1e-6);
+  });
+
+  await test('writeRadius 0 targetCm → newCm=0（正常写 0）', async () => {
+    const sh = makeMockShape({ id: 'w_zero', width: 100, height: 60, isRoundRect: true, adjFraction: 0.5 });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, 0);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.newCm, 0);
+    assert.strictEqual(sh._adjFraction, 0);
+  });
+
+  await test('writeRadius 非 roundRect → reason=not-roundRect', async () => {
+    const sh = makeMockShape({ id: 'w_rect', width: 100, height: 60, isRoundRect: false });
+    sh.adjustments.count = 0;
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, 0.5);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'not-roundRect');
+  });
+
+  await test('writeRadius 0 尺寸 → reason=no-size', async () => {
+    const sh = makeMockShape({ id: 'w_0', width: 0, height: 0, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, 0.5);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'no-size');
+  });
+
+  await test('writeRadius Infinity targetCm → reason=invalid-adj（不是 silent）', async () => {
+    const sh = makeMockShape({ id: 'w_inf', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, Infinity);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'invalid-adj');
+  });
+
+  await test('writeRadius layoutParentId 写子 tag', async () => {
+    const sh = makeMockShape({ id: 'w_lp', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, 0.5, { layoutParentId: 'p1' });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(sh._tags.layoutChild_v1, 'p1');
+  });
+
+  console.log('\n=== radius-core.applyLayout(driver) 边界 ===');
+
+  await test('applyLayout 非 roundRect 父 → parentRcm=0, 子都写 0', async () => {
+    const parent = makeMockShape({ id: 'ap_nrr', width: 200, height: 100, isRoundRect: false });
+    parent.adjustments.count = 0;
+    const c1 = makeMockShape({ id: 'ap_c1', width: 50, height: 30, isRoundRect: true, adjFraction: 0.3 });
+    const m = makeMockDriverWithSlide({ shapes: [parent, c1] });
+    const r = await RC.applyLayout(m.driver, 'ap_nrr', { rows: 1, cols: 1, padding: 0, gutter: 0, linkRMode: 'subtract' }, ['ap_c1'], {});
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(c1._adjFraction, 0, 'sub should be 0 when parentRcm=0');
+  });
+
+  await test('applyLayout 父 tag JSON childIds 用 validChildIds（过滤后）', async () => {
+    const parent = makeMockShape({ id: 'ap_tag', width: 200, height: 100, isRoundRect: true, adjFraction: 0.1 });
+    const c1 = makeMockShape({ id: 'ap_tc1', width: 50, height: 30, isRoundRect: true });
+    const c2 = makeMockShape({ id: 'ap_tc2', width: 50, height: 30, isRoundRect: true });
+    const m = makeMockDriverWithSlide({ shapes: [parent, c1, c2] });
+    // rows×cols=1×3 让循环跑到 k=2（fake_stale 那位）；caller 传 [c1, c2, fake_stale]
+    const r = await RC.applyLayout(m.driver, 'ap_tag', { rows: 1, cols: 3, padding: 0, gutter: 0, linkRMode: 'subtract' }, ['ap_tc1', 'ap_tc2', 'fake_stale'], {});
+    // expectedCount = 1*3 = 3，validChildIds 只能有 2 个（c1, c2），少 1 个 → fail
+    assert.strictEqual(r.ok, false, 'should fail with 不足 (2 valid + 1 stale < 3 expected)');
+    assert.ok(r.warn.includes('不足'), 'should warn about child count');
+  });
+
+  await test('applyLayout writeParentTag=false 不写父 tag', async () => {
+    const parent = makeMockShape({ id: 'ap_npt', width: 200, height: 100, isRoundRect: true, adjFraction: 0.1 });
+    const c1 = makeMockShape({ id: 'ap_npt_c1', width: 50, height: 30, isRoundRect: true });
+    const m = makeMockDriverWithSlide({ shapes: [parent, c1] });
+    const r = await RC.applyLayout(m.driver, 'ap_npt', { rows: 1, cols: 1, padding: 0, gutter: 0, linkRMode: 'subtract' }, ['ap_npt_c1'], { writeParentTag: false });
+    assert.strictEqual(r.ok, true);
+    // 父 tag 不应写
+    const parentTag = m.calls.find((c) => c[0] === 'addTag' && c[1] === 'ap_npt' && c[2] === 'layoutParent_v1');
+    assert.ok(!parentTag, 'parent tag should NOT be written');
+  });
+
+  await test('applyLayout infeasible (padding 太大) → reason', async () => {
+    const parent = makeMockShape({ id: 'ap_inf', width: 50, height: 50, isRoundRect: true });
+    const c1 = makeMockShape({ id: 'ap_inf_c1', width: 50, height: 50, isRoundRect: true });
+    const m = makeMockDriverWithSlide({ shapes: [parent, c1] });
+    // padding=10cm 比 parent 50pt=1.76cm 大得多
+    const r = await RC.applyLayout(m.driver, 'ap_inf', { rows: 2, cols: 2, padding: 10, gutter: 0, linkRMode: 'subtract' }, ['ap_inf_c1'], {});
+    assert.strictEqual(r.ok, false);
+    assert.ok(r.warn.includes('边距') || r.warn.includes('间距'), 'should warn about padding/gutter');
+  });
+
+  console.log('\n=== radius-core.syncLayoutChildrenR(driver) 边界 ===');
+
+  await test('syncLayoutChildrenR 多个 child 混合 roundRect + non-roundRect', async () => {
+    const c1 = makeMockShape({ id: 'sc_mix1', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const c2 = makeMockShape({ id: 'sc_mix2', width: 80, height: 60, isRoundRect: false });
+    c2.adjustments.count = 0;
+    const c3 = makeMockShape({ id: 'sc_mix3', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [c1, c2, c3] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p', ['sc_mix1', 'sc_mix2', 'sc_mix3'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    // c1 + c3 被写（roundRect），c2 不写（non-roundRect）
+    assert.ok(c1._adjFraction > 0, 'c1 (roundRect) should be written');
+    assert.strictEqual(c2._adjFraction, 0, 'c2 (non-roundRect) should NOT be written');
+    assert.ok(c3._adjFraction > 0, 'c3 (roundRect) should be written');
+    // failed 应该 = 0（c2 不算 fail）
+    assert.strictEqual(r.failed, 0, 'non-roundRect should not count as failed');
+  });
+
+  await test('syncLayoutChildrenR 全 non-roundRect → applied=0, failed=0', async () => {
+    const c1 = makeMockShape({ id: 'sc_n1', width: 80, height: 60, isRoundRect: false });
+    c1.adjustments.count = 0;
+    const c2 = makeMockShape({ id: 'sc_n2', width: 80, height: 60, isRoundRect: false });
+    c2.adjustments.count = 0;
+    const m = makeMockDriverWithSlide({ shapes: [c1, c2] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p', ['sc_n1', 'sc_n2'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 0, 'no roundRect → nothing applied');
+    assert.strictEqual(r.failed, 0, 'non-roundRect should not count as failed');
+  });
+
+  await test('syncLayoutChildrenR 部分子 missing（不在 slide）', async () => {
+    const c1 = makeMockShape({ id: 'sc_p1', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [c1] });
+    const r = await RC.syncLayoutChildrenR(m.driver, 'p', ['sc_p1', 'missing_id'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.applied, 1, 'only sc_p1 applied, missing skipped');
+  });
+
+  await test('syncLayoutChildrenR linkRMode 边界：off / same / subtract 三种都验', async () => {
+    const c1 = makeMockShape({ id: 'sc_t1', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const c2 = makeMockShape({ id: 'sc_t2', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const c3 = makeMockShape({ id: 'sc_t3', width: 80, height: 60, isRoundRect: true, adjFraction: 0 });
+    const m = makeMockDriverWithSlide({ shapes: [c1, c2, c3] });
+    // off → 不写
+    const rOff = await RC.syncLayoutChildrenR(m.driver, 'p', ['sc_t1'], 0, 'off', 0.8);
+    assert.strictEqual(rOff.applied, 0);
+    assert.strictEqual(c1._adjFraction, 0);
+    // same → 复制父 R
+    const rSame = await RC.syncLayoutChildrenR(m.driver, 'p', ['sc_t2'], 0, 'same', 0.8);
+    assert.strictEqual(rSame.applied, 1);
+    assert.ok(c2._adjFraction > 0);
+    // subtract → 父 R - padding
+    const rSub = await RC.syncLayoutChildrenR(m.driver, 'p', ['sc_t3'], 0.3, 'subtract', 0.8);
+    assert.strictEqual(rSub.applied, 1);
+    assert.ok(c3._adjFraction > 0);
+  });
+
+  console.log('\n=== radius-core.readLockState / writeLockState 边界 ===');
+
+  await test('readLockState 都存在', async () => {
+    const sh = makeMockShape({ id: 'ls1', tags: { radiusLock_v1: '0.5', radiusLockStrict_v1: '1' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    const s = await RC.readLockState(m.driver, sh);
+    assert.strictEqual(s.lockedCm, 0.5);
+    assert.strictEqual(s.isStrict, true);
+  });
+
+  await test('readLockState 只有 lock 无 strict', async () => {
+    const sh = makeMockShape({ id: 'ls2', tags: { radiusLock_v1: '0.3' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    const s = await RC.readLockState(m.driver, sh);
+    assert.strictEqual(s.lockedCm, 0.3);
+    assert.strictEqual(s.isStrict, false);
+  });
+
+  await test('readLockState lock tag 非数字 → lockedCm=null（不 crash）', async () => {
+    const sh = makeMockShape({ id: 'ls3', tags: { radiusLock_v1: 'not-a-number' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    const s = await RC.readLockState(m.driver, sh);
+    assert.strictEqual(s.lockedCm, null);
+  });
+
+  await test('writeLockState undefined 字段不动', async () => {
+    const sh = makeMockShape({ id: 'wls1', tags: { radiusLock_v1: '0.5', radiusLockStrict_v1: '1' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeLockState(m.driver, sh, {});  // 都 undefined
+    assert.strictEqual(r.ok, true);
+    // 原 tag 都不动
+    assert.strictEqual(sh._tags.radiusLock_v1, '0.5');
+    assert.strictEqual(sh._tags.radiusLockStrict_v1, '1');
+  });
+
+  await test('writeLockState lockedCm=null → 删 lock tag', async () => {
+    const sh = makeMockShape({ id: 'wls2', tags: { radiusLock_v1: '0.5' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeLockState(m.driver, sh, { lockedCm: null });
+    assert.strictEqual(r.ok, true);
+    assert.ok(!('radiusLock_v1' in sh._tags), 'lock tag should be deleted');
+  });
+
+  await test('writeLockState isStrict=true → 写 "1"（字符串）', async () => {
+    const sh = makeMockShape({ id: 'wls3' });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeLockState(m.driver, sh, { isStrict: true });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(sh._tags.radiusLockStrict_v1, '1', 'should write string "1"');
+  });
+
+  await test('writeLockState isStrict=false → 删 strict tag', async () => {
+    const sh = makeMockShape({ id: 'wls4', tags: { radiusLockStrict_v1: '1' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeLockState(m.driver, sh, { isStrict: false });
+    assert.strictEqual(r.ok, true);
+    assert.ok(!('radiusLockStrict_v1' in sh._tags));
+  });
+
+  // v1.3.5 回归：onToggleLock 关闭路径 — 写 {lockedCm: null, isStrict: false} 同时删两个 tag
+  // onToggleLock(disable) 必须用显式 null/false 触发删除；空 map 会走 no-op（原 bug）
+  await test('onToggleLock 关闭路径模拟：{null, false} 同时删 lock + strict tag', async () => {
+    const sh = makeMockShape({ id: 'otl1', tags: { radiusLock_v1: '0.5', radiusLockStrict_v1: '1' } });
+    const m = makeMockDriver({ shapes: [sh] });
+    // 模拟 onToggleLock(disable) 的核心调用
+    const r = await RC.writeLockState(m.driver, sh, { lockedCm: null, isStrict: false });
+    assert.strictEqual(r.ok, true);
+    assert.ok(!('radiusLock_v1' in sh._tags), 'lock tag 应被删');
+    assert.ok(!('radiusLockStrict_v1' in sh._tags), 'strict tag 应被删');
+  });
+
+  // v1.3.5 回归：Infinity targetCm 不能静默通过 clamp
+  await test('writeRadius Infinity targetCm → reason=invalid-adj（防御）', async () => {
+    const sh = makeMockShape({ id: 'wr_inf', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.writeRadius(m.driver, sh, Infinity);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'invalid-adj');
+  });
+
+  console.log('\n=== radius-core.reapplyLock(driver) 边界 ===');
+
+  await test('reapplyLock basic 反算 adj = lockedCm / minSideCm', async () => {
+    const sh = makeMockShape({ id: 'rl1', width: 100, height: 60, isRoundRect: true, adjFraction: 0.01 });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.reapplyLock(m.driver, sh, 0.5);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.newCm, 0.5);
+    const expected = 0.5 / (60 / RC.PT_PER_CM);
+    assert.ok(Math.abs(sh._adjFraction - expected) < 1e-9);
+  });
+
+  await test('reapplyLock lockedCm 超过短边一半 → clamp', async () => {
+    const sh = makeMockShape({ id: 'rl2', width: 100, height: 60, isRoundRect: true, adjFraction: 0.1 });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.reapplyLock(m.driver, sh, 999);
+    assert.strictEqual(r.ok, true);
+    assert.ok(Math.abs(r.newCm - 60 / RC.PT_PER_CM / 2) < 1e-6, 'should clamp to minSideCm/2');
+  });
+
+  await test('reapplyLock lockedCm = 0 → newCm=0', async () => {
+    const sh = makeMockShape({ id: 'rl3', width: 100, height: 60, isRoundRect: true, adjFraction: 0.5 });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.reapplyLock(m.driver, sh, 0);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.newCm, 0);
+    assert.strictEqual(sh._adjFraction, 0);
+  });
+
+  await test('reapplyLock 非 roundRect → reason=not-roundRect', async () => {
+    const sh = makeMockShape({ id: 'rl4', width: 100, height: 60, isRoundRect: false });
+    sh.adjustments.count = 0;
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.reapplyLock(m.driver, sh, 0.5);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'not-roundRect');
+  });
+
+  await test('reapplyLock lockedCm=-1 → reason=invalid-target（防御）', async () => {
+    const sh = makeMockShape({ id: 'rl5', width: 100, height: 60, isRoundRect: true });
+    const m = makeMockDriver({ shapes: [sh] });
+    const r = await RC.reapplyLock(m.driver, sh, -1);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.reason, 'invalid-target');
+  });
+
   console.log('\n==================================================');
   console.log(`结果: ${passed} passed, ${failed} failed`);
   console.log('==================================================');

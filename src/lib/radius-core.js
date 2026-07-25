@@ -356,6 +356,12 @@ async function writeRadius(driver, shape, targetCm, opts) {
     if (minSideCm <= 0) {
       return { ok: false, reason: 'no-size', wasLocked: isLocked, wasStrict: false };
     }
+    // v1.3.5 修：Infinity/NaN 不能让 clamp 静默吞掉，提前 reject
+    // - Math.min(Infinity, 30) = 30，clamp 会把 Infinity 当成有限值处理
+    // - Math.min(NaN, 30) = NaN，虽然下面 !Number.isFinite(newAdj) 会兜住，但语义上更早 reject 更明确
+    if (!Number.isFinite(targetCm)) {
+      return { ok: false, reason: 'invalid-adj', wasLocked: isLocked, wasStrict: false };
+    }
     let newCm = clamp ? Math.min(targetCm, minSideCm / 2) : targetCm;
     if (newCm < 0) newCm = 0;
     const newAdj = (newCm / minSideCm) * ADJ_SCALE;
