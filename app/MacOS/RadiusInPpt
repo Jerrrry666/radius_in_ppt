@@ -106,15 +106,44 @@ EOF
   fi
 fi
 
-# ---------- 5. 复制 manifest 到 wef ----------
+# ---------- 5. 复制 manifest 到 wef + 稳定位置 ----------
 # Cmd+Q 后 macOS 可能回收沙盒目录，所以无条件创建
+# v1.2.2 新增：同时拷到稳定位置（~/Library/Application Support/RadiusInPpt/），
+# 供 LaunchAgent 守护脚本（guard.sh）恢复 wef 时用
 ADDIN_INSTALLED=0
-mkdir -p "$WEF_DIR"
+STABLE_DIR="$HOME/Library/Application Support/RadiusInPpt"
+STABLE_MANIFEST="$STABLE_DIR/manifest.xml"
+mkdir -p "$WEF_DIR" "$STABLE_DIR"
 cp -f "$MANIFEST" "$WEF_DIR/manifest.xml"
 if [ $? -eq 0 ]; then
   ADDIN_INSTALLED=1
   echo "[RadiusInPpt] manifest 已复制到 $WEF_DIR"
 fi
+cp -f "$MANIFEST" "$STABLE_MANIFEST"
+echo "[RadiusInPpt] manifest 已复制到稳定位置 $STABLE_MANIFEST"
+
+# ---------- 5.5 装 LaunchAgent 守护 ----------
+# v1.2.2 新增：装 com.jerrrry666.radiusinppt.guard，让 PowerPoint Cmd+Q 后
+# 再次打开时 manifest 被回收能自动恢复（不用再点 .app）
+GUARD_SH_STABLE="$STABLE_DIR/guard.sh"
+GUARD_PLIST_NAME="com.jerrrry666.radiusinppt.guard.plist"
+LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
+LAUNCH_AGENT_PLIST="$LAUNCH_AGENT_DIR/$GUARD_PLIST_NAME"
+mkdir -p "$LAUNCH_AGENT_DIR"
+# 拷 guard.sh 到稳定位置
+cp -f "$RES_DIR/tools/guard.sh" "$GUARD_SH_STABLE"
+chmod +x "$GUARD_SH_STABLE"
+# 生成 plist（替换占位符 __GUARD_SH_PATH__ 为稳定位置的 guard.sh 路径）
+sed "s|__GUARD_SH_PATH__|$GUARD_SH_STABLE|g" \
+  "$RES_DIR/tools/$GUARD_PLIST_NAME" > "$LAUNCH_AGENT_PLIST"
+# 装：先 unload（如果之前装过）再 load
+launchctl unload "$LAUNCH_AGENT_PLIST" 2>/dev/null || true
+if launchctl load "$LAUNCH_AGENT_PLIST" 2>/dev/null; then
+  echo "[RadiusInPpt] LaunchAgent 已装：$LAUNCH_AGENT_PLIST（每 30s 自动恢复 manifest）"
+else
+  echo "[RadiusInPpt] WARN: LaunchAgent 装失败（不影响本次，但 Cmd+Q 后还得手动重开 .app）"
+fi
+
 # PowerPoint 是否在跑（决定后续弹什么窗）
 PP_RUNNING=0
 if pgrep -f "Microsoft PowerPoint" >/dev/null 2>&1; then
@@ -132,15 +161,17 @@ try
 
 静态 server 已启动（http://localhost:3000）
 manifest 已复制到 wef 目录。
+LaunchAgent 已装上（每 30s 自动恢复 manifest，以后重开 PPT 不再报错）。
 
 但你得**完全退出 PowerPoint（Cmd + Q，不要只关窗口）后重新打开**，新加载项才会生效。
 
-之后每次使用只需双击本 App。" buttons {"退出并重新打开 PowerPoint", "在 Finder 中显示 manifest", "完成"} default button "退出并重新打开 PowerPoint" with title "R 角调整")
+之后不需要再双击本 App —— LaunchAgent 会自动维护。" buttons {"退出并重新打开 PowerPoint", "在 Finder 中显示 manifest", "完成"} default button "退出并重新打开 PowerPoint" with title "R 角调整")
   else
     set theChoice to button returned of (display dialog "✅ R 角调整 已就位
 
 静态 server 已启动（http://localhost:3000）
 manifest 已复制到 wef 目录。
+LaunchAgent 已装上（每 30s 自动恢复 manifest）。
 
 PowerPoint 启动后会在 ribbon 看到「R 角调整」tab。" buttons {"打开 PowerPoint", "完成"} default button "打开 PowerPoint" with title "R 角调整")
   end if

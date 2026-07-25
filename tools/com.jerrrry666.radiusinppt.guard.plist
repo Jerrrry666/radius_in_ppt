@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jerrrry666.radiusinppt.guard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__GUARD_SH_PATH__</string>
+  </array>
+
+  <!-- 每 30 秒跑一次 -->
+  <key>StartInterval</key>
+  <integer>30</integer>
+
+  <!-- launchd load 后立即跑一次 -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 不在标准输出喷 log（daemon 行为） -->
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+</dict>
+</plist>
