@@ -414,17 +414,25 @@
       const rowsN = $('layout-rows-num');
       const colsReadout = $('layout-cols-readout');
       const coupledHint = $('layout-coupled-hint');
+      const rowsDatalist = $('layout-rows-ticks');
       const padR = $('layout-padding');
       const padN = $('layout-padding-num');
       const gutR = $('layout-gutter');
       const gutN = $('layout-gutter-num');
       const warn = $('layout-warn');
-      // v1.2.11：行/列 slider max 跟子数 N 走；列 readout 显示联动值
+      // v1.2.13：行的可取值 = N 的所有因子（不是 [1, N] 连续范围）
+      // 例：N=4 → [1, 2, 4]；N=6 → [1, 2, 3, 6]；N=12 → [1, 2, 3, 4, 6, 12]
       const N = currentLayout.childIds.length;
+      const factors = N > 0 ? window.RadiusCore.computeGridFactors(N) : [1];
+      const maxFactor = factors[factors.length - 1];
       if (N > 0) {
-        rowsR.max = String(N);
-        rowsN.max = String(N);
-        // N=1 时行=1, 列=1 唯一；slider 禁用（disable 而不是隐藏，跟 setup 步骤保持一致）
+        rowsR.max = String(maxFactor);
+        rowsN.max = String(maxFactor);
+        // 更新 datalist 的 tick（slider 上显示刻度提示用户）
+        if (rowsDatalist) {
+          rowsDatalist.innerHTML = factors.map((f) => `<option value="${f}"></option>`).join('');
+        }
+        // N=1 时行=1, 列=1 唯一；slider 禁用
         if (N === 1) {
           rowsR.disabled = true;
           rowsN.disabled = true;
@@ -432,7 +440,7 @@
         } else {
           rowsR.disabled = false;
           rowsN.disabled = false;
-          if (coupledHint) coupledHint.textContent = `（自动 = ${N} ÷ 行）`;
+          if (coupledHint) coupledHint.textContent = `（自动 = ${N} ÷ 行，N=${N} 的因子: ${factors.join('/')}）`;
         }
       }
       // 同步：params 里的 rows/cols 应该等于 N 的因子（如果 tag 损坏 → 默认 row=N, col=1）
@@ -577,12 +585,16 @@
     }
 
     // 改 rows → 自动算 cols
+    // v1.2.13：snap 到 N 的最近因子（行滑块是离散 list，不是连续 range）
     function handleRowsChange(rawVal) {
       if (!currentLayout) return;
       const N = currentLayout.childIds.length;
       if (!Number.isFinite(N) || N <= 0) return;
-      // 调 radius-core 纯函数算联动结果（传 'rows'，另一维自动算）
-      const coupled = window.RadiusCore.computeGridCoupledRowsCols('rows', rawVal, N);
+      // 先 snap 到最近因子
+      const factors = window.RadiusCore.computeGridFactors(N);
+      const snapped = window.RadiusCore.snapToNearestGridFactor(rawVal, factors);
+      // 再算联动
+      const coupled = window.RadiusCore.computeGridCoupledRowsCols('rows', snapped, N);
       // 写 params
       currentLayout.params.rows = coupled.rows;
       currentLayout.params.cols = coupled.cols;

@@ -127,6 +127,74 @@ function computeGridCoupledRowsCols(changed, value, N) {
     : { rows: otherVal, cols: v };
 }
 
+/**
+ * v1.2.13：算出 rows 的「合法可取值列表」= N 的所有正因子
+ *
+ * 用户要求：行滑块不应该是连续范围，而是离散列表。
+ * 例：N=4 → rows 可选 [1, 2, 4]（不含 3，因为 3×2=6>4 会留 2 个空位）
+ *     N=6 → rows 可选 [1, 2, 3, 6]
+ *     N=12 → rows 可选 [1, 2, 3, 4, 6, 12]
+ *
+ * 推导：rows × cols = N 严格成立（不留空位）→ cols = N/rows 必须是整数
+ *       → rows 必须是 N 的因子
+ *
+ * 用途：
+ *   - UI：renderLayoutPanel 把这些值设到 datalist 的 <option>，slider 显示 tick
+ *   - input 事件：snap 用户输入到最近的合法值（防"拖到 3"）
+ *   - 单测：保证行为可预测
+ *
+ * @param {number} N - 子数
+ * @returns {number[]} 升序的 N 的正因子列表
+ *   - N=1 → [1]
+ *   - N=0 / 非正数 → [1]（防御：默认 1×1）
+ */
+function computeGridFactors(N) {
+  const safeN = (() => {
+    const n = Number(N);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+  })();
+  const factors = [];
+  for (let i = 1; i * i <= safeN; i++) {
+    if (safeN % i === 0) {
+      factors.push(i);
+      if (i !== safeN / i) factors.push(safeN / i);
+    }
+  }
+  factors.sort((a, b) => a - b);
+  return factors;
+}
+
+/**
+ * v1.2.13：把任意 v snap 到 N 的最近因子
+ *
+ * 用途：slider 拖动时（连续值）snap 到最近的合法离散值
+ *   - N=4，factors=[1,2,4]，snap(3) → 2（3 离 2 比离 4 近）
+ *   - snap 边界：snap(1) → 1，snap(4) → 4
+ *   - 越界（snap(0) / snap(99)）→ clamp 到 [1, lastFactor]
+ *
+ * @param {number} v - 任意正数（字符串会 Number() 转换）
+ * @param {number[]} factors - N 的因子列表（升序）
+ * @returns {number} 最近的因子
+ */
+function snapToNearestGridFactor(v, factors) {
+  if (!Array.isArray(factors) || factors.length === 0) return 1;
+  const num = Number(v);
+  if (!Number.isFinite(num)) return factors[0];
+  const sorted = factors.slice().sort((a, b) => a - b);
+  const clamped = Math.max(sorted[0], Math.min(sorted[sorted.length - 1], num));
+  // 找最近的
+  let best = sorted[0];
+  let bestDist = Math.abs(clamped - best);
+  for (const f of sorted) {
+    const d = Math.abs(clamped - f);
+    if (d < bestDist) {
+      best = f;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
 // ---------------- 单位换算 ----------------
 
 /**
@@ -1275,6 +1343,8 @@ if (typeof module !== 'undefined' && module.exports) {
     computeLayout,
     computeAutoPadding,
     computeGridCoupledRowsCols,
+    computeGridFactors,
+    snapToNearestGridFactor,
     valueToCm,
     cmToValue,
     computeLinkedSubR,
@@ -1314,6 +1384,8 @@ if (typeof window !== 'undefined') {
     computeLayout,
     computeAutoPadding,
     computeGridCoupledRowsCols,
+    computeGridFactors,
+    snapToNearestGridFactor,
     valueToCm,
     cmToValue,
     computeLinkedSubR,

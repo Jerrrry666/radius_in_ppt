@@ -737,6 +737,96 @@ t.test('computeGridCoupledRowsCols 联动结果：rows × cols >= N（保证 N �
 });
 
 // ============================================================
+// 8.6 computeGridFactors + snapToNearestGridFactor — v1.2.13 行可取值离散列表
+// ============================================================
+
+t.test('computeGridFactors N=4 → [1, 2, 4]（不含 3）', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(4), [1, 2, 4]);
+});
+
+t.test('computeGridFactors N=6 → [1, 2, 3, 6]', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(6), [1, 2, 3, 6]);
+});
+
+t.test('computeGridFactors N=12 → [1, 2, 3, 4, 6, 12]', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(12), [1, 2, 3, 4, 6, 12]);
+});
+
+t.test('computeGridFactors N=1 → [1]', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(1), [1]);
+});
+
+t.test('computeGridFactors N=质数 (7/11/13) → [1, N]', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(7), [1, 7]);
+  assert.deepStrictEqual(RC.computeGridFactors(11), [1, 11]);
+  assert.deepStrictEqual(RC.computeGridFactors(13), [1, 13]);
+});
+
+t.test('computeGridFactors N=完全平方 (4/9/16) → 含 sqrt 一次不重复', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(4), [1, 2, 4]);
+  assert.deepStrictEqual(RC.computeGridFactors(9), [1, 3, 9]);
+  assert.deepStrictEqual(RC.computeGridFactors(16), [1, 2, 4, 8, 16]);
+});
+
+t.test('computeGridFactors N=0 / 负数 / 非数字 → 防御 [1]', () => {
+  assert.deepStrictEqual(RC.computeGridFactors(0), [1]);
+  assert.deepStrictEqual(RC.computeGridFactors(-3), [1]);
+  assert.deepStrictEqual(RC.computeGridFactors(NaN), [1]);
+  assert.deepStrictEqual(RC.computeGridFactors('abc'), [1]);
+});
+
+t.test('computeGridFactors 升序 + 含 1 + 含 N', () => {
+  for (const N of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 24, 30]) {
+    const f = RC.computeGridFactors(N);
+    // 升序
+    for (let i = 1; i < f.length; i++) {
+      assert.ok(f[i] > f[i - 1], `N=${N} factors not sorted: ${JSON.stringify(f)}`);
+    }
+    // 含 1
+    assert.strictEqual(f[0], 1, `N=${N} 不含 1`);
+    // 含 N
+    assert.strictEqual(f[f.length - 1], N, `N=${N} 不含 N`);
+    // 全部能被 N 整除
+    for (const x of f) {
+      assert.strictEqual(N % x, 0, `N=${N}, x=${x} 不是 N 的因子`);
+    }
+  }
+});
+
+t.test('snapToNearestGridFactor N=4 拖到 3 → snap 到 2（3 不在 factors 里）', () => {
+  assert.strictEqual(RC.snapToNearestGridFactor(3, [1, 2, 4]), 2);
+  // 1 离 0 比 2 远？clamp 后算：0 → 1，1 → 1
+  assert.strictEqual(RC.snapToNearestGridFactor(0, [1, 2, 4]), 1);
+  // 99 越界 → clamp 到 4
+  assert.strictEqual(RC.snapToNearestGridFactor(99, [1, 2, 4]), 4);
+});
+
+t.test('snapToNearestGridFactor 字符串 / NaN 防御', () => {
+  assert.strictEqual(RC.snapToNearestGridFactor('2', [1, 2, 4]), 2);
+  assert.strictEqual(RC.snapToNearestGridFactor(NaN, [1, 2, 4]), 1);
+  assert.strictEqual(RC.snapToNearestGridFactor(undefined, [1, 2, 4]), 1);
+});
+
+t.test('snapToNearestGridFactor 边界：v 正好是 factor → 自身', () => {
+  assert.strictEqual(RC.snapToNearestGridFactor(1, [1, 2, 4]), 1);
+  assert.strictEqual(RC.snapToNearestGridFactor(2, [1, 2, 4]), 2);
+  assert.strictEqual(RC.snapToNearestGridFactor(4, [1, 2, 4]), 4);
+});
+
+t.test('snapToNearestGridFactor 浮点 → 最近的 factor', () => {
+  assert.strictEqual(RC.snapToNearestGridFactor(1.5, [1, 2, 4]), 1);  // 1.5 离 1/2 等距（差 0.5），返回第一个（即 1）
+  assert.strictEqual(RC.snapToNearestGridFactor(2.4, [1, 2, 4]), 2);
+  assert.strictEqual(RC.snapToNearestGridFactor(2.6, [1, 2, 4]), 2);  // 2.6 离 2 是 0.6，离 4 是 1.4，→ 2
+  assert.strictEqual(RC.snapToNearestGridFactor(3.5, [1, 2, 4]), 4);  // 3.5 离 4 比 2 近
+});
+
+t.test('snapToNearestGridFactor 空 factors 数组 → 防御返回 1', () => {
+  assert.strictEqual(RC.snapToNearestGridFactor(5, []), 1);
+  assert.strictEqual(RC.snapToNearestGridFactor(5, null), 1);
+  assert.strictEqual(RC.snapToNearestGridFactor(5, undefined), 1);
+});
+
+// ============================================================
 // 9. detectLayoutParentSizeChanges — v1.2.9 父 size 联动检测
 // ============================================================
 
