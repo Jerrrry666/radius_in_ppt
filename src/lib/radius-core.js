@@ -794,23 +794,28 @@ function detectStaleChildrenInLayout(parsedTag, selectedShapeIds) {
  *   1. 对每个 shape，集合层读 layoutParent_v1 + layoutChild_v1 tag
  *   2. 解析父 tag → parents[id] = {rows, cols, padding, gutter, linkRMode, childIds}
  *   3. 读子 tag → childOf[id] = parentId
- *   4. 顺便过滤 stale childIds（在选区里找不到的）→ staleParents[id] = [staleChildId, ...]
+ *   4. 顺便过滤 stale childIds（在整个 slide 上找不到的）→ staleParents[id] = [staleChildId, ...]
  *
  * 注意：
  *   - driver.readTag 在 tag 不存在时返回 null（不 throw），所以 catch 块不会进
  *   - 选区变化时用 getSelectedShapes() 调用，传入 shapes 给这个函数即可
+ *   - **stale 检测必须用整 slide 的 shape IDs，不能用选区**（v1.3.7 修 bug：只选父时
+ *     子不在选区 → 旧版本误判为 stale → childIds 全被过滤掉 → UI 显示"子 0 个"）
  *
  * @param {Object} driver
  * @param {Array} selectedShapes - shape proxy 列表（已经 load 过 'items/id'）
+ * @param {Array} [allSlideShapes] - **整个 slide** 的 shape 列表（已 load 'items/id'）
+ *                                   用于 stale 检测；不传则 fallback 到 selectedShapeIds
+ *                                   （fallback 仅保留测试兼容，生产 dialog.js 必传）
  * @returns {Promise<{
  *     ok: boolean,
  *     parents: Object,    // { shapeId: {rows, cols, padding, gutter, linkRMode, childIds} }
  *     childOf: Object,    // { shapeId: parentId }
- *     staleParents: Object,  // { parentShapeId: [staleChildId, ...] } —— 父 tag 里有但选区里找不到的子
+ *     staleParents: Object,  // { parentShapeId: [staleChildId, ...] } —— 父 tag 里有但 slide 上找不到的子
  *     error?: string
  *   }>}
  */
-async function loadLayoutTags(driver, selectedShapes) {
+async function loadLayoutTags(driver, selectedShapes, allSlideShapes) {
   const parents = {};
   const childOf = {};
   const staleParents = {};
@@ -834,6 +839,19 @@ async function loadLayoutTags(driver, selectedShapes) {
       return { ok: false, parents, childOf, staleParents, error: 'selectedShapes 必须有 items 或为数组' };
     }
 
+    // v1.3.7 修 bug：stale 检测用整 slide 的 shape IDs，不用选区
+    // （只选父时，4 个子不在选区 → 旧版误判全部 stale → childIds 变空）
+    let slideShapeIds = selectedShapeIds;  // fallback
+    if (allSlideShapes) {
+      slideShapeIds = new Set();
+      const slideList = (allSlideShapes && typeof allSlideShapes.items !== 'undefined')
+        ? allSlideShapes.items
+        : (Array.isArray(allSlideShapes) ? allSlideShapes : []);
+      for (const sh of slideList) {
+        if (sh && sh.id != null) slideShapeIds.add(sh.id);
+      }
+    }
+
     // 读每个 shape 的 layout tag
     for (const sh of shapesList) {
       const sid = sh.id;
@@ -844,8 +862,8 @@ async function loadLayoutTags(driver, selectedShapes) {
         const parsed = parseLayoutParentTagValue(parentVal);
         if (parsed) {
           parents[sid] = parsed;
-          // stale 检测：父 tag 里的 childIds 不在 selectedShapeIds 集合里
-          const { validChildIds, staleChildIds } = detectStaleChildrenInLayout(parsed, selectedShapeIds);
+          // stale 检测：父 tag 里的 childIds 不在整 slide 的 shape ids 里（v1.3.7 之前是选区 → 误判）
+          const { validChildIds, staleChildIds } = detectStaleChildrenInLayout(parsed, slideShapeIds);
           if (staleChildIds.length > 0) {
             // 写回 parents[sid].childIds 只保留 valid 的（caller 拿到的是过滤后的）
             parents[sid].childIds = validChildIds;

@@ -1070,6 +1070,9 @@
   // v1.3.6 迁移：PowerPoint.run 部分走 radius-core.loadLayoutTags
   // thin wrapper：开 PowerPoint.run 拿 selectedShapes proxy → 调 radius-core
   // radius-core 做读 + stale state 检测，dialog.js 只负责 PowerPoint.run 上下文
+  //
+  // v1.3.7 修 bug：stale 检测必须用整 slide 的 shape IDs（不只是选区）
+  // 之前只传 sel：只选父时 4 个子不在选区 → 误判全部 stale → childIds 变空 → UI 显示"子 0 个"
   function loadLayoutTagsViaTags() {
     return new Promise((resolve) => {
       PowerPoint.run(async (ctx) => {
@@ -1077,8 +1080,11 @@
           const driver = window.PptDriver.createDriver(ctx);
           const sel = ctx.presentation.getSelectedShapes();
           sel.load('items/id');
+          // 拿整 slide 的 shapes —— 用于 stale 检测（v1.3.7 修复）
+          const slide = ctx.presentation.getSelectedSlides().getItemAt(0);
+          slide.load('shapes/items/id');
           await ctx.sync();
-          const r = await window.RadiusCore.loadLayoutTags(driver, sel);
+          const r = await window.RadiusCore.loadLayoutTags(driver, sel, slide.shapes);
           resolve(r);
         } catch (e) {
           resolve({ ok: false, error: e });
@@ -1347,27 +1353,27 @@
       await PowerPoint.run(async (ctx) => {
         // v1.2.2 driver + radius-core：lock monitor 走新分层
         const driver = window.PptDriver.createDriver(ctx);
-        // v1.3.6 修 #3：monitorTick 偶发 GeneralException
-        // 根因：原代码在 for 循环里 per-shape `get(0) + sync`（v1.0 模式），
-        //       N 个 shape = N 次 ctx.sync()，跟 syncLayoutChildrenR 4 个子只写 2 个是同一个坑
-        //       （v1.2.6 注释说 batch loadAdjValue 排队 + 单 sync 也炸，所以选 per-shape sync 兜底，
-        //         但 per-shape sync 多了也有 race）—— 修法：sibling applyLayout 模式
-        //         一次 collection-level load 拿全部 adjustments.value + 一次 sync + readTagsBulk
+        // v1.3.7 修 #2 真 bug：monitorTick 改回 v1.0 模式（per-shape get(0) + per-shape sync）
+        // 原因：v1.3.6 改成 collection-level load 'items/adjustments/items/value' + 1 sync + new get(0)，
+        //       但 Mac LTSC proxy 是 snapshot 风格，sync 后 new get(0) 返回新 proxy 没 value。
+        //       用户实测 v1.2.4：拖父 R 角时 4 个子没联动，根因就是 monitorTick 读不到 currentAdj → continue → ss.currentCm 不更新。
+        //       refreshSelection 用的就是 v1.0 模式（1210-1213 行），实测 work。monitorTick 改回同样模式。
+        // bug #3（per-shape sync 累积）→ catch 兜底（实测 v1.2 时期只偶发，无影响）
         const sel = driver.selectedShapes();
-        // 关键：collection-level load 'items/adjustments/items/value' 让 get(0).value 直接有值（v1.2.5 坑）
-        driver.load(sel, 'items/id, items/width, items/height, items/adjustments/items/value, items/tags');
+        // 不 load 'items/adjustments/items/value'（v1.3.6 那个 load 没用）—— 改用 v1.0 per-shape 模式
+        driver.load(sel, 'items/id, items/width, items/height, items/adjustments, items/tags');
         await driver.sync();
-        // readTagsBulk 一次拿全部 tag（避开 readTag per-call sync 累积）
+        // readTagsBulk 一次拿全部 tag（避开 readTag per-call sync 累积，bug #2 子 bug 修法保留）
         const tagsById = driver.readTagsBulk(sel.items);
         for (const sh of sel.items) {
           const shId = driver.shapeId(sh);
           try {
             if (!driver.isRoundRect(sh)) continue; // 不是 roundRect
-            // collection-level load 完 sync 之后，get(0).value 直接可读（不需要再 sync）
+            // v1.0 模式：先 get(0) 存变量 → per-shape sync → 读 value
+            const adjResult = sh.adjustments.get(0);
+            await driver.sync();
             let currentAdj = null;
-            try {
-              currentAdj = sh.adjustments.get(0).value;
-            } catch (_) { continue; }
+            try { currentAdj = adjResult.value; } catch (_) { continue; }
             if (currentAdj == null) continue;
             const size = driver.size(sh);
             const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
@@ -1428,8 +1434,6 @@
                 } else {
                   // 仅使用数值固定 R 角：把当前 adj 提升为新的固定值
                   const newCm = currentAdj * minSideCm;
-                  // 用 readTagsBulk 拿的 tag 写 knownLockState（writeLockState 内部走 driver.addTag 不用 readTag）
-                  // writeLockState 本身只写不读，已经不调 readTag 了
                   await window.RadiusCore.writeLockState(driver, sh, { lockedCm: newCm });
                   ss.lockedCm = newCm;
                   lockMonitor.lastAdj[shId] = currentAdj;
@@ -1465,7 +1469,7 @@
         showToast(`🪄 使用数值固定 R 角已跟随 R 角滑块更新（${updatedLockIds.length} 个）`);
       }
 
-      // v1.3.6 修 #6：layout 父 R 角变化 → 同步子 R 角
+      // v1.3.6 修 #2：layout 父 R 角变化 → 同步子 R 角
       // 场景：用户在 PPT 里直接拖父的 R 角黄色滑块（不走 task pane 的 onApply），
       //       monitorTick 检测到 currentCm 变化，detectLayoutParentChanges 返回变化的父，
       //       调 syncLayoutChildrenRIfNeeded 联动子 R 角
@@ -1477,11 +1481,13 @@
           if (c.lastCm == null) {
             // 首次见到：只记 lastCm，不触发 sync
             lockMonitor.lastCm[c.parentId] = c.newCm;
+            console.log(`[layout-link] first-see parentId=${c.parentId} newCm=${c.newCm.toFixed(3)} (记 lastCm 不 fire)`);
             continue;
           }
           // 真正变了：更新 lastCm + 标 dirty
           lockMonitor.lastCm[c.parentId] = c.newCm;
           hasRealChange = true;
+          console.log(`[layout-link] fire parentId=${c.parentId} lastCm=${c.lastCm.toFixed(3)} newCm=${c.newCm.toFixed(3)} (→ 200ms 后调 syncLayoutChildrenR)`);
         }
         if (hasRealChange) {
           lockMonitor.parentRDirty = true;
@@ -1504,9 +1510,11 @@
       if (!lockMonitor.parentRDirty) return;
       lockMonitor.parentRDirty = false;
       try {
-        await syncLayoutChildrenRIfNeeded();
+        const before = selectedShapes.filter((s) => s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds).length;
+        const r = await syncLayoutChildrenRIfNeeded();
+        if (before > 0) console.log(`[layout-link] syncLayoutChildrenRIfNeeded done: parents=${before} result=${JSON.stringify(r)}`);
       } catch (e) {
-        // silent skip（不弹窗，不影响 PPT）
+        console.log('[layout-link] syncLayoutChildrenRIfNeeded error:', e && e.message ? e.message : e);
       }
     }, PARENT_R_SYNC_DEBOUNCE_MS);
   }

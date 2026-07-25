@@ -696,6 +696,42 @@ t.test('loadLayoutTags: stale childId 过滤（已删 / 跨 slide）', async () 
   assert.deepStrictEqual(r.staleParents['parent_p1'], ['lc3_stale', 'lc4_stale']);
 });
 
+t.test('loadLayoutTags: bug v1.3.7 — 只选父 + 4 个子都在 slide → 全部保留（不被误判 stale）', async () => {
+  // v1.3.7 bug：只选父时 4 个子不在选区 → 旧版用 selectedShapeIds 做 stale 检测
+  //   把 4 个子全部判为 stale → childIds 变空 → UI 显示"子 0 个（需要 4）"
+  // 修法：caller 必须传整 slide 的 shapes（allSlideShapes）→ stale 检测比对 slide IDs
+  //   → 4 个子都在 slide 上 → 全部 valid → UI 显示"子 4 个"
+  const f = makeStandardFixture();
+  // 父 tag 写 4 个子（标准 fixture 里 lc1~lc4 都在）
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
+    rows: 2, cols: 2, padding: 0.5, gutter: 0.3, linkRMode: 'subtract',
+    childIds: ['lc1', 'lc2', 'lc3', 'lc4'],
+  });
+  const h = createHarness({ shapes: f.allShapes });
+  // 关键：选区只放父，但 allSlideShapes 给全部 5 个 shape
+  const r = await RC.loadLayoutTags(h.driver, [f.parent], h.slide.shapes);
+  assert.strictEqual(r.ok, true);
+  // 4 个子全部保留
+  assert.deepStrictEqual(r.parents['parent_p1'].childIds, ['lc1', 'lc2', 'lc3', 'lc4']);
+  // 没有 stale（4 个子都在 slide 上）
+  assert.strictEqual(r.staleParents['parent_p1'], undefined);
+});
+
+t.test('loadLayoutTags: bug v1.3.7 fallback — 不传 allSlideShapes 时用选区（兼容旧测试）', async () => {
+  // 不传 allSlideShapes 时降级到 selectedShapeIds，行为同 v1.3.6
+  // （这条测试只是确保新参数可选，不破坏旧调用方）
+  const f = makeStandardFixture();
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
+    rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract',
+    childIds: ['lc1', 'lc2'],
+  });
+  const h = createHarness({ shapes: f.allShapes });
+  // 选区放父 + lc1 + lc2（不传 allSlideShapes）—— lc1/lc2 在 f.layoutChildren 数组里
+  const r = await RC.loadLayoutTags(h.driver, [f.parent, f.layoutChildren[0], f.layoutChildren[1]]);
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.parents['parent_p1'].childIds, ['lc1', 'lc2']);
+});
+
 t.test('loadLayoutTags: 父 tag 损坏 → 跳过（不 throw）', async () => {
   const f = makeStandardFixture();
   f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = 'garbage-not-json';
@@ -1035,6 +1071,91 @@ t.test('bug #6 子 bug：writeRadius opts.knownLockState 跳过 per-call readTag
   // 期望：调 1 次 readTagsBulk（拿所有 tag），不调 readTag（per-shape sync）
   h.assertCalled('readTagsBulk');
   h.assertCallCount('readTag', 0);
+});
+
+// ============================================================
+// 完整 monitorTick → detectLayoutParentChanges → syncLayoutChildrenR 集成
+// ============================================================
+//
+// 复现真实 PPT 场景：用户选中父 → 在 PPT 里直接拖父的 R 角黄色滑块
+//   tick 1：monitorTick 读到 currentCm=2.4 → detectLayoutParentChanges 返回 [{parentId, lastCm=null, newCm=2.4}] → 只记 lastCm 不 fire
+//   tick 2：用户拖完松手，currentCm=0.5 → detectLayoutParentChanges 返回 [{parentId, lastCm=2.4, newCm=0.5}] → 标 dirty + scheduleParentRSync
+//   tick 3+：200ms 后 scheduleParentRSync 调 syncLayoutChildrenR → 4 个子联动
+
+t.test('集成：完整 monitorTick → detect → schedule → sync 链路（4 子联动）', async () => {
+  // 模拟 dialog.js 内存状态
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // 父 + 4 个子都已经有 layout tag（fixture 没自动建，但 v1.2 期间建过——模拟）
+  f.parent._tags[RC.LAYOUT_PARENT_TAG_KEY] = JSON.stringify({
+    rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract',
+    childIds: ['lc1', 'lc2', 'lc3', 'lc4'],
+  });
+  for (const c of f.layoutChildren) {
+    c._tags[RC.LAYOUT_CHILD_TAG_KEY] = 'parent_p1';
+  }
+  // 模拟 selectedShapes（dialog.js 内存里有 layout 父 + 4 个子的状态）
+  // 关键：父的 currentCm 在 tick 1 时是 2.4（fixture 设定）
+  const selectedShapes = [
+    { id: 'parent_p1', layoutRole: 'parent', layoutParams: { rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract' }, layoutChildIds: ['lc1', 'lc2', 'lc3', 'lc4'], currentCm: 2.4, isRoundRect: true },
+  ];
+  const lockMonitor = { lastCm: {} };
+
+  // === tick 1：first-see，不 fire ===
+  let changes = RC.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].lastCm, null);
+  assert.strictEqual(changes[0].newCm, 2.4);
+  for (const c of changes) lockMonitor.lastCm[c.parentId] = c.newCm;  // 记 lastCm
+
+  // === tick 2：用户拖完松手，currentCm = 0.5 ===
+  selectedShapes[0].currentCm = 0.5;
+  changes = RC.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+  assert.strictEqual(changes.length, 1, 'tick 2 应该检测到 1 个父变化');
+  assert.strictEqual(changes[0].parentId, 'parent_p1');
+  assert.strictEqual(changes[0].lastCm, 2.4);
+  assert.strictEqual(changes[0].newCm, 0.5);
+  for (const c of changes) lockMonitor.lastCm[c.parentId] = c.newCm;
+  // 标 dirty（scheduleParentRSync 200ms 后会调 syncLayoutChildrenRIfNeeded）
+
+  // === 模拟 scheduleParentRSync 调 syncLayoutChildrenR ===
+  // subRcm = max(0, 0.5 - 0.3) = 0.2cm；子短边 1.5cm，0.2 不超 0.75，adj = 0.2/1.5
+  const r = await RC.syncLayoutChildrenR(h.driver, 'parent_p1', ['lc1', 'lc2', 'lc3', 'lc4'], 0.3, 'subtract', 0.5);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 4, '关键 assertion：4 个子都要写');
+  assert.strictEqual(r.failed, 0);
+  // 验证每个子的 R 角
+  for (let i = 0; i < 4; i++) {
+    const c = f.layoutChildren[i];
+    h.assertShape(c, { adjFraction: (v) => Math.abs(v - 0.2 / 1.5) < 1e-6 }, `lc${i+1} 应该 R 角=0.2cm`);
+  }
+});
+
+t.test('集成：monitorTick 拖回原值（来回拖）→ 应该 fire（lastCm 更新了）', async () => {
+  // 场景：用户拖父 R 角 2.4 → 0.5 → 2.4（来回拖）
+  // 期望：每次拖动都 fire
+  const lockMonitor = { lastCm: {} };
+  const selectedShapes = [
+    { id: 'p1', layoutRole: 'parent', currentCm: 2.4, isRoundRect: true },
+  ];
+
+  // tick 1：first-see
+  let changes = RC.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+  assert.strictEqual(changes.length, 1);
+  for (const c of changes) lockMonitor.lastCm[c.parentId] = c.newCm;
+
+  // tick 2：拖到 0.5
+  selectedShapes[0].currentCm = 0.5;
+  changes = RC.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+  assert.strictEqual(changes.length, 1);
+  for (const c of changes) lockMonitor.lastCm[c.parentId] = c.newCm;
+
+  // tick 3：拖回 2.4
+  selectedShapes[0].currentCm = 2.4;
+  changes = RC.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+  assert.strictEqual(changes.length, 1, '来回拖应该 fire');
+  assert.strictEqual(changes[0].newCm, 2.4);
+  assert.strictEqual(changes[0].lastCm, 0.5);
 });
 
 // ============================================================
