@@ -111,11 +111,16 @@ function computeLayout(parent, rows, cols, paddingCm, gutterCm) {
  *   N=0（防御）→ { rows:1, cols:1 }
  */
 function computeGridCoupledRowsCols(changed, value, N) {
-  const safeN = Number.isFinite(N) && N > 0 ? Math.floor(N) : 1;
-  let v = Number.isFinite(value) ? Math.floor(value) : 1;
+  // 兼容字符串输入（slider / number input 的 value 都是 string）
+  // 之前用 Number.isFinite(value) → "2" 算 false → fallback 到 1，导致 2×2 改到 1×4 后改不回去
+  const safeN = (() => {
+    const n = Number(N);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+  })();
+  const numValue = Number(value);
+  let v = Number.isFinite(numValue) ? Math.floor(numValue) : 1;
   // clamp 到 [1, N]
   v = Math.max(1, Math.min(safeN, v));
-  const otherKey = changed === 'rows' ? 'cols' : 'rows';
   const otherVal = Math.max(1, Math.ceil(safeN / v));
   return changed === 'rows'
     ? { rows: v, cols: otherVal }

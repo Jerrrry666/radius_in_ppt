@@ -708,6 +708,22 @@ t.test('computeGridCoupledRowsCols changedKey 非法 → 按 cols 处理（防�
   assert.deepStrictEqual(r, { rows: 2, cols: 2 });
 });
 
+t.test('computeGridCoupledRowsCols 字符串输入（slider / number input 真实场景）', () => {
+  // v1.2.11 实测 bug：Number.isFinite("2") === false → 任何字符串都 fallback 到 1
+  // 修法：先 Number(value) 转换
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', '1', 4), { rows: 1, cols: 4 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', '2', 4), { rows: 2, cols: 2 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', '3', 4), { rows: 3, cols: 2 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', '4', 4), { rows: 4, cols: 1 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('cols', '2', 4), { rows: 2, cols: 2 });
+  // 浮点字符串
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', '2.7', 4), { rows: 2, cols: 2 });
+  // 空字符串 → 当 1
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', '', 4), { rows: 1, cols: 4 });
+  // "abc" → NaN → 当 1
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', 'abc', 4), { rows: 1, cols: 4 });
+});
+
 t.test('computeGridCoupledRowsCols 联动结果：rows × cols >= N（保证 N 个子全用上）', () => {
   // 测多个 N + 多个 changed 方向，rows × cols 必须 >= N
   for (const N of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]) {
