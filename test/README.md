@@ -10,30 +10,22 @@ npm test
 
 ```bash
 node test/test-radius-core.js         # 46 个 — 纯算法
-node test/test-driver-integration.js   # 54 个 — driver 集成（新框架）
+node test/test-features.js            # 49 个 — 功能（业务函数）
 ```
 
-## 测试结构
+## 测试分层
 
-```
-test/
-├── README.md
-├── fixtures.js                       # 标准 5+ R 角矩形 fixture
-├── test-harness.js                   # driver harness + call tracker + test runner
-├── test-radius-core.js               # 46 个 — 纯算法（computeLayout / 单位换算 / 业务规则）
-└── test-driver-integration.js        # 54 个 — driver + 业务方法集成
-```
+| 层 | 文件 | 测什么 | 跑不跑 |
+|---|---|---|---|
+| **driver 层** | `ppt-driver.js` 16 个方法 | Mac LTSC Office.js 兼容性 | **不在 npm test 里**——在真实 PPT 跑"Driver 烟囱测试" |
+| **纯算法** | `test-radius-core.js` | `computeLayout` / `valueToCm` / 业务规则（`shouldReject*` / `syncFixedValueIfLocked`） | npm test |
+| **功能** | `test-features.js` | 业务函数（`writeRadius` / `applyLayout` / `syncLayoutChildrenR` / `readLockState` / `writeLockState` / `reapplyLock`）—— "模拟交互反馈" | npm test |
 
-**v1.3 重整后**：
-- 删了 `test-mock-harness.js`（70 个）—— 跟 driver 集成完全重复
-- 删了 `radius-core.writeRadiusToShapePure` / `applyLayoutPure` —— 业务只走 driver 路径
-- 100 个测试，**全面不重复**
+**v1.3 重整后**：功能测试用 `assertShape` 验最终状态，**不关心 driver 内部调了哪些方法**。
 
 ## 写新功能怎么测（v1.3 流程）
 
-底层（ppt-driver.js）和图形交互（dialog.js）已经稳了。新功能不用每次都连真 PPT 测，按下面三步走：
-
-### Step 1：拿标准 fixture
+### 1. 拿标准 fixture
 
 ```js
 const { createHarness, makeStandardFixture } = require('./test-harness');
@@ -54,62 +46,49 @@ const f = makeStandardFixture();
 //   f.rect1                    — 非圆角矩形
 ```
 
-### Step 2：建 harness
+### 2. 建 harness
 
 ```js
 const h = createHarness({ shapes: f.allShapes });
-// h.driver   — 包装过的 driver，方法调用全记录
-// h.calls    — 所有 driver 方法调用 [{method, args, time}]
-// h.shapes   — 所有 shape Map
+// h.driver   — driver 包装（功能测试不直接用，但 fixture 需要它作为 ctx）
+// h.calls    — 所有 driver 方法调用记录（debug 用，不作为主断言）
 // h.snapshot() — 当前所有 shape 状态
 ```
 
-### Step 3：调业务方法 + 验证 driver 反应
+### 3. 调功能方法 + 验最终状态
 
 ```js
 const RC = require('../src/lib/radius-core.js');
 
-// 调业务方法
+// 调功能
 const r = await RC.writeRadius(h.driver, f.shapes.r1_basic, 0.5);
 
-// 验证返回值
+// 验证返回 + 形状最终状态
 assert.strictEqual(r.ok, true);
 assert.strictEqual(r.newCm, 0.5);
-
-// 验证 driver 反应（"调用底层编辑工具，测试框架给出反应"）
-h.assertCalled('setAdjFraction');              // setAdjFraction 被调
-h.assertCalled('setAdjFraction', {             // 带参数验证
-  with: ['r1_basic', 0.5 / 3]
-});
-h.assertNotCalled('addTag');                   // addTag 没被调
-h.assertCallCount('readTag', 2);               // readTag 调 2 次
-h.assertShape(f.shapes.r1_basic, {             // shape 状态对
-  adjFraction: 0.5 / 3,
-  tags: {},
+h.assertShape(f.shapes.r1_basic, {
+  adjFraction: 0.5 / 3,        // R 角变成新值
+  tags: {},                      // 没动
 });
 ```
 
-## 框架 API 速查
+## 框架 API
 
 ### `createHarness({ shapes })`
 
 返回：
-- `driver` — 真实 createDriver + 全部 16 个方法被 recordCall 包装
-- `calls` — `[{method, args, time}]` 数组
+- `driver` — driver 实例
+- `calls` — `[{method, args, time}]` 数组（debug 用，不作为主断言）
 - `shapes` — 输入的 shape 数组
-- `snapshot()` — 当前所有 shape 的 {id, width, height, left, top, adjFraction, tags}
-- `assertCalled(method, { with })` — 验证 driver 方法被调
-- `assertNotCalled(method)` — 验证 driver 方法没被调
-- `assertCallCount(method, n)` — 验证 driver 方法被调 n 次
-- `assertShape(shape, expected)` — 验证 shape 状态
-- `dumpCalls(filter?)` — 打印所有 call（debug 用）
-- `reset()` — 清空 calls
+- `snapshot()` — 当前所有 shape 的状态
+- **`assertShape(shape, expected)`** — **主断言**。验证 shape 最终状态
+- `dumpCalls()` / `reset()` — debug 工具
 
 ### `assertShape(shape, expected)`
 
 `expected` 字段（都可省略）：
 - `adjFraction` — 数字 / 谓词函数（(val) => bool）
-- `tags` — `{key: value}` map，value=undefined 表示"该 key 不存在"
+- `tags` — `{key: value}` map，value=undefined 表示"该 key 不存在"，value=函数表示"满足谓词"
 - `box` — `{left, top, width, height}`，数字或谓词
 
 ### `createTestRunner()`
@@ -141,25 +120,20 @@ await t.run();
 | 业务规则 `syncFixedValueIfLocked` | 3 | unlocked / locked / locked 写 0 |
 | 集成场景 | 5 | 2×2 / 1×3 / 拒绝 / lock 同步 / 用户样例 |
 
-### 2. driver 集成（test-driver-integration.js，54 个）
+### 2. 功能（test-features.js，49 个）
 
-**框架**：用 `fixtures.js` 标准 5+ R 角矩形 + `createHarness` 包装 driver。
-
-测试风格：调业务方法 → 验证 driver 反应 + shape 状态。
-
-| 类别 | 数量 | 验证 |
+| 类别 | 数量 | 测的 |
 | --- | --- | --- |
-| writeRadius 基础 | 5+ | 每个 fixture 一个用例（basic/medium/large/tiny/wide） |
+| writeRadius 基础 | 6 | 5+ fixture + clamp 边界 |
 | writeRadius strict/locked | 3 | strict / locked / locked+strict |
-| writeRadius 边界 | 5 | 0 尺寸 / 非圆角 / NaN / Infinity / layoutParentId |
-| writeRadius driver 异常 | 1 | reason=exception, error 含 message |
-| 批量 5+ | 2 | 5 个全成功 / 5 个混合状态 |
-| readLockState / writeLockState | 8 | 各种 tag 状态读写 |
-| reapplyLock | 5 | 基础 / clamp / 0 尺寸 / 非圆角 / 负数 |
+| writeRadius 边界 | 6 | 0 尺寸 / 非圆角 / NaN / Infinity / layoutParentId / driver 异常 |
+| 批量写 R 角 | 2 | 5 个全成功 / 5 个混合 |
+| readLockState | 5 | 无 / lock / strict / 都有 / 非数字 |
+| writeLockState | 5 | 写 lock / 删 lock / 写 strict / undefined 不动 / 同时删两个 |
+| reapplyLock | 6 | 基础 / clamp / 非圆角 / 0 尺寸 / 负数 / 恢复 |
 | applyLayout | 8 | 2x2 / off / same / 父不在 / 子不足 / stale / writeParentTag=false / infeasible |
 | syncLayoutChildrenR | 7 | subtract / same / off / parentRcm=0 / stale / strict / 非圆角 |
-| driver API 一致性 | 4 | 16 方法 / adjFraction defensive / size vs box / v1.2.2 回归 |
-| 自测场景 | 4 | 5+ 形状组合 / clamp 边界 / reapplyLock / 多 slide |
+| 自测场景 | 1 | 批量写 → 锁定 → 再写 → layout 联动 |
 
 ## 测试覆盖原则
 
@@ -170,24 +144,20 @@ await t.run();
 - ✅ locked 形状被 R 角写入 → 同步 fixed value
 - ✅ 含 strict 的 layout apply → 整个拒绝（包括位置/尺寸）
 
-## 添加新测试
+## 添加新功能
 
-写新功能测试：
+写新功能的测试：
 
 ```js
-// 1. 拿 fixture
 const f = makeStandardFixture();
-
-// 2. 建 harness
 const h = createHarness({ shapes: f.allShapes });
 
-// 3. 调新功能
 const r = await yourNewFunction(h.driver, f.shapes.r1_basic, /* args */);
 
-// 4. 验证 driver 反应 + shape 状态
-h.assertCalled('setAdjFraction');
-h.assertNotCalled('addTag');
-h.assertShape(f.shapes.r1_basic, { adjFraction: 0.5 / 3 });
+h.assertShape(f.shapes.r1_basic, {
+  adjFraction: 0.5 / 3,  // R 角变成新值
+  tags: { /* 期望的 tag 状态 */ },
+});
 ```
 
 复杂场景用 `createTestRunner()`：
@@ -200,28 +170,28 @@ t.test('批量写 5 个普通 R 角矩形', async () => {
   for (const s of Object.values(f.shapes).slice(0, 5)) {
     await RC.writeRadius(h.driver, s, 0.3);
   }
-  h.assertCallCount('setAdjFraction', 5);
+  h.assertShape(f.shapes.r1_basic, { adjFraction: 0.3 / 3 });
+  // ... 其它 shape
 });
 await t.run();
 ```
 
-## 真实 PPT 测试（**需要人工**）
+## 真实 PPT 测试（**driver 层**）
 
-mock harness 测的是**逻辑流程**。**真实 PowerPoint.js API 行为**只能靠手工验证：
+**driver 单元测试不在 npm test 里**——在真实 PPT 内做：
 
-- 跑 .app，在真实 PPT 里建布局
-- 看 task pane 底部「🔧 调试日志（点击展开）」
-- 复制日志分析是否符合预期
+- 跑 .app，在真实 PPT 里打开 task pane
+- 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified
+- 改了 `ppt-driver.js` 后必跑这个（"只要没有新的交互操作，就不用再运行"——意思是新加 driver 方法才需要）
 
-**mock harness 不能测的**：
-- Mac LTSC 的 PowerPoint.js bug（per-shape load adjustments 不 work、get(0) ClientResult 等）
+**功能测试不能替代的**：
+- Mac LTSC PowerPoint.js bug（per-shape load adjustments 不 work / get(0) ClientResult）
 - shape.tags 真实持久化（关 PPT → 重开是否还在）
-- 跨 page 隔离是否真的生效
-- lock monitor 是否真的反算 / 不同步
+- 跨 page 隔离 / lock monitor 真实反算
 
 ## driver 协议
 
-`radius-core.writeRadius(driver, shape, ...)` 接受一个 `createDriver(ctx)` 返回的对象：
+`radius-core.writeRadius(driver, shape, ...)` 接受 `createDriver(ctx)` 返回的对象：
 
 ```js
 driver = {
@@ -254,8 +224,6 @@ driver = {
 ```
 
 ## mock shape 协议
-
-`writeRadiusToShapePure` 接受一个普通对象 `shape`（**v1.3 已删，业务只走 driver 路径**）：
 
 ```js
 shape = {

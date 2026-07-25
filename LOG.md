@@ -7,11 +7,11 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 当前里程碑 | v1.3+ 测试框架重构（driver + radius-core 全 driver 化）|
-| 单元测试 | **100 / 0**（算法 46 + driver 集成 54，去重后无重复）|
-| Driver 烟囱测试 | **14 / 14** |
+| 当前里程碑 | v1.3+ 测试框架重构（fixtures + harness + 纯算法 / 功能 分层）|
+| 单元测试 | **95 / 0**（算法 46 + 功能 49，分层清晰）|
+| Driver 烟囱测试 | **14 / 14**（不在 npm test 里，真实 PPT 跑）|
 | End-to-end PPT 验证 | **6 / 7**（#6 布局 R 角联动 / #7 pipette 刷入 是 feature bug，待修）|
-| 未来 feature 测试策略 | 走 `npm test` + 代码 review，**不再 PPT 实测** |
+| 未来 feature 测试策略 | 走 `npm test`（纯算法 + 功能）+ 代码 review，**不再 PPT 实测** |
 
 ---
 
@@ -22,7 +22,7 @@
 | **v1.0** | R 角单形状 / 多选 / 锁定（shape.tags 持久化）/ 防误触 / 预设库 / 样式刷 / 5 次历史 |
 | **v1.1** | 批量化的核心闭环 + 锁定分两态（独立「使用数值固定 R 角」+「防误触」开关）|
 | **v1.2** | 布局模式（rows × cols 网格 + padding/gutter 滑块 + R 角联动）+ 三层架构（dialog.js / radius-core / ppt-driver）+ 交互层 verified |
-| **v1.3** | 测试框架重构（fixtures + harness）+ dialog.js / radius-core 全 driver 化 + Step 3-4 迁移 |
+| **v1.3** | 测试框架分层（driver 单独验证 + fixtures + harness 模拟功能反馈）+ dialog.js / radius-core 全 driver 化 + Step 3-4 迁移 |
 
 **核心架构**（v1.2 落地）：
 ```
@@ -144,11 +144,11 @@ radius_in_ppt/
 │   ├── build-dmg.sh                   # 打包 .dmg
 │   └── sign-and-notarize.sh           # 公证
 ├── assets/                            # ribbon icon（5 个尺寸，manifest.xml 引用）
-├── test/                              # 单元测试（100 个，v1.3 去重后）
+├── test/                              # 单元测试（95 个，v1.3 分层后）
 │   ├── fixtures.js                   # 标准 5+ R 角矩形
-│   ├── test-harness.js               # driver call tracker + assertion
+│   ├── test-harness.js               # createHarness + assertShape + assertCalled (debug)
 │   ├── test-radius-core.js           # 纯算法（46）
-│   ├── test-driver-integration.js    # driver 集成（54）
+│   ├── test-features.js              # 功能测试（49）
 │   └── README.md
 ├── dist/                              # build 输出（git ignore）
 ├── AGENTS.md                          # 三层架构 + Mac LTSC 踩坑
@@ -169,30 +169,35 @@ radius_in_ppt/
 
 ```bash
 cd /Users/ma/Documents/minimax/radius_in_ppt
-npm test                                            # 跑全部 2 个测试文件（100 个）
+npm test                                            # 跑全部 2 个测试文件（95 个）
 node test/test-radius-core.js                       # 仅算法（46 个）
-node test/test-driver-integration.js                # 仅 driver 集成（54 个）
+node test/test-features.js                          # 仅功能（49 个）
 ```
 
-**测试框架**（v1.3 重整后）：
+**测试分层**（v1.3 重整后）：
 
-- `test/fixtures.js` — 标准 5+ R 角矩形 fixture（basic/medium/large/tiny/wide + locked/strict/locked+strict + clamp 边界 + 0 尺寸 + 非圆角 + layout 父子）
-- `test/test-harness.js` — driver call tracker + snapshot + assertion helpers（`assertCalled` / `assertNotCalled` / `assertCallCount` / `assertShape`）
-- 2 个测试文件：纯算法（test-radius-core.js，46）+ driver 集成（test-driver-integration.js，54）
-- **v1.3 重整**：删了 test-mock-harness.js（70 个，跟 driver 集成 100% 重复）+ 删了 radius-core.writeRadiusToShapePure / applyLayoutPure（业务只走 driver 路径）
+| 层 | 文件 | 测什么 | 怎么跑 |
+| --- | --- | --- | --- |
+| driver 层 | `ppt-driver.js` 16 方法 | Mac LTSC Office.js 兼容性 | **真实 PPT 烟囱测试**（不在 npm test） |
+| 纯算法 | `test-radius-core.js` | `computeLayout` / `valueToCm` / 业务规则 | npm test |
+| 功能 | `test-features.js` | 业务函数（`writeRadius` / `applyLayout` / `syncLayoutChildrenR` / `readLockState` / `writeLockState` / `reapplyLock`） | npm test |
 
-写法新功能测试：
+**fixtures + harness**：
+
+- `test/fixtures.js` — 标准 5+ R 角矩形（basic/medium/large/tiny/wide + locked/strict/locked+strict + clamp 边界 + 0 尺寸 + 非圆角 + layout 父子）
+- `test/test-harness.js` — `createHarness` + `assertShape`（**主断言**） + `assertCalled`（debug 用，不作为主断言）
+
+写法新功能测试（功能层）：
 
 ```js
 const f = makeStandardFixture();
 const h = createHarness({ shapes: f.allShapes });
 const r = await RC.writeRadius(h.driver, f.shapes.r1_basic, 0.5);
-h.assertCalled('setAdjFraction');
-h.assertNotCalled('addTag');
-h.assertShape(f.shapes.r1_basic, { adjFraction: 0.5 / 3 });
+// 验证最终状态（功能测试只关心"调完后 shape 长啥样"）
+h.assertShape(f.shapes.r1_basic, { adjFraction: 0.5 / 3, tags: {} });
 ```
 
-**烟囱测试（PPT 内）**：任务窗格 → 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified。
+**driver 烟囱测试（PPT 内）**：任务窗格 → 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified。
 
 ---
 

@@ -249,6 +249,10 @@ function createHarness(opts) {
           if (k in actual.tags) {
             throw new Error(`assertShape ${shape.id}: 期望 tags.${k} 不存在，实际 '${actual.tags[k]}'`);
           }
+        } else if (ev instanceof Function) {
+          if (!ev(actual.tags[k])) {
+            throw new Error(`assertShape ${shape.id}: tags.${k}='${actual.tags[k]}' 不满足谓词`);
+          }
         } else {
           if (actual.tags[k] !== ev) {
             throw new Error(
