@@ -61,11 +61,6 @@
   // 当前输入单位：'cm' | '%'
   let currentUnit = 'cm';
 
-  // v1.2.8: 圆角风格选择（standard = 普通 G1 / ios = iOS 风格 G2 continuous 参考）
-  // 实际写入 PPT 仍是普通圆角（G1），ios 模式只算 Figma squircle 公式的参考参数 + UI 标签
-  let iosStyleEnabled = false;
-  let iosStyleSmoothing = window.RadiusCore ? window.RadiusCore.IOS7_DEFAULT_SMOOTHING : 0.6;
-
   // lock monitor 状态：选区里有 locked 形状时启动，10ms 轮询
   // v1.1 行为：通过 width / adj 变化识别两种拖动
   //  - 拖尺寸手柄（width/height 变） → 立刻反算回固定值
@@ -1604,61 +1599,6 @@
     updateLockButton();
     // v1.2: 布局面板
     renderLayoutPanel();
-    // v1.2.8: iOS 风格 squircle 几何参数 readout
-    renderIosStyleReadout();
-  }
-
-  /**
-   * v1.2.8: 渲染 iOS 风格 squircle 几何参数 readout
-   * 用当前输入框的 R 角（cm） + 选中的 smoothing 算 Figma squircle 公式
-   * 纯 UI 参考值，不参与写入
-   */
-  function renderIosStyleReadout() {
-    const panel = $('ios-style-panel');
-    const numEl = $('ios-smoothing-num');
-    const readoutEl = $('ios-squircle-readout');
-    if (!panel || !readoutEl) return;
-    // 1) 平滑强度显示
-    if (numEl) {
-      const pct = Math.round(iosStyleSmoothing * 100);
-      numEl.textContent = `${pct}%`;
-    }
-    // 2) 几何参数 readout（仅 ios 模式显示）
-    if (!iosStyleEnabled) {
-      panel.style.display = 'none';
-      return;
-    }
-    panel.style.display = 'flex';
-    const raw = parseFloat($('radius-input').value);
-    const rCm = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-    // 单位换算：如果当前是 %，需要 refMinSideCm
-    let rCmActual = rCm;
-    if (currentUnit === '%') {
-      const refMinSideCm = selectedShapes
-        .filter((s) => s.isRoundRect)
-        .reduce((acc, s) => {
-          if (s.widthCm == null || s.heightCm == null) return acc;
-          return Math.min(Math.min(s.widthCm, s.heightCm), acc == null ? Infinity : acc);
-        }, null);
-      if (refMinSideCm != null && Number.isFinite(refMinSideCm) && refMinSideCm > 0) {
-        rCmActual = (rCm / 100) * refMinSideCm;
-      }
-    }
-    if (!window.RadiusCore || !window.RadiusCore.computeSquircleHint) {
-      readoutEl.textContent = '（squircle 公式未加载）';
-      return;
-    }
-    const h = window.RadiusCore.computeSquircleHint(rCmActual, iosStyleSmoothing);
-    const fmt = (n) => (Number.isFinite(n) ? n.toFixed(3) : '—');
-    readoutEl.innerHTML =
-      `<span class="label">R</span> <span class="value">${fmt(rCmActual)} cm</span>\n` +
-      `<span class="label">p</span> <span class="value">${fmt(h.pCm)} cm</span>  ` +
-      `<span class="label">arc</span> <span class="value">${h.arcMeasureDeg.toFixed(1)}°</span>\n` +
-      `<span class="label">c</span> <span class="value">${fmt(h.cCm)}</span>  ` +
-      `<span class="label">d</span> <span class="value">${fmt(h.dCm)}</span>  ` +
-      `<span class="label">a</span> <span class="value">${fmt(h.aCm)}</span>  ` +
-      `<span class="label">b</span> <span class="value">${fmt(h.bCm)}</span> cm\n` +
-      `<span class="label">Figma 等价</span> <span class="value">${h.figmaEquivalent}</span>`;
   }
 
   function renderShapeList() {
@@ -1809,11 +1749,7 @@
         const lockHint = lockedSynced > 0
           ? `，${lockedSynced} 个使用数值固定 R 角已同步更新`
           : '';
-        // v1.2.8: iOS 风格标记（仅 UI 提示，实际写入仍是 G1 普通圆角）
-        const iosHint = iosStyleEnabled
-          ? ` · 🍎 iOS 风格参考 ${Math.round(iosStyleSmoothing * 100)}%`
-          : '';
-        showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}${lockHint}${iosHint}`);
+        showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}${lockHint}`);
         if (updated > 0) {
           // 写到内存 + 渲染
           const newHistory = pushHistory(raw, currentUnit);
@@ -2445,26 +2381,6 @@
         scheduleLayoutApply();
       });
     });
-    // v1.2.8: 圆角风格 radio 切换（standard / ios）
-    document.querySelectorAll('input[name="corner-style"]').forEach((r) => {
-      r.addEventListener('change', () => {
-        if (!r.checked) return;
-        iosStyleEnabled = r.value === 'ios';
-        renderIosStyleReadout();
-        if (iosStyleEnabled) {
-          showToast(`🍎 iOS 风格已激活（强度 ${Math.round(iosStyleSmoothing * 100)}%）· PPT 仍按普通圆角写入`);
-        }
-      });
-    });
-    // v1.2.8: iOS 风格平滑强度滑块
-    const smoothingRange = $('ios-smoothing');
-    if (smoothingRange) {
-      smoothingRange.addEventListener('input', () => {
-        const pct = parseFloat(smoothingRange.value);
-        iosStyleSmoothing = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) / 100 : 0.6;
-        renderIosStyleReadout();
-      });
-    }
   }
 
   // ---------------- 初始化 ----------------

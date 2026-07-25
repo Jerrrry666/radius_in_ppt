@@ -217,29 +217,6 @@ task pane 内：数字键 0–9 直对应 10 个 R 角值（cm），快速应用
 
 task pane 当前是亮色背景，macOS 暗色用户看着刺眼。适配 `@media (prefers-color-scheme: dark)`。
 
-#### 3.11 iOS 风格连续曲率 (squircle) 切换 (✅ v1.2.8)
-
-**背景**：用户在 v1.2.7 后提出"想要苹果风格的连续曲率圆角"。调研后发现 iOS 7+ 的圆角不是普通圆角（G1），而是 squircle / G2 continuity（1 段 1/4 圆弧 + 2 段贝塞尔曲线，曲率从 1/R 平滑过渡到 0）。Figma 2017 年的 *Desperately Seeking Squircles* 工程化了公式：cornerSmoothing 0-1（iOS 7 ≈ 0.6，SwiftUI .continuous 默认 0.6）。
-
-**核心限制**：PowerPoint 圆角矩形只支持单段 90° 圆弧（adjustment value 0-1），无法写入多段贝塞尔。要做真正的 G2 squircle 必须嵌入 SVG 路径（破坏形状语义），或者换设计软件。
-
-**v1.2.8 实现**：在 dialog 加"圆角风格"radio：
-- **标准圆角 (G1)** — 默认，行为完全不变
-- **🍎 iOS 风格 (G2 continuous)** — 选中后展开平滑强度滑块（默认 60%），显示 Figma squircle 公式算出的理论几何参数（p / arc 度数 / a / b / c / d），警告"PPT 原生不支持真正的 G2 贝塞尔，强度仅作视觉参考"。toast 加 "🍎 iOS 风格参考 ×%" 提示。
-
-**v1.2.8 范围**：
-- ✅ 纯函数 `computeSquircleHint(rCm, smoothing)` 在 radius-core（100% 单测覆盖）
-- ✅ UI 切换 + 强度滑块 + 几何参数 readout
-- ❌ **不**做真正 G2 写入（PPT 原生限制）
-- ❌ **不**做 SVG 嵌入（破坏形状语义）
-
-**真正想做 G2 squircle 的方案**（v1.2.8 不做，待用户决定）：
-- 方案 B：嵌入 SVG 路径当 picture（4h，✅ 视觉效果，❌ 变图片）
-- 方案 C：dialog 加"导出 SVG 路径字符串"按钮，用户自己插入 PowerPoint 自定义形状（2h，✅，要切到 PowerPoint 内置功能）
-- 方案 D：hack OOXML `<a:gd>` 写贝塞尔（高风险，可能破坏其他 Office 版本兼容）
-
-**为什么 v1.2.7 same 模式 + autoPadding 已经覆盖了 squircle 的核心好处**：v1.2.7 的"R_sub = R_父"让嵌套圆角矩形在 45° 方向等宽——这本身就是 squircle 设计语言的核心（视觉一致、连续曲率感），区别是 G1 vs G2。v1.2.8 的 iOS 风格是"知道 squircle 公式的样子"，实际写入仍是 G1。
-
 ---
 
 ## 4. 推荐实施路线

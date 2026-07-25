@@ -199,87 +199,6 @@ function pushHistory(history, value, unit, maxLen) {
   return filtered.slice(0, limit);
 }
 
-// ---------------- v1.2.8: iOS 风格连续曲率 (squircle) 数学参考 ----------------
-
-/**
- * v1.2.8：iOS 风格连续曲率角的几何参数（参考 Figma "Desperately Seeking Squircles"
- *  + MartinRGB 反编译的 rounded-corners.js）
- *
- * 背景：
- *   - 普通圆角矩形（PowerPoint 原生）是单段 90° 圆弧 + 直线段，曲率在角与边的衔接处
- *     突然从 1/R 跳到 0（G1 only）。视觉上"硬"一点。
- *   - iOS / Figma 的连续曲率（squircle）每个角由「1 段 1/4 圆弧 + 2 段贝塞尔曲线」组成，
- *     曲率从 1/R 平滑过渡到 0（G2 continuity）。视觉上"软"一点。
- *   - cornerSmoothing 越大，角越像 squircle；0 = 完全普通圆角，1 = 接近纯 squircle。
- *
- * 重要限制（v1.2.8 范围内）：
- *   - PowerPoint 圆角矩形只支持单段圆弧（adjustment value 0-1），**无法**写入多段贝塞尔
- *   - 本函数**只算参考参数**，不写 PPT；UI 用来展示"如果用 Figma 算法画的角，理论长啥样"
- *   - 真正的 squircle 需要嵌入 SVG 路径 / 自定义形状（v1.2.8 不做）
- *
- * 公式（Figma 文档 figure 12.2 / MartinRGB 实现）：
- *   p = (1 + cornerSmoothing) * cornerRadius           // 角的总占地
- *   arcMeasure = 90° * (1 - cornerSmoothing)           // 圆弧度数
- *   arcSectionLength = sin(arcMeasure/2) * R * sqrt(2)  // 圆弧段长
- *   alpha = (90° - arcMeasure) / 2
- *   p3ToP4 = R * tan(alpha / 2)                         // 圆弧两端控制点距离
- *   beta = 45° * cornerSmoothing
- *   c = p3ToP4 * cos(beta)
- *   d = c * tan(beta)
- *   b = (p - arcSectionLength - c - d) / 3
- *   a = 2b
- *
- * @param {number} rCm - 当前 R 角（cm）
- * @param {number} smoothing - 0~1，0 = 普通圆角，1 = 最大平滑（接近纯 squircle）
- *   - iOS 7 app 图标 ≈ 0.6
- *   - iOS 13+ app 图标 ≈ 0.6~0.7
- *   - SwiftUI .continuous ≈ 0.6（Apple default）
- * @returns {Object} 几何参数（单位都是 cm 或度）
- *   - pCm: 角的总占地（cm）
- *   - arcMeasureDeg: 圆弧度数（0~90）
- *   - arcLengthCm: 圆弧段长（cm）
- *   - betaDeg: 45° × smoothing
- *   - cCm, dCm, aCm, bCm: 贝塞尔控制点距离（cm）
- *   - figmaEquivalent: string "iOS 7" / "高 squircle" / "低平滑" 给 UI 展示用
- */
-function computeSquircleHint(rCm, smoothing) {
-  const R = Number.isFinite(rCm) ? Math.max(0, rCm) : 0;
-  const s = Number.isFinite(smoothing) ? Math.max(0, Math.min(1, smoothing)) : 0;
-  const pCm = (1 + s) * R;
-  const arcMeasureDeg = 90 * (1 - s);
-  const arcLengthCm = Math.sin(toRadians(arcMeasureDeg / 2)) * R * Math.sqrt(2);
-  const alphaDeg = (90 - arcMeasureDeg) / 2;
-  const p3ToP4Cm = R * Math.tan(toRadians(alphaDeg / 2));
-  const betaDeg = 45 * s;
-  const cCm = p3ToP4Cm * Math.cos(toRadians(betaDeg));
-  const dCm = cCm * Math.tan(toRadians(betaDeg));
-  const bCm = (pCm - arcLengthCm - cCm - dCm) / 3;
-  const aCm = 2 * bCm;
-  // UI 标签：iOS 7 默认 0.6 → 标 "iOS 7+ 风格"
-  let figmaEquivalent = '普通圆角 (G1)';
-  if (s >= 0.55 && s <= 0.7) figmaEquivalent = 'iOS 7+ 风格 (G2)';
-  else if (s > 0.7) figmaEquivalent = '高 squircle (G2+)';
-  else if (s > 0) figmaEquivalent = '低平滑 (G1+)';
-  return {
-    pCm,
-    arcMeasureDeg,
-    arcLengthCm,
-    betaDeg,
-    cCm,
-    dCm,
-    aCm,
-    bCm,
-    figmaEquivalent,
-  };
-}
-
-/** iOS 7 squircle 默认 smoothing（Apple 在 iOS 7 引入的连续曲率参考值） */
-const IOS7_DEFAULT_SMOOTHING = 0.6;
-
-function toRadians(degrees) {
-  return (degrees * Math.PI) / 180;
-}
-
 /**
  * 决定是否应该拒绝写 R 角
  * 模拟 writeRadius 的 strict 拦截逻辑（供 dialog.js 在 PowerPoint.run 之前做第一道防线）
@@ -1344,8 +1263,6 @@ if (typeof module !== 'undefined' && module.exports) {
     pickupFromSelection,
     applyPickedToSelection,
     pushHistory,
-    computeSquircleHint,
-    IOS7_DEFAULT_SMOOTHING,
     detectLayoutParentSizeChanges,
   };
 }
@@ -1384,8 +1301,6 @@ if (typeof window !== 'undefined') {
     saveLayoutTags,
     pickupFromSelection,
     applyPickedToSelection,
-    computeSquircleHint,
-    IOS7_DEFAULT_SMOOTHING,
     detectLayoutParentSizeChanges,
   };
 }
