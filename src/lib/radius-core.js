@@ -667,8 +667,12 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
     }
     for (const childId of childIds) {
       const csh = idToShape.get(childId);
-      if (!csh) continue;  // skip stale（不在当前 slide / 已删）
+      if (!csh) {
+        console.log(`[syncLayoutChildrenR/driver] skip missing child id=${childId} (stale)`);
+        continue;  // skip stale（不在当前 slide / 已删）
+      }
       const subRcm = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - paddingCm);
+      console.log(`[syncLayoutChildrenR/driver] R link child=${childId} parentRcm=${parentRcm} mode=${linkRMode} padding=${paddingCm} target subRcm=${subRcm}`);
       const r = await writeRadius(driver, csh, subRcm, {});
       if (r.ok) {
         applied++;
@@ -679,9 +683,11 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
       }
     }
     await driver.sync();
+    console.log(`[syncLayoutChildrenR/driver] done: applied=${applied} failed=${failed} childIds=${JSON.stringify(childIds)}`);
     return { ok: true, applied, failed };
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
+    console.log('[syncLayoutChildrenR/driver] OUTER ERROR:', msg);
     return { ok: false, applied, failed, error: msg };
   }
 }
