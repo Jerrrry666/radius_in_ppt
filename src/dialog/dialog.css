@@ -1194,3 +1194,61 @@ body {
   font-size: 10px;
   color: #c50f1f;
 }
+
+/* v1.2.11：行/列互斥联动 UI —— 单条滑块 + 上下双行显示 */
+.layout-grid-row-coupled {
+  align-items: flex-start;
+}
+
+.layout-coupled-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.layout-coupled-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.layout-coupled-tag {
+  display: inline-block;
+  width: 22px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 0;
+  flex-shrink: 0;
+}
+
+.layout-coupled-tag-rows {
+  background: #ff9500;
+}
+
+.layout-coupled-tag-cols {
+  background: #0078d4;
+}
+
+.layout-coupled-readout {
+  display: inline-block;
+  min-width: 28px;
+  padding: 2px 6px;
+  background: #f0f6fc;
+  color: #0078d4;
+  border: 1px solid #cce4f7;
+  border-radius: 3px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
+}
+
+.layout-coupled-hint {
+  font-size: 11px;
+  color: #888;
+  font-style: italic;
+}

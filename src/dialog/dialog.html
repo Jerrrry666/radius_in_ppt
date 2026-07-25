@@ -134,15 +134,20 @@
           <span class="layout-info-label">子</span>
           <span id="layout-children-count" class="layout-info-value">—</span>
         </div>
-        <div class="layout-grid-row">
-          <label class="layout-grid-label">行</label>
-          <input id="layout-rows" type="range" min="1" max="5" step="1" value="2" class="layout-range" />
-          <input id="layout-rows-num" type="number" min="1" max="5" step="1" value="2" class="layout-num" />
-        </div>
-        <div class="layout-grid-row">
-          <label class="layout-grid-label">列</label>
-          <input id="layout-cols" type="range" min="1" max="5" step="1" value="2" class="layout-range" />
-          <input id="layout-cols-num" type="number" min="1" max="5" step="1" value="2" class="layout-num" />
+        <div class="layout-grid-row layout-grid-row-coupled">
+          <label class="layout-grid-label">行 / 列</label>
+          <div class="layout-coupled-stack">
+            <div class="layout-coupled-row">
+              <span class="layout-coupled-tag layout-coupled-tag-rows">行</span>
+              <input id="layout-rows" type="range" min="1" max="5" step="1" value="2" class="layout-range" />
+              <input id="layout-rows-num" type="number" min="1" max="5" step="1" value="2" class="layout-num" />
+            </div>
+            <div class="layout-coupled-row">
+              <span class="layout-coupled-tag layout-coupled-tag-cols">列</span>
+              <span id="layout-cols-readout" class="layout-coupled-readout">2</span>
+              <span class="layout-coupled-hint" id="layout-coupled-hint">（自动 = 子数 ÷ 行）</span>
+            </div>
+          </div>
         </div>
         <div class="layout-grid-row">
           <label class="layout-grid-label">边距</label>

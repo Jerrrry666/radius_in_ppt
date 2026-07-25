@@ -635,6 +635,92 @@ t.test('pushHistory null/undefined history → 当作空数组处理', () => {
 });
 
 // ============================================================
+// 8.5 computeGridCoupledRowsCols — v1.2.11 行/列互斥联动
+// ============================================================
+
+t.test('computeGridCoupledRowsCols N=4 改 rows=1 → cols=4 (1×4)', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 1, 4);
+  assert.deepStrictEqual(r, { rows: 1, cols: 4 });
+});
+
+t.test('computeGridCoupledRowsCols N=4 改 rows=2 → cols=2 (2×2)', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 2, 4);
+  assert.deepStrictEqual(r, { rows: 2, cols: 2 });
+});
+
+t.test('computeGridCoupledRowsCols N=4 改 rows=3 → cols=2 (3×2, 4/3 上取整)', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 3, 4);
+  assert.deepStrictEqual(r, { rows: 3, cols: 2 });
+});
+
+t.test('computeGridCoupledRowsCols N=4 改 rows=10 → clamp 到 4 → cols=1 (4×1)', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 10, 4);
+  assert.deepStrictEqual(r, { rows: 4, cols: 1 });
+});
+
+t.test('computeGridCoupledRowsCols N=4 改 cols=3 → rows=2 (2×3)', () => {
+  const r = RC.computeGridCoupledRowsCols('cols', 3, 4);
+  assert.deepStrictEqual(r, { rows: 2, cols: 3 });
+});
+
+t.test('computeGridCoupledRowsCols N=1 → 任何值都返回 1×1', () => {
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', 1, 1), { rows: 1, cols: 1 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', 5, 1), { rows: 1, cols: 1 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('cols', 5, 1), { rows: 1, cols: 1 });
+});
+
+t.test('computeGridCoupledRowsCols N=6 改 rows=2 → cols=3 (2×3)', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 2, 6);
+  assert.deepStrictEqual(r, { rows: 2, cols: 3 });
+});
+
+t.test('computeGridCoupledRowsCols N=6 改 rows=4 → cols=2 (4×2, ceil(6/4)=2)', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 4, 6);
+  assert.deepStrictEqual(r, { rows: 4, cols: 2 });
+});
+
+t.test('computeGridCoupledRowsCols 改 rows=0 → clamp 到 1', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 0, 4);
+  assert.deepStrictEqual(r, { rows: 1, cols: 4 });
+});
+
+t.test('computeGridCoupledRowsCols 改 rows=-3 → clamp 到 1', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', -3, 4);
+  assert.deepStrictEqual(r, { rows: 1, cols: 4 });
+});
+
+t.test('computeGridCoupledRowsCols 非有限输入 → 当 1 处理', () => {
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', NaN, 4), { rows: 1, cols: 4 });
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('cols', undefined, 4), { rows: 4, cols: 1 });
+  // 浮点取整：3.7 → 3
+  assert.deepStrictEqual(RC.computeGridCoupledRowsCols('rows', 3.7, 4), { rows: 3, cols: 2 });
+});
+
+t.test('computeGridCoupledRowsCols N=0 防御 → 1×1', () => {
+  const r = RC.computeGridCoupledRowsCols('rows', 5, 0);
+  assert.deepStrictEqual(r, { rows: 1, cols: 1 });
+});
+
+t.test('computeGridCoupledRowsCols changedKey 非法 → 按 cols 处理（防御）', () => {
+  // changedKey 不在 ['rows','cols'] → 默认按 cols 算
+  const r = RC.computeGridCoupledRowsCols('xx', 2, 4);
+  // 按 cols 算：rows = ceil(4/2) = 2, cols = 2
+  assert.deepStrictEqual(r, { rows: 2, cols: 2 });
+});
+
+t.test('computeGridCoupledRowsCols 联动结果：rows × cols >= N（保证 N 个子全用上）', () => {
+  // 测多个 N + 多个 changed 方向，rows × cols 必须 >= N
+  for (const N of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]) {
+    for (const v of [1, 2, 3, Math.floor(N / 2), N - 1, N]) {
+      const r1 = RC.computeGridCoupledRowsCols('rows', v, N);
+      assert.ok(r1.rows * r1.cols >= N, `N=${N}, v=${v}, rows=${r1.rows}, cols=${r1.cols} → rows*cols=${r1.rows * r1.cols} < ${N}`);
+      const r2 = RC.computeGridCoupledRowsCols('cols', v, N);
+      assert.ok(r2.rows * r2.cols >= N, `N=${N}, v=${v}, rows=${r2.rows}, cols=${r2.cols} → rows*cols=${r2.rows * r2.cols} < ${N}`);
+    }
+  }
+});
+
+// ============================================================
 // 9. detectLayoutParentSizeChanges — v1.2.9 父 size 联动检测
 // ============================================================
 

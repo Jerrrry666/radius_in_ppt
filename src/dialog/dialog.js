@@ -412,17 +412,37 @@
       // 滑块 + 数字输入填值
       const rowsR = $('layout-rows');
       const rowsN = $('layout-rows-num');
-      const colsR = $('layout-cols');
-      const colsN = $('layout-cols-num');
+      const colsReadout = $('layout-cols-readout');
+      const coupledHint = $('layout-coupled-hint');
       const padR = $('layout-padding');
       const padN = $('layout-padding-num');
       const gutR = $('layout-gutter');
       const gutN = $('layout-gutter-num');
       const warn = $('layout-warn');
+      // v1.2.11：行/列 slider max 跟子数 N 走；列 readout 显示联动值
+      const N = currentLayout.childIds.length;
+      if (N > 0) {
+        rowsR.max = String(N);
+        rowsN.max = String(N);
+        // N=1 时行=1, 列=1 唯一；slider 禁用（disable 而不是隐藏，跟 setup 步骤保持一致）
+        if (N === 1) {
+          rowsR.disabled = true;
+          rowsN.disabled = true;
+          if (coupledHint) coupledHint.textContent = '（只有 1 个子）';
+        } else {
+          rowsR.disabled = false;
+          rowsN.disabled = false;
+          if (coupledHint) coupledHint.textContent = `（自动 = ${N} ÷ 行）`;
+        }
+      }
+      // 同步：params 里的 rows/cols 应该等于 N 的因子（如果 tag 损坏 → 默认 row=N, col=1）
+      if (N > 0 && currentLayout.params.rows * currentLayout.params.cols !== N) {
+        currentLayout.params.rows = N;
+        currentLayout.params.cols = 1;
+      }
       rowsR.value = String(currentLayout.params.rows);
       rowsN.value = String(currentLayout.params.rows);
-      colsR.value = String(currentLayout.params.cols);
-      colsN.value = String(currentLayout.params.cols);
+      if (colsReadout) colsReadout.textContent = String(currentLayout.params.cols);
       padR.value = String(currentLayout.params.padding);
       padN.value = currentLayout.params.padding.toFixed(2);
       gutR.value = String(currentLayout.params.gutter);
@@ -446,6 +466,7 @@
       if (minSubW <= 0) {
         warn.textContent = '⚠️ 边距/间距太大，挤不下';
       } else if (childCount < expected) {
+        // v1.2.11：理论上 N=rows*cols（联动保证），但旧的 layout tag 可能不对
         warn.textContent = `⚠️ 子形状不足（需要 ${expected}，找到 ${childCount}）`;
       } else {
         warn.textContent = '';
@@ -519,6 +540,65 @@
       scheduleLayoutApply();
     });
     n.addEventListener('change', () => {
+      if (currentLayout && layoutApplyTimer) {
+        clearTimeout(layoutApplyTimer);
+        layoutApplyTimer = null;
+        layoutApplyPending = false;
+        applyLayoutFromUI({ writeParentTag: true, syncR: true });
+      }
+    });
+  }
+
+  /**
+   * v1.2.11：行/列互斥联动绑定（单滑块 UI 版）
+   *
+   * 设计原则：
+   *   - 行 × 列 = 子数 N（layout 创建后 N 固定，4 个子就是 4）
+   *   - 改 rows → cols = max(1, ceil(N / rows))，列 readout 同步
+   *   - 列不再有独立控件（只有 readout 文本显示），避免用户以为列能改
+   *   - slider max = N（不是硬编码 5）；N=1 时 slider 禁用（1×1 唯一）
+   *   - 子图形的行/列方向 = rows/cols，N 不会随 rows 变（不动 N）
+   *
+   * 例：N=4，改 rows=1 → cols=4 → 1×4（4 个子全用上）
+   *     N=4，改 rows=3 → cols=2 → 3×2（4 个子全用上）
+   *     N=4，改 rows=5 → clamp 到 4 → cols=1 → 4×1
+   *
+   * 父图形的 size 不变（这是用户明确要求）。computeLayout 已经在算 subW/subH 时按
+   * 当前父 size + rows/cols 算，新 rows/cols 触发后子位置/尺寸自动跟上。
+   */
+  function bindLayoutGridRangeAndNum(rowsRangeId, rowsNumId, colsReadoutId) {
+    const rowsR = $(rowsRangeId);
+    const rowsN = $(rowsNumId);
+    const colsReadout = $(colsReadoutId);
+    if (!rowsR || !rowsN) return;
+    if (!colsReadout) {
+      // readout 缺失就 silent skip（理论上不应发生）
+      console.log('[layout-grid] WARN colsReadout 元素缺失，列显示将不更新');
+    }
+
+    // 改 rows → 自动算 cols
+    function handleRowsChange(rawVal) {
+      if (!currentLayout) return;
+      const N = currentLayout.childIds.length;
+      if (!Number.isFinite(N) || N <= 0) return;
+      // 调 radius-core 纯函数算联动结果（传 'rows'，另一维自动算）
+      const coupled = window.RadiusCore.computeGridCoupledRowsCols('rows', rawVal, N);
+      // 写 params
+      currentLayout.params.rows = coupled.rows;
+      currentLayout.params.cols = coupled.cols;
+      // 同步 UI
+      rowsR.value = String(coupled.rows);
+      rowsN.value = String(coupled.rows);
+      if (colsReadout) colsReadout.textContent = String(coupled.cols);
+      updateLayoutPreview();
+      scheduleLayoutApply();
+    }
+
+    // 监听 rows（slider + number input 双向）
+    rowsR.addEventListener('input', () => handleRowsChange(rowsR.value));
+    rowsN.addEventListener('input', () => handleRowsChange(rowsN.value));
+    // 失去焦点时如果有 pending timer → 立即 flush（不等节流）
+    rowsN.addEventListener('change', () => {
       if (currentLayout && layoutApplyTimer) {
         clearTimeout(layoutApplyTimer);
         layoutApplyTimer = null;
@@ -2361,8 +2441,8 @@
       });
     }
     // v1.2: 布局模式控件
-    bindLayoutRangeAndNum('layout-rows', 'layout-rows-num', 'rows', true);
-    bindLayoutRangeAndNum('layout-cols', 'layout-cols-num', 'cols', true);
+    // v1.2.11：rows/cols 走互斥联动（新函数，UI 是单滑块 + 列 readout，行 × 列 = 子数 N）
+    bindLayoutGridRangeAndNum('layout-rows', 'layout-rows-num', 'layout-cols-readout');
     bindLayoutRangeAndNum('layout-padding', 'layout-padding-num', 'padding', false);
     bindLayoutRangeAndNum('layout-gutter', 'layout-gutter-num', 'gutter', false);
     // setup rows/cols 变化时重算 canBuild

@@ -70,10 +70,10 @@ function computeLayout(parent, rows, cols, paddingCm, gutterCm) {
   const totalW = parent.width - 2 * paddingPt - (cols - 1) * gutterPt;
   const totalH = parent.height - 2 * paddingPt - (rows - 1) * gutterPt;
   if (totalW <= 0 || totalH <= 0) {
-    return {
-      subW: 0, subH: 0, positions: [], feasible: false,
-      reason: '边距/间距太大，挤不下 ' + cols + ' 列 × ' + rows + ' 行',
-    };
+    return { subW: 0, subH: 0, positions: [], feasible: false, reason: 'padding/gutter 太大，挤不下' };
+  }
+  if (rows < 1 || cols < 1) {
+    return { subW: 0, subH: 0, positions: [], feasible: false, reason: '行/列必须 ≥ 1' };
   }
   const subW = totalW / cols;
   const subH = totalH / rows;
@@ -90,6 +90,36 @@ function computeLayout(parent, rows, cols, paddingCm, gutterCm) {
     }
   }
   return { subW, subH, positions, feasible: true, reason: '' };
+}
+
+/**
+ * v1.2.11：行/列互斥联动（行 × 列 = 子数 N）
+ *
+ * 用户拖 rows 时 cols 自动 = max(1, ceil(N / rows))，反之亦然。
+ * 解决"2×2 布局改 rows=1 → 期望 1×4 而不是 1×2"的 bug。
+ *
+ * @param {string} changed - 哪个维度被用户改了，'rows' 或 'cols'
+ * @param {number} value - 用户改的那个值
+ * @param {number} N - 子形状总数（layout 创建后固定）
+ * @returns {Object} { rows, cols } 联动后的两个值（都 ≥ 1，rows × cols ≥ N）
+ *
+ * 例子（N=4）：
+ *   changed='rows', value=1 → { rows:1, cols:4 }
+ *   changed='rows', value=3 → { rows:3, cols:2 }（4/3 上取整 = 2）
+ *   changed='cols', value=3 → { rows:2, cols:3 }
+ *   changed='rows', value=10 → clamp 到 4 → { rows:4, cols:1 }
+ *   N=0（防御）→ { rows:1, cols:1 }
+ */
+function computeGridCoupledRowsCols(changed, value, N) {
+  const safeN = Number.isFinite(N) && N > 0 ? Math.floor(N) : 1;
+  let v = Number.isFinite(value) ? Math.floor(value) : 1;
+  // clamp 到 [1, N]
+  v = Math.max(1, Math.min(safeN, v));
+  const otherKey = changed === 'rows' ? 'cols' : 'rows';
+  const otherVal = Math.max(1, Math.ceil(safeN / v));
+  return changed === 'rows'
+    ? { rows: v, cols: otherVal }
+    : { rows: otherVal, cols: v };
 }
 
 // ---------------- 单位换算 ----------------
@@ -1239,6 +1269,7 @@ if (typeof module !== 'undefined' && module.exports) {
     LAYOUT_CHILD_TAG_KEY,
     computeLayout,
     computeAutoPadding,
+    computeGridCoupledRowsCols,
     valueToCm,
     cmToValue,
     computeLinkedSubR,
@@ -1277,6 +1308,7 @@ if (typeof window !== 'undefined') {
     LAYOUT_CHILD_TAG_KEY,
     computeLayout,
     computeAutoPadding,
+    computeGridCoupledRowsCols,
     valueToCm,
     cmToValue,
     computeLinkedSubR,
