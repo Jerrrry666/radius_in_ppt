@@ -3,66 +3,69 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="initial-scale=1,width=device-width" />
-  <title>R 角调整</title>
+  <title data-i18n="htmlTitle">R 角调整</title>
   <link rel="stylesheet" href="dialog.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
   <script src="../lib/ppt-driver.js"></script>
   <script src="../lib/radius-core.js"></script>
+  <script src="i18n-data.js"></script>
+  <script src="i18n.js"></script>
   <script src="dialog.js"></script>
 </head>
 <body>
   <main class="container">
     <header class="header">
-      <h1>R 角调整</h1>
-      <p class="subtitle">精确设置圆角矩形的 R 角（厘米 / 百分比）</p>
+      <h1 data-i18n="headerTitle">R 角调整</h1>
+      <p class="subtitle" data-i18n="headerSubtitle">精确设置圆角矩形的 R 角（厘米 / 百分比）</p>
     </header>
 
     <section id="status-card" class="status-card status-empty">
       <div class="status-row">
-        <span class="status-label">选区</span>
-        <span id="status-text" class="status-text">读选中…</span>
+        <span class="status-label" data-i18n="statusLabelSelection">选区</span>
+        <span id="status-text" class="status-text" data-i18n="statusReading">读选中…</span>
       </div>
       <div class="status-row">
-        <span class="status-label">当前 R 角</span>
+        <span class="status-label" data-i18n="statusLabelCurrentR">当前 R 角</span>
         <span id="current-radius" class="status-text">—</span>
       </div>
       <div class="status-row">
-        <span class="status-label">已锁定</span>
+        <span class="status-label" data-i18n="statusLabelLocked">已锁定</span>
         <span id="locked-count" class="status-text">—</span>
       </div>
     </section>
 
     <section class="control-group">
       <div class="list-header">
-        <label class="control-label">选中的圆角矩形</label>
-        <button id="rescan-btn" class="btn btn-ghost btn-mini">🔄 重新读</button>
+        <label class="control-label" data-i18n="selectedShapes">选中的圆角矩形</label>
+        <button id="rescan-btn" class="btn btn-ghost btn-mini" data-i18n="rescan">🔄 重新读</button>
       </div>
       <div id="shape-list" class="shape-list">
-        <div class="empty-list">在 PPT 里框选形状后会出现在这里</div>
+        <div class="empty-list" data-i18n="emptyShapes">在 PPT 里框选形状后会出现在这里</div>
       </div>
     </section>
 
     <section class="control-group">
       <div class="input-label-row">
-        <label for="radius-input" class="control-label">R 角数值</label>
-        <div class="unit-toggle" role="tablist" aria-label="单位">
-          <button type="button" class="unit-btn active" data-unit="cm" role="tab" aria-selected="true">厘米</button>
-          <button type="button" class="unit-btn" data-unit="%" role="tab" aria-selected="false">百分比</button>
+        <label for="radius-input" class="control-label" data-i18n="radiusValue">R 角数值</label>
+        <div class="unit-toggle" role="tablist" data-i18n-aria-label="ariaUnit" aria-label="单位">
+          <button type="button" class="unit-btn active" data-unit="cm" role="tab" aria-selected="true" data-i18n="unitCm">厘米</button>
+          <button type="button" class="unit-btn" data-unit="%" role="tab" aria-selected="false" data-i18n="unitPercent">百分比</button>
         </div>
       </div>
-      <div id="radius-hint" class="hint">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
+      <div id="radius-hint" class="hint" data-i18n="hintRadiusRange">范围 0 ~ 形状短边 / 2。超过一半显示为最大圆角。</div>
       <div class="input-row">
         <input
           id="radius-input"
           type="number"
           step="0.01"
           min="0"
+          data-i18n-placeholder="placeholderRadius"
           placeholder="0.30"
           inputmode="decimal"
         />
-        <span id="unit-label" class="unit">厘米</span>
+        <span id="unit-label" class="unit" data-i18n="unitCm">厘米</span>
       </div>
-      <div id="history-toggle" class="history-toggle" role="group" aria-label="最近 5 次">
+      <div id="history-toggle" class="history-toggle" role="group" data-i18n-aria-label="ariaHistory" aria-label="最近 5 次">
         <!-- 由 renderHistory 动态生成 -->
         <button type="button" class="history-btn" disabled>—</button>
         <button type="button" class="history-btn" disabled>—</button>
@@ -73,131 +76,131 @@
     </section>
 
     <section class="control-group">
-      <button id="apply-btn" class="btn btn-primary" disabled>应用 R 角</button>
+      <button id="apply-btn" class="btn btn-primary" disabled data-i18n="applyRadius">应用 R 角</button>
     </section>
 
     <section class="control-group">
       <div class="list-header">
-        <label class="control-label">预设库（5 槽位）</label>
-        <button id="preset-add-btn" class="btn btn-ghost btn-mini" title="把当前选中的圆角矩形 R 角（或输入框值）存为预设">+ 保存当前 R 角</button>
+        <label class="control-label" data-i18n="presetLibrary">预设库（5 槽位）</label>
+        <button id="preset-add-btn" class="btn btn-ghost btn-mini" data-i18n-title="presetAddTitle" data-i18n="saveCurrentR" title="把当前选中的圆角矩形 R 角（或输入框值）存为预设">+ 保存当前 R 角</button>
       </div>
       <div id="preset-list" class="preset-list">
-        <div class="preset-empty">保存常用 R 角，一键应用。点击「+ 保存当前值」开始。</div>
+        <div class="preset-empty" data-i18n="emptyPreset">保存常用 R 角，一键应用。点击「+ 保存当前值」开始。</div>
       </div>
-      <div class="hint">预设纯内存保存，关掉 task pane 后失效（v1.2 升级为跨 session）。</div>
+      <div class="hint" data-i18n="hintPresetSession">预设纯内存保存，关掉 task pane 后失效（v1.2 升级为跨 session）。</div>
     </section>
 
     <section class="control-group">
       <div class="list-header">
-        <label class="control-label">R 角样式刷</label>
-        <span id="pipette-hint" class="pipette-hint">点击吸取一个圆角矩形的 R 角，再点其他形状应用</span>
+        <label class="control-label" data-i18n="styleBrush">R 角样式刷</label>
+        <span id="pipette-hint" class="pipette-hint" data-i18n="hintPipette">点击吸取一个圆角矩形的 R 角，再点其他形状应用</span>
       </div>
       <div class="pipette-row">
         <button id="pipette-btn" class="btn btn-secondary pipette-btn" data-state="idle">
           <span id="pipette-icon">🖌️</span>
-          <span id="pipette-label">吸取 R 角</span>
+          <span id="pipette-label" data-i18n="pipettePickR">吸取 R 角</span>
         </button>
-        <label id="pipette-sync-label" class="pipette-sync-option" title="勾选后样式刷会把源形状的「防误触」状态**覆盖**到目标（双向：源开启则目标开启；源未开启则目标也解除）">
+        <label id="pipette-sync-label" class="pipette-sync-option" data-i18n-title="pipetteSyncTitle" title="勾选后样式刷会把源形状的「防误触」状态**覆盖**到目标（双向：源开启则目标开启；源未开启则目标也解除）">
           <input type="checkbox" id="pipette-sync-checkbox">
-          <span>刷防误触状态</span>
+          <span data-i18n="pipetteSyncLabel">刷防误触状态</span>
         </label>
-        <span id="pipette-state-badge" class="pipette-state-badge idle">空闲</span>
+        <span id="pipette-state-badge" class="pipette-state-badge idle" data-i18n="pipetteStateIdle">空闲</span>
       </div>
     </section>
 
     <section id="layout-panel" class="control-group layout-panel">
       <div class="list-header">
-        <label class="control-label">布局模式（v1.2）</label>
+        <label class="control-label" data-i18n="layoutMode">布局模式（v1.2）</label>
         <span id="layout-hint" class="layout-hint">—</span>
       </div>
       <div id="layout-empty" class="layout-empty">
-        <div class="layout-empty-text">在 PPT 里选 1+ 个圆角矩形（可以包含其他形状），然后在下面指定哪个是父、哪些是子。</div>
+        <div class="layout-empty-text" data-i18n="emptyLayout">在 PPT 里选 1+ 个圆角矩形（可以包含其他形状），然后在下面指定哪个是父、哪些是子。</div>
         <div id="layout-setup-list" class="layout-setup-list">
           <!-- 由 renderLayoutSetupList 动态生成 -->
-          <div class="layout-setup-empty">在 PPT 里选 1+ 个圆角矩形</div>
+          <div class="layout-setup-empty" data-i18n="emptyLayoutSetup">在 PPT 里选 1+ 个圆角矩形</div>
         </div>
         <div class="layout-setup-row">
-          <label class="layout-setup-label">行</label>
+          <label class="layout-setup-label" data-i18n="layoutLabelRows">行</label>
           <input id="layout-setup-rows" type="number" min="1" max="5" step="1" value="2" class="layout-setup-input" />
           <span class="layout-setup-x">×</span>
-          <label class="layout-setup-label">列</label>
+          <label class="layout-setup-label" data-i18n="layoutLabelCols">列</label>
           <input id="layout-setup-cols" type="number" min="1" max="5" step="1" value="2" class="layout-setup-input" />
-          <button id="layout-setup-btn" class="btn btn-primary btn-mini" disabled>建布局</button>
+          <button id="layout-setup-btn" class="btn btn-primary btn-mini" disabled data-i18n="buildLayout">建布局</button>
         </div>
-        <div class="hint">选 1 父 + rows×cols 子后，「建布局」按钮启用。</div>
+        <div class="hint" data-i18n="hintLayoutSetup">选 1 父 + rows×cols 子后，「建布局」按钮启用。</div>
       </div>
       <div id="layout-active" class="layout-active" style="display:none">
         <div class="layout-info">
-          <span class="layout-info-label">父</span>
+          <span class="layout-info-label" data-i18n="layoutLabelParent">父</span>
           <span id="layout-parent-name" class="layout-info-value">—</span>
           <span class="layout-info-sep">·</span>
-          <span class="layout-info-label">子</span>
+          <span class="layout-info-label" data-i18n="layoutLabelChildren">子</span>
           <span id="layout-children-count" class="layout-info-value">—</span>
         </div>
         <div class="layout-grid-row layout-grid-row-coupled">
-          <label class="layout-grid-label">行 / 列</label>
+          <label class="layout-grid-label" data-i18n="layoutLabelRowsCols">行 / 列</label>
           <div class="layout-coupled-stack">
             <div class="layout-coupled-row">
-              <span class="layout-coupled-tag layout-coupled-tag-rows">行</span>
+              <span class="layout-coupled-tag layout-coupled-tag-rows" data-i18n="layoutLabelRows">行</span>
               <input id="layout-rows" type="range" min="1" max="5" step="1" value="2" class="layout-range" list="layout-rows-ticks" />
               <input id="layout-rows-num" type="number" min="1" max="5" step="1" value="2" class="layout-num" />
               <datalist id="layout-rows-ticks"></datalist>
             </div>
             <div class="layout-coupled-row">
-              <span class="layout-coupled-tag layout-coupled-tag-cols">列</span>
+              <span class="layout-coupled-tag layout-coupled-tag-cols" data-i18n="layoutLabelCols">列</span>
               <span id="layout-cols-readout" class="layout-coupled-readout">2</span>
-              <span class="layout-coupled-hint" id="layout-coupled-hint">（自动 = 子数 ÷ 行）</span>
+              <span class="layout-coupled-hint" id="layout-coupled-hint" data-i18n="layoutAutoColsHint">（自动 = 子数 ÷ 行）</span>
             </div>
           </div>
         </div>
         <div class="layout-pg-pair">
           <div class="layout-grid-row">
-            <label class="layout-grid-label">边距</label>
+            <label class="layout-grid-label" data-i18n="layoutLabelPadding">边距</label>
             <input id="layout-padding" type="range" min="0" max="3" step="0.05" value="0.5" class="layout-range" />
             <input id="layout-padding-num" type="number" min="0" max="3" step="0.05" value="0.50" class="layout-num" />
             <span class="layout-unit">cm</span>
           </div>
-          <button id="layout-pg-link" class="layout-pg-link" type="button" data-linked="false" title="锁链：开启后间距跟随边距变化（spacing = padding）">
+          <button id="layout-pg-link" class="layout-pg-link" type="button" data-linked="false" data-i18n-title="layoutPgLinkTitle" title="锁链：开启后间距跟随边距变化（spacing = padding）">
             <span class="layout-pg-link-icon" id="layout-pg-link-icon">🔓</span>
           </button>
           <div class="layout-grid-row" id="layout-gutter-row">
-            <label class="layout-grid-label">间距</label>
+            <label class="layout-grid-label" data-i18n="layoutLabelGutter">间距</label>
             <input id="layout-gutter" type="range" min="0" max="3" step="0.05" value="0.3" class="layout-range" />
             <input id="layout-gutter-num" type="number" min="0" max="3" step="0.05" value="0.30" class="layout-num" />
             <span class="layout-unit">cm</span>
           </div>
         </div>
         <div class="layout-preview-row">
-          <span class="layout-preview-label">子尺寸</span>
+          <span class="layout-preview-label" data-i18n="layoutLabelChildSize">子尺寸</span>
           <span id="layout-preview-size" class="layout-preview-value">—</span>
         </div>
         <div class="layout-options-row">
-          <label class="layout-toggle-label">R 角联动</label>
+          <label class="layout-toggle-label" data-i18n="layoutLabelRLink">R 角联动</label>
           <div class="layout-link-r-group">
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="same" checked>
-              <span>等距（r = 父 R，45° 方向和边方向都等于 padding）</span>
+              <span data-i18n="layoutRlinkSame">等距（r = 父 R，45° 方向和边方向都等于 padding）</span>
             </label>
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="subtract">
-              <span>层级感（r = 父 R − padding，子 R 角小一圈；45° 方向比 padding 窄约 40%）</span>
+              <span data-i18n="layoutRlinkSubtract">层级感（r = 父 R − padding，子 R 角小一圈；45° 方向比 padding 窄约 40%）</span>
             </label>
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="off">
-              <span>不联动（手动）</span>
+              <span data-i18n="layoutRlinkOff">不联动（手动）</span>
             </label>
           </div>
         </div>
         <div class="layout-actions-row">
-          <button id="layout-detach-btn" class="btn btn-ghost">脱离布局</button>
+          <button id="layout-detach-btn" class="btn btn-ghost" data-i18n="detachLayout">脱离布局</button>
           <span id="layout-warn" class="layout-warn"></span>
         </div>
       </div>
       <div id="layout-child-info" class="layout-child-info" style="display:none">
         <div class="layout-child-text">
-          当前形状属于一个布局（父：<span id="layout-child-parent">—</span>）。修改父或脱离布局后可独立调整。
+          <span data-i18n="layoutChildInfoPre">当前形状属于一个布局（父：</span><span id="layout-child-parent">—</span><span data-i18n="layoutChildInfoPost">）。修改父或脱离布局后可独立调整。</span>
         </div>
-        <button id="layout-child-detach-btn" class="btn btn-ghost">脱离此布局</button>
+        <button id="layout-child-detach-btn" class="btn btn-ghost" data-i18n="detachThisLayout">脱离此布局</button>
       </div>
     </section>
 
@@ -205,37 +208,49 @@
       <div class="lock-row">
         <button id="lock-btn" class="btn btn-secondary" disabled>
           <span id="lock-icon" class="lock-icon">🔒</span>
-          <span id="lock-label">使用数值固定 R 角</span>
+          <span id="lock-label" data-i18n="lockRadius">使用数值固定 R 角</span>
         </button>
-        <span id="lock-hint" class="lock-hint">读选中…</span>
+        <span id="lock-hint" class="lock-hint" data-i18n="statusReading">读选中…</span>
       </div>
       <div class="strict-row">
-        <label id="strict-toggle" class="strict-toggle disabled" title="开启后任何修改都不会改 R 角（task pane / PPT 内编辑都拒绝）">
+        <label id="strict-toggle" class="strict-toggle disabled" data-i18n-title="strictTitle" title="开启后任何修改都不会改 R 角（task pane / PPT 内编辑都拒绝）">
           <input type="checkbox" id="strict-checkbox" disabled>
           <span class="strict-slider"></span>
-          <span class="strict-label">防误触</span>
-          <span class="strict-hint">开启后任何修改都不改 R 角</span>
+          <span class="strict-label" data-i18n="strictLock">防误触</span>
+          <span class="strict-hint" data-i18n="strictHint">开启后任何修改都不改 R 角</span>
         </label>
       </div>
-      <div class="hint">开启使用数值固定 R 角后 R 角按厘米值保持，PPT 内的任何编辑（拖控制柄等）都会被反算。开启防误触可让 task pane 内的按钮也拒绝改值。</div>
+      <div class="hint" data-i18n="hintLockCombined">开启使用数值固定 R 角后 R 角按厘米值保持，PPT 内的任何编辑（拖控制柄等）都会被反算。开启防误触可让 task pane 内的按钮也拒绝改值。</div>
     </section>
 
     <section class="control-group">
-      <button id="reapply-btn" class="btn btn-ghost" disabled>重新应用锁定（针对当前选区）</button>
+      <button id="reapply-btn" class="btn btn-ghost" disabled data-i18n="reapplyLock">重新应用锁定（针对当前选区）</button>
     </section>
 
-    <footer class="footer">v1.2 · 布局模式（rows × cols 网格 + 边距/间距滑块 + R 角联动）</footer>
+    <footer class="footer" data-i18n="footerVersion">v1.3 · 布局模式 + 样式刷精修 + 全 driver 化</footer>
 
     <details id="debug-log" class="debug-log">
       <summary>
-        <span>🔧 调试日志（点击展开）</span>
-        <button type="button" id="smoke-test-btn" class="debug-copy-btn" title="跑遍所有 driver 方法，在 PPT 实际验证一遍">🧪 Driver 烟囱测试</button>
-        <button type="button" id="debug-copy-btn" class="debug-copy-btn" title="复制全部日志到剪贴板">📋 复制</button>
-        <button type="button" id="debug-clear-btn" class="debug-clear-btn" title="清空日志">🗑️ 清空</button>
+        <span data-i18n="debugTitle">🔧 调试日志（点击展开）</span>
+        <button type="button" id="smoke-test-btn" class="debug-copy-btn" data-i18n-title="debugSmokeTitle" title="跑遍所有 driver 方法，在 PPT 实际验证一遍" data-i18n="smokeTest">🧪 Driver 烟囱测试</button>
+        <button type="button" id="debug-copy-btn" class="debug-copy-btn" data-i18n-title="debugCopyTitle" title="复制全部日志到剪贴板" data-i18n="copy">📋 复制</button>
+        <button type="button" id="debug-clear-btn" class="debug-clear-btn" data-i18n-title="debugClearTitle" title="清空日志" data-i18n="clear">🗑️ 清空</button>
       </summary>
       <div id="debug-log-body" class="debug-log-body"></div>
     </details>
   </main>
   <div id="toast" class="toast"></div>
+  <script>
+    // Apply i18n as soon as DOM is ready (before dialog.js wires up handlers).
+    // dialog.js also calls i18n.applyAll() at the top of its init to be safe.
+    (function () {
+      function go() { if (window.i18n && window.i18n.applyAll) window.i18n.applyAll(); }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', go);
+      } else {
+        go();
+      }
+    })();
+  </script>
 </body>
 </html>
