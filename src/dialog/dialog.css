@@ -1194,3 +1194,105 @@ body {
   font-size: 10px;
   color: #c50f1f;
 }
+
+/* v1.2.8: 圆角风格切换 (G1 / iOS 风格 G2 参考) */
+.corner-style-group {
+  border-top: 1px dashed #e0e0e0;
+  padding-top: 12px;
+}
+
+.corner-style-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.corner-style-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.corner-style-opt input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.ios-style-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #f7f7f5;
+  border: 1px solid #e5e3df;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ios-style-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ios-style-label {
+  font-size: 12px;
+  color: #555;
+  min-width: 60px;
+}
+
+.ios-style-range {
+  flex: 1;
+  accent-color: #ff9500;
+  height: 4px;
+}
+
+.ios-style-num {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #ff6b00;
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}
+
+.ios-style-hint {
+  font-size: 11px;
+  color: #777;
+}
+
+.ios-squircle-readout {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  color: #444;
+  background: #fff;
+  border: 1px solid #e5e3df;
+  border-radius: 4px;
+  padding: 6px 8px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ios-squircle-readout .label {
+  color: #888;
+}
+
+.ios-squircle-readout .value {
+  color: #222;
+  font-weight: 600;
+}
+
+.ios-style-warn {
+  font-size: 11px;
+  color: #b85c00;
+  background: #fff8e6;
+  border: 1px solid #f3d790;
+  border-radius: 4px;
+  padding: 6px 8px;
+  line-height: 1.5;
+}

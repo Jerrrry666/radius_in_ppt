@@ -6,7 +6,7 @@
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
   xsi:type="TaskPaneApp">
   <Id>8c2d8a9c-aaaa-4def-9abc-111111111111</Id>
-  <Version>1.2.7</Version>
+  <Version>1.2.8</Version>
   <ProviderName>R PowerPoint Tools</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="R 角调整" />
@@ -22,7 +22,7 @@
     <Host Name="Presentation" />
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="http://localhost:3000/src/dialog/dialog.html?v=v1.2.7" />
+    <SourceLocation DefaultValue="http://localhost:3000/src/dialog/dialog.html?v=v1.2.8" />
     <RequestedHeight>560</RequestedHeight>
     <RequestedWidth>360</RequestedWidth>
   </DefaultSettings>
@@ -70,7 +70,7 @@
         <bt:Image id="Icon.80x80" DefaultValue="http://localhost:3000/assets/icon-80.png" />
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Taskpane.Url" DefaultValue="http://localhost:3000/src/dialog/dialog.html?v=v1.2.7" />
+        <bt:Url id="Taskpane.Url" DefaultValue="http://localhost:3000/src/dialog/dialog.html?v=v1.2.8" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="CustomTabLabel" DefaultValue="R 角调整" />

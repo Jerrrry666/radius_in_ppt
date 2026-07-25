@@ -635,6 +635,104 @@ t.test('pushHistory null/undefined history → 当作空数组处理', () => {
 });
 
 // ============================================================
+// 9. computeSquircleHint — v1.2.8 iOS 风格 G2 几何参数
+// ============================================================
+
+t.test('computeSquircleHint smoothing=0 → 完全退化到普通圆角参数（arc=90°, p=R）', () => {
+  const r = RC.computeSquircleHint(1.0, 0);
+  // smoothing=0：p = 1*R = 1；arcMeasure = 90°；arcLength = sin(45°)*1*√2 = 1
+  assert.ok(Math.abs(r.pCm - 1.0) < 1e-9);
+  assert.ok(Math.abs(r.arcMeasureDeg - 90) < 1e-9);
+  assert.ok(Math.abs(r.arcLengthCm - 1.0) < 1e-9);
+  // smoothing=0 → beta=0 → c=d=0；a=b=0（无贝塞尔段）
+  assert.ok(Math.abs(r.cCm) < 1e-9);
+  assert.ok(Math.abs(r.dCm) < 1e-9);
+  assert.ok(Math.abs(r.aCm) < 1e-9);
+  assert.ok(Math.abs(r.bCm) < 1e-9);
+  assert.strictEqual(r.figmaEquivalent, '普通圆角 (G1)');
+});
+
+t.test('computeSquircleHint smoothing=0.6 (iOS 7 默认) → arc=54°, p=1.6R', () => {
+  const r = RC.computeSquircleHint(1.0, 0.6);
+  // p = 1.6 * R = 1.6
+  assert.ok(Math.abs(r.pCm - 1.6) < 1e-9);
+  // arcMeasure = 90 * 0.4 = 36
+  // wait: 90 * (1 - 0.6) = 90 * 0.4 = 36
+  assert.ok(Math.abs(r.arcMeasureDeg - 36) < 1e-9);
+  // beta = 45 * 0.6 = 27
+  assert.ok(Math.abs(r.betaDeg - 27) < 1e-9);
+  // iOS 7 默认 0.6 → figmaEquivalent = 'iOS 7+ 风格 (G2)'
+  assert.strictEqual(r.figmaEquivalent, 'iOS 7+ 风格 (G2)');
+});
+
+t.test('computeSquircleHint smoothing=1 → arc=0° (圆弧完全被贝塞尔吞掉)', () => {
+  const r = RC.computeSquircleHint(1.0, 1);
+  // p = 2R = 2；arcMeasure = 0°；arcLength = sin(0°)*1*√2 = 0
+  assert.ok(Math.abs(r.pCm - 2.0) < 1e-9);
+  assert.ok(Math.abs(r.arcMeasureDeg) < 1e-9);
+  assert.ok(Math.abs(r.arcLengthCm) < 1e-9);
+  // smoothing=1 → beta=45°；c 和 d 不为 0
+  assert.ok(r.cCm > 0);
+  assert.ok(r.dCm > 0);
+  assert.ok(r.figmaEquivalent.indexOf('squircle') >= 0);
+});
+
+t.test('computeSquircleHint smoothing 越界 → clamp 到 [0, 1]', () => {
+  const r1 = RC.computeSquircleHint(1.0, 1.5);
+  const r2 = RC.computeSquircleHint(1.0, 1);
+  assert.deepStrictEqual(r1, r2);
+  const r3 = RC.computeSquircleHint(1.0, -0.3);
+  const r4 = RC.computeSquircleHint(1.0, 0);
+  assert.deepStrictEqual(r3, r4);
+});
+
+t.test('computeSquircleHint R 角缩放：所有几何参数线性缩放', () => {
+  const r1 = RC.computeSquircleHint(1.0, 0.6);
+  const r2 = RC.computeSquircleHint(2.5, 0.6);
+  // 所有 cm 维度参数应该 2.5 倍（deg 维度不变）
+  assert.ok(Math.abs(r2.pCm / r1.pCm - 2.5) < 1e-9);
+  assert.ok(Math.abs(r2.arcLengthCm / r1.arcLengthCm - 2.5) < 1e-9);
+  assert.ok(Math.abs(r2.cCm / r1.cCm - 2.5) < 1e-9);
+  assert.ok(Math.abs(r2.dCm / r1.dCm - 2.5) < 1e-9);
+  assert.ok(Math.abs(r2.aCm / r1.aCm - 2.5) < 1e-9);
+  assert.ok(Math.abs(r2.bCm / r1.bCm - 2.5) < 1e-9);
+  // 度数不变
+  assert.ok(Math.abs(r2.arcMeasureDeg - r1.arcMeasureDeg) < 1e-9);
+});
+
+t.test('computeSquircleHint R=0 → 全 0（形状没 R 角）', () => {
+  const r = RC.computeSquircleHint(0, 0.6);
+  assert.strictEqual(r.pCm, 0);
+  assert.strictEqual(r.arcLengthCm, 0);
+  assert.strictEqual(r.cCm, 0);
+  assert.strictEqual(r.dCm, 0);
+  assert.strictEqual(r.aCm, 0);
+  assert.strictEqual(r.bCm, 0);
+});
+
+t.test('computeSquircleHint 非有限输入 → 当 0 处理', () => {
+  const r1 = RC.computeSquircleHint(NaN, 0.6);
+  const r2 = RC.computeSquircleHint(undefined, 0.6);
+  const r3 = RC.computeSquircleHint(1.0, NaN);
+  assert.strictEqual(r1.pCm, 0);
+  assert.strictEqual(r2.pCm, 0);
+  // smoothing=NaN → 当 0
+  assert.strictEqual(r3.pCm, 1.0);
+});
+
+t.test('IOS7_DEFAULT_SMOOTHING = 0.6（iOS 7 squircle 默认值）', () => {
+  assert.strictEqual(RC.IOS7_DEFAULT_SMOOTHING, 0.6);
+});
+
+t.test('computeSquircleHint figmaEquivalent 标签分档', () => {
+  assert.strictEqual(RC.computeSquircleHint(1, 0).figmaEquivalent, '普通圆角 (G1)');
+  assert.strictEqual(RC.computeSquircleHint(1, 0.3).figmaEquivalent, '低平滑 (G1+)');
+  assert.strictEqual(RC.computeSquircleHint(1, 0.6).figmaEquivalent, 'iOS 7+ 风格 (G2)');
+  assert.strictEqual(RC.computeSquircleHint(1, 0.7).figmaEquivalent, 'iOS 7+ 风格 (G2)');
+  assert.strictEqual(RC.computeSquircleHint(1, 0.9).figmaEquivalent, '高 squircle (G2+)');
+});
+
+// ============================================================
 // 跑
 // ============================================================
 

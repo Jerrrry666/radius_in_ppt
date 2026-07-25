@@ -76,6 +76,37 @@
       <button id="apply-btn" class="btn btn-primary" disabled>应用 R 角</button>
     </section>
 
+    <section class="control-group corner-style-group">
+      <div class="list-header">
+        <label class="control-label">圆角风格</label>
+      </div>
+      <div class="corner-style-radios">
+        <label class="corner-style-opt">
+          <input type="radio" name="corner-style" value="standard" checked>
+          <span>标准圆角 (G1)</span>
+        </label>
+        <label class="corner-style-opt">
+          <input type="radio" name="corner-style" value="ios">
+          <span>🍎 iOS 风格 (G2 continuous)</span>
+        </label>
+      </div>
+      <div id="ios-style-panel" class="ios-style-panel" style="display:none">
+        <div class="ios-style-row">
+          <label class="ios-style-label">平滑强度</label>
+          <input id="ios-smoothing" type="range" min="0" max="100" step="1" value="60" class="ios-style-range" />
+          <span id="ios-smoothing-num" class="ios-style-num">60%</span>
+        </div>
+        <div class="ios-style-hint">
+          iOS 7 默认 = <b>60%</b>；1.0 = 纯 squircle（最大平滑）。
+        </div>
+        <div id="ios-squircle-readout" class="ios-squircle-readout">—</div>
+        <div class="ios-style-warn">
+          ⚠️ PowerPoint 圆角矩形只支持单段 90° 圆弧（G1），无法写入真正的 G2 贝塞尔曲线。
+          当前 R 角会按标准圆角写入；强度仅作视觉参考和"想用 Figma/iOS 风格时的目标参数"。
+        </div>
+      </div>
+    </section>
+
     <section class="control-group">
       <div class="list-header">
         <label class="control-label">预设库（5 槽位）</label>
@@ -213,7 +244,7 @@
       <button id="reapply-btn" class="btn btn-ghost" disabled>重新应用锁定（针对当前选区）</button>
     </section>
 
-    <footer class="footer">v1.2 · 布局模式（rows × cols 网格 + 边距/间距滑块 + R 角联动）</footer>
+    <footer class="footer">v1.2.8 · 圆角风格切换（标准 G1 / iOS 风格 G2 数学参考）</footer>
 
     <details id="debug-log" class="debug-log">
       <summary>
