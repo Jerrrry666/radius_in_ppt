@@ -42,7 +42,9 @@ cp manifest.xml manifest.xml.bak
 sed -i '' "s|<Version>[^<]*</Version>|<Version>${NEW_VERSION}</Version>|" manifest.xml
 
 # 3. bump cache buster ?v=v1.x.y → ?v=NEW_VERSION
-sed -i '' "s|?v=v[0-9.]*|?v=${NEW_VERSION}|g" manifest.xml
+# v1.3.6 fix: sed pattern 之前是 ?v=v[0-9.]*（带 v 前缀），但 manifest 写的是 ?v=1.x.y（无 v），匹配不上静默跳过
+# → 改成 ?v=[0-9.]*，兼容 v 前缀和无前缀两种写法
+sed -i '' -E "s|\?v=v?[0-9.]+|\?v=${NEW_VERSION}|g" manifest.xml
 
 echo "[deploy] manifest.xml updated:"
 grep -E '<Version>|SourceLocation' manifest.xml | head -2
