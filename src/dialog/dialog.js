@@ -387,8 +387,10 @@
 
   // 检测选区里是否有 layout 父 → 同步其子 R 角（onApply / applyPipette 末尾调用）
   async function syncLayoutChildrenRIfNeeded() {
+    console.log(`[syncLayoutChildrenRIfNeeded] enter: selectedShapes.length=${selectedShapes.length}`);
     if (selectedShapes.length === 0) return;
     for (const s of selectedShapes) {
+      console.log(`[syncLayoutChildrenRIfNeeded] check id=${s.id} layoutRole=${s.layoutRole} hasParams=${!!s.layoutParams} hasChildIds=${!!s.layoutChildIds} currentCm=${s.currentCm}`);
       if (s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds) {
         const linkRMode = s.layoutParams.linkRMode || 'subtract';
         if (linkRMode === 'off') continue;
@@ -399,6 +401,7 @@
           : Math.max(0, (s.currentCm || 0) - padding);
         const expected = s.layoutParams.rows * s.layoutParams.cols;
         const childIds = s.layoutChildIds.slice(0, expected);
+        console.log(`[syncLayoutChildrenRIfNeeded] fire: parentId=${s.id} linkRMode=${linkRMode} padding=${padding} targetSubRcm=${targetSubRcm} childIds=${JSON.stringify(childIds)}`);
         await syncLayoutChildrenR(s.id, childIds, padding, linkRMode, targetSubRcm);
       }
     }
