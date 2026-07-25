@@ -1,5 +1,7 @@
 # R 角调整 — macOS PowerPoint 加载项
 
+> 🌍 **[English version](./README.en.md)** · 中文为主，国际用户请切到英文版
+
 > 在 PowerPoint 顶部 ribbon 添加一个 **「R 角调整」** 自定义 Tab，
 > 像 iSlide 一样。让你能用 **厘米** 为单位精确设置圆角矩形的 R 角（圆角半径），
 > 支持「锁定 R 角绝对值」「防误触」「样式刷」「5 次历史」
