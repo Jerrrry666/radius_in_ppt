@@ -494,6 +494,70 @@ t.test('detectStaleChildrenInLayout: null / undefined → 空数组（不 throw�
 });
 
 // ============================================================
+// 8. pushHistory — 纯函数
+// ============================================================
+
+t.test('pushHistory 空 history → 推 1 条', () => {
+  const r = RC.pushHistory([], 0.5, 'cm');
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].value, 0.5);
+  assert.strictEqual(r[0].unit, 'cm');
+  assert.ok(Number.isFinite(r[0].ts));
+});
+
+t.test('pushHistory 重复 value+unit → 去重 + 移到最前', () => {
+  const h0 = [
+    { value: 0.5, unit: 'cm', ts: 1 },
+    { value: 0.3, unit: 'cm', ts: 2 },
+    { value: 0.1, unit: 'cm', ts: 3 },
+  ];
+  const r = RC.pushHistory(h0, 0.5, 'cm');
+  assert.strictEqual(r.length, 3);
+  assert.strictEqual(r[0].value, 0.5);
+  assert.strictEqual(r[0].ts, 1);  // 保留原 ts（去重后只移位不更新时间）
+  // 其他顺序保持
+  assert.strictEqual(r[1].value, 0.3);
+  assert.strictEqual(r[2].value, 0.1);
+});
+
+t.test('pushHistory 跨 unit 重复不算重复（cm 0.5 和 % 0.5 是不同的）', () => {
+  const h0 = [{ value: 0.5, unit: 'cm', ts: 1 }];
+  const r = RC.pushHistory(h0, 0.5, '%');
+  assert.strictEqual(r.length, 2);
+  assert.strictEqual(r[0].unit, '%');
+  assert.strictEqual(r[1].unit, 'cm');
+});
+
+t.test('pushHistory 限 5 条上限', () => {
+  const h0 = [
+    { value: 0.1, unit: 'cm', ts: 1 },
+    { value: 0.2, unit: 'cm', ts: 2 },
+    { value: 0.3, unit: 'cm', ts: 3 },
+    { value: 0.4, unit: 'cm', ts: 4 },
+    { value: 0.5, unit: 'cm', ts: 5 },
+  ];
+  const r = RC.pushHistory(h0, 0.6, 'cm');
+  assert.strictEqual(r.length, 5);
+  assert.strictEqual(r[0].value, 0.6);
+  // 0.1 被挤掉
+  assert.ok(r.every((h) => h.value !== 0.1));
+});
+
+t.test('pushHistory 不可变（原 history 数组不被改）', () => {
+  const h0 = [{ value: 0.5, unit: 'cm', ts: 1 }];
+  const h0Copy = JSON.parse(JSON.stringify(h0));
+  RC.pushHistory(h0, 0.3, 'cm');
+  assert.deepStrictEqual(h0, h0Copy);
+});
+
+t.test('pushHistory null/undefined history → 当作空数组处理', () => {
+  const r1 = RC.pushHistory(null, 0.5, 'cm');
+  assert.strictEqual(r1.length, 1);
+  const r2 = RC.pushHistory(undefined, 0.3, 'cm');
+  assert.strictEqual(r2.length, 1);
+});
+
+// ============================================================
 // 跑
 // ============================================================
 

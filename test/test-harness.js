@@ -101,6 +101,18 @@ function createHarness(opts) {
     return s._tags[key] != null ? s._tags[key] : null;
   };
 
+  // 批量 read tags（一次性返回所有 shape 的 tag dict，**不**在内部 sync）
+  // 真实场景：用 shapes.load('items/tags') + ctx.sync() 一次拿全部
+  // 避免 readTag 的 per-call sync 在 for 循环内累积（v1.2.6 + v1.3.6 Mac LTSC 坑）
+  driver.readTagsBulk = (shapesArr) => {
+    recordCall('readTagsBulk', [shapesArr.length]);
+    const result = {};
+    for (const s of shapesArr) {
+      result[s.id] = Object.assign({}, s._tags);
+    }
+    return result;
+  };
+
   // 覆盖 setAdjFraction：调真实的 s.adjustments.set + 记录
   driver.setAdjFraction = (s, frac) => {
     recordCall('setAdjFraction', [s.id, frac]);

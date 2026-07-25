@@ -155,6 +155,22 @@ function computeFinalRadius(childMinSideCm, linkRMode, parentRcm, paddingCm) {
 // ---------------- 写 R 角的行为规则（纯函数） ----------------
 
 /**
+ * pushHistory 纯函数：去重 + 移到最前 + 限 MAX_HISTORY 条
+ * 跟 dialog.js v1.0 userHistory 行为完全一致（v1.3.6 抽到 radius-core）
+ * @param {Array} history - 当前 history 列表
+ * @param {number} value - 新的 R 角值
+ * @param {string} unit - 'cm' | '%'
+ * @param {number} maxLen - 默认 5
+ * @returns {Array} 新 history 列表（不修改入参）
+ */
+function pushHistory(history, value, unit, maxLen) {
+  const limit = Number.isFinite(maxLen) ? maxLen : 5;
+  const filtered = (history || []).filter((h) => !(h.value === value && h.unit === unit));
+  filtered.unshift({ value, unit, ts: Date.now() });
+  return filtered.slice(0, limit);
+}
+
+/**
  * 决定是否应该拒绝写 R 角
  * 模拟 writeRadius 的 strict 拦截逻辑（供 dialog.js 在 PowerPoint.run 之前做第一道防线）
  * @param {Object} shape - { isStrict, isRoundRect, minSideCm }
@@ -295,19 +311,30 @@ async function writeRadius(driver, shape, targetCm, opts) {
   const layoutParentId = opts.layoutParentId;
   const clamp = opts.clamp !== false;
   try {
-    // 1. 读 lock + strict（通过 driver，async）
-    const lockVal = await driver.readTag(shape, LOCK_TAG_KEY);
+    // 1. 读 lock + strict（优先用 caller 传的 knownLockState，避免 per-shape readTag + sync 在 for 循环内累积）
+    //    Mac LTSC 实测坑：v1.3.6 修 #6 之前，syncLayoutChildrenR 调 readTag 4 次，每次都 await ctx.sync()，
+    //                    第 3/4 个 shape 的 setAdjFraction 在真实 PPT 上会丢（mock 不模拟得到）
+    //    修法：caller 用 driver.readTagsBulk 一次拿全部 → 传 knownLockState → 跳过 per-shape readTag
     let isLocked = false;
     let lockedCm = 0;
-    if (lockVal) {
-      const cm = parseFloat(lockVal);
-      if (Number.isFinite(cm) && cm > 0) {
-        isLocked = true;
-        lockedCm = cm;
+    let isStrict = false;
+    if (opts.knownLockState && typeof opts.knownLockState === 'object') {
+      isLocked = !!opts.knownLockState.isLocked;
+      lockedCm = Number.isFinite(opts.knownLockState.lockedCm) ? opts.knownLockState.lockedCm : 0;
+      isStrict = !!opts.knownLockState.isStrict;
+    } else {
+      // 走 driver.readTag（per-shape sync，可能在 for 循环内累积 — v1.2.6 Mac LTSC 实测坑）
+      const lockVal = await driver.readTag(shape, LOCK_TAG_KEY);
+      if (lockVal) {
+        const cm = parseFloat(lockVal);
+        if (Number.isFinite(cm) && cm > 0) {
+          isLocked = true;
+          lockedCm = cm;
+        }
       }
+      const strictVal = await driver.readTag(shape, LOCK_STRICT_TAG_KEY);
+      isStrict = strictVal === '1';
     }
-    const strictVal = await driver.readTag(shape, LOCK_STRICT_TAG_KEY);
-    const isStrict = strictVal === '1';
 
     // 2. strict 永远拦截
     if (isStrict) {
@@ -632,14 +659,22 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
   let applied = 0;
   let failed = 0;
   try {
+    // v1.3.6 修 #6 子 bug：4 个子只写 2 个（用户实测：调整父 R 角后上面 2 个子变了下面 2 个没变）
+    // 根因：writeRadius 内部 readTag 调 ctx.sync()，4 次 readTag + 4 次 setAdjFraction 在同一个 PowerPoint.run
+    //       Mac LTSC 上 per-shape sync 累积（v1.2.6 同样坑），后几个 shape 的 setAdjFraction 失败/丢失
+    // 修法：sibling applyLayout 模式 —— 一次 load + sync 拿全部 tag（用 readTagsBulk 避开 per-call sync），
+    //       写所有 setAdjFraction，final sync 一次
     const slide = driver.activeSlide();
     driver.load(slide, 'shapes/items/id, shapes/items/width, shapes/items/height, shapes/items/adjustments, shapes/items/tags');
     await driver.sync();
+    const slideShapes = driver.slideShapes(slide).items;
     const idToShape = new Map();
-    for (const sh of driver.slideShapes(slide).items) {
+    for (const sh of slideShapes) {
       const id = driver.shapeId(sh);
       if (id != null) idToShape.set(id, sh);
     }
+    // 一次拿全部 tag（不调 ctx.sync()，避免 per-call sync 累积）
+    const tagsById = driver.readTagsBulk(slideShapes);
     for (const childId of childIds) {
       const csh = idToShape.get(childId);
       if (!csh) {
@@ -648,7 +683,22 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
       }
       const subRcm = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - paddingCm);
       console.log(`[syncLayoutChildrenR/driver] R link child=${childId} parentRcm=${parentRcm} mode=${linkRMode} padding=${paddingCm} target subRcm=${subRcm}`);
-      const r = await writeRadius(driver, csh, subRcm, {});
+      // 从 readTagsBulk 拿的 tag 构造 knownLockState，传给 writeRadius（跳过 per-call readTag + sync）
+      const childTags = tagsById[childId] || {};
+      const lockRaw = childTags[LOCK_TAG_KEY];
+      let isLocked = false;
+      let lockedCm = 0;
+      if (lockRaw != null) {
+        const cm = parseFloat(lockRaw);
+        if (Number.isFinite(cm) && cm > 0) {
+          isLocked = true;
+          lockedCm = cm;
+        }
+      }
+      const isStrict = childTags[LOCK_STRICT_TAG_KEY] === '1';
+      const r = await writeRadius(driver, csh, subRcm, {
+        knownLockState: { isLocked, lockedCm, isStrict },
+      });
       if (r.ok) {
         applied++;
       } else if (r.reason === 'strict') {
@@ -868,9 +918,166 @@ async function saveLayoutTags(driver, slide, parentId, params, childIds) {
   }
 }
 
+// ---------------- pickupFromSelection / applyPickedToSelection driver 版 ----------------
 
+/**
+ * 读选区里第一个圆角矩形的 R 角 + strict 状态（driver 版）
+ *
+ * 跟 dialog.js v1.0/v1.1 pickupFromSelection 行为一致（v1.3.6 抽到 radius-core）
+ *
+ * 行为：
+ *   1. 遍历 selectedShapes
+ *   2. 找第一个 adjustments.count > 0 的形状
+ *   3. get(0) 存变量 → sync → 读 value → 算 cm = value * minSideCm
+ *   4. 读 strict tag（如果有）
+ *   5. 返回 { id, name, cm, sourceStrict }，没找到圆角矩形返回 null
+ *
+ * @param {Object} driver
+ * @param {Array} selectedShapes - shape proxy 列表（已 load 'items/id, items/name, items/width, items/height, items/adjustments, items/tags'）
+ * @returns {Promise<{id, name, cm, sourceStrict} | null>}
+ */
+async function pickupFromSelection(driver, selectedShapes) {
+  try {
+    const shapesList = [];
+    if (selectedShapes && typeof selectedShapes.items !== 'undefined') {
+      for (const sh of selectedShapes.items) shapesList.push(sh);
+    } else if (Array.isArray(selectedShapes)) {
+      for (const sh of selectedShapes) shapesList.push(sh);
+    } else {
+      return null;
+    }
 
+    for (const sh of shapesList) {
+      try {
+        if (!driver.isRoundRect(sh)) continue;
+        // Mac LTSC 模式：get(0) 存变量 → sync → 读 value
+        const adjResult = sh.adjustments.get(0);
+        await driver.sync();
+        let v = null;
+        try { v = adjResult.value; } catch (_) { continue; }
+        if (!Number.isFinite(v)) continue;
+        const size = driver.size(sh);
+        const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
+        const cm = v * minSideCm;
+        // 读 strict
+        let sourceStrict = false;
+        try {
+          const strictVal = await driver.readTag(sh, LOCK_STRICT_TAG_KEY);
+          if (strictVal === '1') sourceStrict = true;
+        } catch (_) {}
+        return {
+          id: driver.shapeId(sh),
+          name: sh.name || '(未命名)',
+          cm,
+          sourceStrict,
+        };
+      } catch (_) {
+        // 单 shape 失败不 throw 整个（user 报 #1 期间可能 race）
+        continue;
+      }
+    }
+    return null;
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    console.log('[pickupFromSelection] EXCEPTION:', msg);
+    return null;
+  }
+}
 
+/**
+ * 把 pickup 出来的 R 角应用到选区里所有 roundRect（driver 版）
+ *
+ * 跟 dialog.js v1.0/v1.1 applyPipetteToSelection 行为一致（v1.3.6 抽到 radius-core）
+ * 修 #1 bug：之前 dialog.js 调的是旧版 writeRadiusToShape（直接用 ctxShape API，不走 driver），
+ *            在 Mac LTSC 某些场景会刷不进去。改用 radius-core.writeRadius（driver 版 + 走 setAdjFraction 路径）后稳定。
+ *
+ * 行为：
+ *   1. 拦截：选区里有 strict 形状 → 全部拒绝（用 driver.readTag 实时查）
+ *   2. 写 R 角：对每个 roundRect 调 writeRadius（自动处理 clamp + lock 同步）
+ *   3. （可选）刷 strict 状态：sourceStrict = true → 给所有目标加 strict tag
+ *
+ * @param {Object} driver
+ * @param {Array} selectedShapes - shape proxy 列表（已 load 'items/id, items/width, items/height, items/adjustments, items/tags'）
+ * @param {Object} source - { cm, sourceStrict } —— pickupFromSelection 的结果
+ * @param {Object} [opts] - { syncStrict: boolean }  是否刷入 strict 状态
+ * @returns {Promise<{ok, applied, failed, strictSynced, error?, rejectReason?}>}
+ */
+async function applyPickedToSelection(driver, selectedShapes, source, opts) {
+  opts = opts || {};
+  const syncStrict = !!opts.syncStrict;
+  let applied = 0;
+  let failed = 0;
+  let strictSynced = 0;
+  try {
+    if (!source || !Number.isFinite(source.cm)) {
+      return { ok: false, applied, failed, strictSynced, error: 'source.cm 不合法' };
+    }
+    const shapesList = [];
+    if (selectedShapes && typeof selectedShapes.items !== 'undefined') {
+      for (const sh of selectedShapes.items) shapesList.push(sh);
+    } else if (Array.isArray(selectedShapes)) {
+      for (const sh of selectedShapes) shapesList.push(sh);
+    } else {
+      return { ok: false, applied, failed, strictSynced, error: 'selectedShapes 格式不合法' };
+    }
+
+    // 步骤 0：拦截（实时读 strict 标签，不依赖内存）
+    for (const sh of shapesList) {
+      try {
+        if (!driver.isRoundRect(sh)) continue;
+        const strictVal = await driver.readTag(sh, LOCK_STRICT_TAG_KEY);
+        if (strictVal === '1') {
+          return {
+            ok: false,
+            applied,
+            failed,
+            strictSynced,
+            rejectReason: 'strict',
+            error: '选区里有形状启用了防误触，样式刷不生效',
+          };
+        }
+      } catch (_) { /* 读 strict 失败不拦截（defensive） */ }
+    }
+
+    // 步骤 1：刷 R 角
+    for (const sh of shapesList) {
+      try {
+        if (!driver.isRoundRect(sh)) continue;
+        const r = await writeRadius(driver, sh, source.cm, {});
+        if (r.ok) {
+          applied++;
+        } else if (r.reason === 'strict') {
+          // 步骤 0 已经查过，但 writeRadius 是第二道防线
+          failed++;
+        } else if (r.reason === 'not-roundRect' || r.reason === 'no-size') {
+          // 不是 roundRect / 0 尺寸 → 跳过（不计入 failed）
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        console.log('[applyPickedToSelection] shape fail:', msg);
+        failed++;
+      }
+    }
+
+    // 步骤 2：刷 strict 状态（可选）
+    if (syncStrict && source.sourceStrict) {
+      for (const sh of shapesList) {
+        try {
+          if (!driver.isRoundRect(sh)) continue;
+          driver.addTag(sh, LOCK_STRICT_TAG_KEY, '1');
+          strictSynced++;
+        } catch (_) {}
+      }
+    }
+    await driver.sync();
+    return { ok: true, applied, failed, strictSynced };
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    return { ok: false, applied, failed, strictSynced, error: msg };
+  }
+}
 //     全部由 driver 集成测试覆盖。）
 
 // ---------------- 导出（Node.js + browser 都支持） ----------------
@@ -906,6 +1113,9 @@ if (typeof module !== 'undefined' && module.exports) {
     detectStaleChildrenInLayout,
     loadLayoutTags,
     saveLayoutTags,
+    pickupFromSelection,
+    applyPickedToSelection,
+    pushHistory,
   };
 }
 if (typeof window !== 'undefined') {
@@ -924,6 +1134,7 @@ if (typeof window !== 'undefined') {
     cmToAdj,
     clampRadius,
     computeFinalRadius,
+    pushHistory,
     shouldRejectWriteRadius,
     shouldRejectOnApply,
     shouldRejectLayoutApply,
@@ -939,5 +1150,7 @@ if (typeof window !== 'undefined') {
     detectStaleChildrenInLayout,
     loadLayoutTags,
     saveLayoutTags,
+    pickupFromSelection,
+    applyPickedToSelection,
   };
 }

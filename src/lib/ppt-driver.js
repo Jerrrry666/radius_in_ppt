@@ -120,6 +120,32 @@ function createDriver(ctx) {
         return null;
       }
     },
+    // 批量读所有 shape 的 tags dict（一次性返回，不在内部 sync）
+    // **避免 readTag 的 per-call sync 在 for 循环内累积**（Mac LTSC 真实跑过会丢后几个 shape）
+    // 用法：先 driver.load(slide, 'shapes/items/tags') + ctx.sync() → driver.readTagsBulk(items) → 一次拿全部
+    readTagsBulk: (shapesArr) => {
+      const result = {};
+      if (!shapesArr) return result;
+      const list = Array.isArray(shapesArr) ? shapesArr : (shapesArr.items || []);
+      for (const s of list) {
+        if (!s || !s.tags) continue;
+        // 真实 PPT 上：s.tags 已经是 collection-level load 过的（caller 之前 sync 过）
+        // 这里读所有 tag 的 value（需要每个 tag .value 已填，依赖之前的 collection load + sync）
+        // 简化：直接收集所有 tag
+        result[s.id] = {};
+        try {
+          // s.tags.items 存在时遍历（Office.js collection 有 .items）
+          if (s.tags.items) {
+            for (const t of s.tags.items) {
+              if (t && t.key != null) {
+                result[s.id][t.key] = t.value;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      return result;
+    },
   };
 }
 

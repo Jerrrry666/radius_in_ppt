@@ -1333,6 +1333,16 @@
       // 读 layout tag
       const layoutResult = await loadLayoutTagsViaTags();
       if (layoutResult.ok) {
+        // v1.3.6：检测到 stale childIds 时给用户提示（不自动写回，等下次调 saveLayoutTags 时自然清理）
+        if (layoutResult.staleParents && Object.keys(layoutResult.staleParents).length > 0) {
+          for (const [pid, staleList] of Object.entries(layoutResult.staleParents)) {
+            console.log(`[refreshSelection] 父 ${pid} 的 ${staleList.length} 个子已不在当前 slide（已自动从 layoutChildIds 移除）: ${staleList.join(', ')}`);
+          }
+          const totalStale = Object.values(layoutResult.staleParents).reduce((s, arr) => s + arr.length, 0);
+          if (totalStale > 0) {
+            showToast(`ℹ️ 检测到 ${totalStale} 个 layout 子已被删除/移走，下次应用布局时会自动清理`);
+          }
+        }
         for (const s of selectedShapes) {
           if (layoutResult.parents[s.id]) {
             s.layoutRole = 'parent';

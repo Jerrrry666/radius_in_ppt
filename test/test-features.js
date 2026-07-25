@@ -805,6 +805,176 @@ t.test('集成：saveLayoutTags → loadLayoutTags round-trip 一致', async () 
 });
 
 // ============================================================
+// pickupFromSelection / applyPickedToSelection — 样式刷链路
+// ============================================================
+
+t.test('pickupFromSelection: 选区里第一个 roundRect → 返回 cm + strict', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // r2_medium: 短边 4cm, adjFraction=0.1 → cm = 0.1 * 4 = 0.4
+  const r = await RC.pickupFromSelection(h.driver, h.slide.shapes);
+  assert.ok(r);
+  assert.strictEqual(r.id, 'r2_medium');
+  assert.strictEqual(r.sourceStrict, false);
+  // 浮点容差
+  assert.ok(Math.abs(r.cm - 0.4) < 1e-6);
+});
+
+t.test('pickupFromSelection: 选区里第一个 strict 形状 → sourceStrict=true', async () => {
+  const f = makeStandardFixture();
+  // r7_strict 已经有 strict tag（fixture）
+  const h = createHarness({ shapes: [f.shapes.r7_strict] });
+  const r = await RC.pickupFromSelection(h.driver, h.slide.shapes);
+  assert.ok(r);
+  assert.strictEqual(r.id, 'r7_strict');
+  assert.strictEqual(r.sourceStrict, true);
+});
+
+t.test('pickupFromSelection: 选区里没 roundRect → 返回 null', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: [f.rect1] });  // rect1 是非圆角矩形
+  const r = await RC.pickupFromSelection(h.driver, h.slide.shapes);
+  assert.strictEqual(r, null);
+});
+
+t.test('pickupFromSelection: 选区空 → 返回 null（不 throw）', async () => {
+  const h = createHarness({ shapes: [] });
+  const r = await RC.pickupFromSelection(h.driver, h.slide.shapes);
+  assert.strictEqual(r, null);
+});
+
+t.test('applyPickedToSelection: 把源 R 角刷到所有 roundRect 目标', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // 源 R 角 = 0.4cm（来自 r2_medium），目标 = 5 个 roundRect
+  const source = { cm: 0.4, sourceStrict: false };
+  // 喂 5 个 roundRect 当目标
+  const targets = [f.shapes.r1_basic, f.shapes.r3_large, f.shapes.r4_tiny, f.shapes.r5_wide, f.shapes.r6_locked];
+  const r = await RC.applyPickedToSelection(h.driver, targets, source, {});
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 5);
+  assert.strictEqual(r.failed, 0);
+  // 验证每个目标 R 角都变了
+  for (const t of targets) {
+    const minSideCm = Math.min(t.width, t.height) / PT_PER_CM;
+    const expectedAdj = Math.min(0.4, minSideCm / 2) / minSideCm;
+    h.assertShape(t, { adjFraction: (v) => Math.abs(v - expectedAdj) < 1e-6 });
+  }
+});
+
+t.test('applyPickedToSelection: bug #1 — 吸取后能正常刷入（happy path）', async () => {
+  // bug #1 根因：之前 dialog.js applyPipetteToSelection 调的是 writeRadiusToShape（不走 driver），
+  //             在某些场景写不进 R 角。改用 radius-core.writeRadius（driver 版）后正常。
+  // 这个测试就是验证整个 pipeline：pickup → apply 一气呵成能把 R 角刷到目标
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // 1. 吸 r2_medium 的 R 角
+  const source = await RC.pickupFromSelection(h.driver, h.slide.shapes);
+  assert.ok(source);
+  assert.ok(Math.abs(source.cm - 0.4) < 1e-6);
+  // 2. 刷到 r1_basic（之前 adj=0）
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], source, {});
+  assert.strictEqual(r.ok, true, `applyPickedToSelection 失败: ${r.error || r.rejectReason}`);
+  assert.strictEqual(r.applied, 1, 'bug #1：吸取后应该能刷入 1 个目标');
+  // 3. 验证 r1_basic 真的被改了
+  // r1_basic 短边 3cm，新 R = 0.4cm（不超短边一半 1.5）→ adj = 0.4/3
+  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
+});
+
+t.test('applyPickedToSelection: 目标里有 strict → 全部拒绝（步骤 0 拦截）', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: false };
+  // r7_strict 有 strict tag
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.shapes.r7_strict], source, {});
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.rejectReason, 'strict');
+  // r1_basic 状态不变（步骤 0 拦截，提前 return）
+  h.assertShape(f.shapes.r1_basic, { adjFraction: 0 });  // fixture 初始 0
+});
+
+t.test('applyPickedToSelection: 目标里含非圆角矩形 → 跳过（不计入 failed）', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: false };
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.rect1], source, {});
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 1);  // 只有 r1_basic 是 roundRect
+  // r1_basic 改了
+  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
+  // rect1 状态不变（非 roundRect，writeRadius 内部会 skip）
+});
+
+t.test('applyPickedToSelection: source.cm 不合法 → 直接拒绝（不 throw）', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // NaN
+  const r1 = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], { cm: NaN }, {});
+  assert.strictEqual(r1.ok, false);
+  // null
+  const r2 = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], null, {});
+  assert.strictEqual(r2.ok, false);
+  // undefined
+  const r3 = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], undefined, {});
+  assert.strictEqual(r3.ok, false);
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true → 目标加 strict tag', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: true };
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.shapes.r3_large], source, { syncStrict: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 2);
+  assert.strictEqual(r.strictSynced, 2);
+  // 验证 strict tag 写了
+  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  assert.strictEqual(f.shapes.r3_large._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+});
+
+t.test('applyPickedToSelection: syncStrict=false → 不刷 strict（即使源是 strict）', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const source = { cm: 0.4, sourceStrict: true };
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], source, { syncStrict: false });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.strictSynced, 0);
+  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
+});
+
+t.test('applyPickedToSelection: 目标里有 locked 形状 → 写完 R 角后同步 fixed value', async () => {
+  // 验证 #1 修复后的行为：locked 目标被样式刷后，lockedCm 也要同步（不然 lock monitor 会反算）
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // r6_locked fixture 已有 radiusLock_v1: '0.8'，adjFraction=0.2
+  const source = { cm: 0.5, sourceStrict: false };
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r6_locked], source, {});
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 1);
+  // 验证 R 角写了
+  h.assertShape(f.shapes.r6_locked, { adjFraction: (v) => Math.abs(v - 0.5 / 4) < 1e-6 });
+  // 验证 lockedCm 同步成 0.5（v1.1 lock 同步 fixed value 行为）
+  assert.strictEqual(f.shapes.r6_locked._tags[RC.LOCK_TAG_KEY], '0.5');
+});
+
+t.test('集成：完整 pipette pipeline — pickup → apply → history', async () => {
+  // 模拟 dialog.js 的 pipette 流程：吸取 + 刷入 + 记录 history
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // 1. 吸 r2_medium（cm=0.4）
+  const source = await RC.pickupFromSelection(h.driver, h.slide.shapes);
+  assert.ok(source);
+  // 2. 刷到 3 个目标
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.shapes.r3_large, f.shapes.r4_tiny], source, {});
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 3);
+  // 3. 记录 history（用 cm 0.4 + 当前单位 cm）
+  const history = RC.pushHistory([], source.cm, 'cm');
+  assert.strictEqual(history.length, 1);
+  assert.strictEqual(history[0].value, 0.4);
+});
+
+// ============================================================
 // 自测场景：5+ R 角矩形组合操作
 // ============================================================
 
