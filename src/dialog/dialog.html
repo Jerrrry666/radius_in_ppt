@@ -164,12 +164,12 @@
           <label class="layout-toggle-label">R 角联动</label>
           <div class="layout-link-r-group">
             <label class="layout-link-r-opt">
-              <input type="radio" name="layout-link-r-mode" value="subtract" checked>
-              <span>近似等宽（r = 父 R − 边距）</span>
+              <input type="radio" name="layout-link-r-mode" value="same" checked>
+              <span>等距（r = 父 R，45° 方向和边方向都等于 padding）</span>
             </label>
             <label class="layout-link-r-opt">
-              <input type="radio" name="layout-link-r-mode" value="same">
-              <span>严格 45° 等宽（r = 父 R）</span>
+              <input type="radio" name="layout-link-r-mode" value="subtract">
+              <span>层级感（r = 父 R − padding，子 R 角小一圈；45° 方向比 padding 窄约 40%）</span>
             </label>
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="off">

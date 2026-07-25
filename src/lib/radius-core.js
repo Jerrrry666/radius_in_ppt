@@ -503,7 +503,11 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
   opts = opts || {};
   const writeParentTag = opts.writeParentTag !== false;
   const syncR = opts.syncR !== false;
-  const linkRMode = params.linkRMode || 'subtract';
+  // v1.2.6：默认 linkRMode 从 'subtract' 改成 'same'
+  // 原因：subtract 公式 R_sub = R_父 - d 几何上**不等距**（45° 方向距离 = d - 0.414d ≈ 0.586d），
+  //       user 报"子 R 角看着不美观，角部比边窄"。same 公式 R_sub = R_父 是真正的等距。
+  //       老 layout（linkRMode 已存 'subtract'）不受影响（直接读 tag 拿到 'subtract'）
+  const linkRMode = params.linkRMode || 'same';
   const expectedCount = params.rows * params.cols;
 
   let applied = 0;
@@ -935,7 +939,7 @@ async function saveLayoutTags(driver, slide, parentId, params, childIds) {
       cols: params.cols,
       padding: Number.isFinite(params.padding) ? params.padding : 0,
       gutter: Number.isFinite(params.gutter) ? params.gutter : 0,
-      linkRMode: ['subtract', 'same', 'off'].includes(params.linkRMode) ? params.linkRMode : 'subtract',
+      linkRMode: ['subtract', 'same', 'off'].includes(params.linkRMode) ? params.linkRMode : 'same',
       childIds: validChildIds,
     });
     driver.addTag(parentSh, LAYOUT_PARENT_TAG_KEY, payload);

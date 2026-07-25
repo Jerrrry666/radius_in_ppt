@@ -312,7 +312,9 @@
     if (selectedShapes.length === 0) return;
     for (const s of selectedShapes) {
       if (s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds) {
-        const linkRMode = s.layoutParams.linkRMode || 'subtract';
+        // v1.2.6：默认从 'subtract' 改成 'same'（等距公式 R_sub = R_父，v1.0/v1.2 的 subtract 公式 R_sub = R_父 - d 几何上**不等距**）
+        // 老 layout（tag 里存了 'subtract'）直接拿到旧值不受影响
+        const linkRMode = s.layoutParams.linkRMode || 'same';
         if (linkRMode === 'off') continue;
         const padding = s.layoutParams.padding;
         // 按 linkRMode 算子 R = 父 R - padding（subtract）或 父 R（same）
@@ -423,8 +425,8 @@
       padN.value = currentLayout.params.padding.toFixed(2);
       gutR.value = String(currentLayout.params.gutter);
       gutN.value = currentLayout.params.gutter.toFixed(2);
-      // 选对应 R 角联动模式
-      const linkRMode = currentLayout.params.linkRMode || 'subtract';
+      // 选对应 R 角联动模式（v1.2.6 默认 'same' 等距，v1.0/v1.2 默认 'subtract' 不等距——见 radius-core 注释）
+      const linkRMode = currentLayout.params.linkRMode || 'same';
       document.querySelectorAll('input[name="layout-link-r-mode"]').forEach((r) => {
         r.checked = r.value === linkRMode;
       });
@@ -666,7 +668,8 @@
     }
     const parentId = layoutSetupChoices.parentId;
     const childIds = layoutSetupChoices.childIds.slice(0, need);
-    const params = { rows, cols, padding: 0.5, gutter: 0.3, linkRMode: 'subtract' };
+    // v1.2.6：layout 新建时默认 linkRMode = 'same'（等距 R_sub = R_父）—— 之前 'subtract' 几何上不等距
+    const params = { rows, cols, padding: 0.5, gutter: 0.3, linkRMode: 'same' };
     stopLockMonitor();
     const r = await applyLayoutToChildren(parentId, params, childIds, { writeParentTag: true, syncR: true });
     if (!r.ok) {
