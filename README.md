@@ -193,15 +193,6 @@ A: 关闭 Dialog 重新点开即可。
 **Q: 后台 server 怎么停**
 A: Terminal：`lsof -ti tcp:3000 | xargs kill`
 
-## 备选方案：menubar/
-
-`menubar/` 目录里有一个 macOS 菜单栏 App 的 Swift 源码（NSStatusItem + AppleScript），
-**不依赖 PowerPoint 加载项机制**，直接通过 AppleScript 操作选区。
-
-适用于：PowerPoint AppleScript bridge 完全 broken 的极端情况。
-
-当前默认不编译此 app。如需启用，修改 `tools/build-app.sh`。
-
 ## License
 
 MIT
