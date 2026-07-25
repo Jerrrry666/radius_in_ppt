@@ -1,6 +1,16 @@
 # R 角调整 — macOS PowerPoint 加载项
 
-> 🌍 **[English version](./README.en.md)** · 中文为主，国际用户请切到英文版
+> 🌍 **[English version](./README.en.md)**
+
+## 关于这个项目
+
+在 **Windows PowerPoint** 上已经有不少成熟的圆角矩形辅助插件，但在 **macOS PowerPoint** 上一直缺少对应的工具。
+
+所以我自己动手做了这个加载项 —— 功能还比较原始，仍在不断迭代中。
+
+**测试范围**：目前只在 macOS PowerPoint（**版本 16.111.1 (26071913)**）上验证过可用性，理论上 Office.js 加载项是跨平台的，Windows 上应该也能使用 —— **不过未在 Windows 上实测**，欢迎 Windows 用户试用后反馈兼容性。
+
+如果你也在 macOS 上做圆角矩形相关的 PPT，欢迎试用 + 提意见（issue / PR / 建议都很有价值）🙏
 
 > 在 PowerPoint 顶部 ribbon 添加一个 **「R 角调整」** 自定义 Tab，
 > 像 iSlide 一样。让你能用 **厘米** 为单位精确设置圆角矩形的 R 角（圆角半径），

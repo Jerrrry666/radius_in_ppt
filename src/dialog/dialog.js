@@ -368,13 +368,13 @@
     stopLockMonitor();
     const r = await applyLayoutToChildren(parentId, params, childIds, opts || { writeParentTag: true, syncR: true });
     if (!r.ok) {
-      showToast('布局应用失败：' + (r.error || '未知错误'));
+      showToast(i18n.t('toastLayoutFailedFmt', { error: r.error || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
     } else if (r.warn) {
       if (r.warn.indexOf('子形状不足') >= 0) {
         const actualRows = Math.max(1, Math.floor(childIds.length / params.cols));
         currentLayout.params.rows = actualRows;
         renderLayoutPanel();
-        showToast(r.warn + ' — 自动缩减到 ' + actualRows + ' 行');
+        showToast(i18n.t('toastLayoutAutoReducedFmt', { warn: r.warn, rows: actualRows }));
         return applyLayoutFromUI({ writeParentTag: true, syncR: true });
       }
       showToast(r.warn);
@@ -383,7 +383,7 @@
       const strictHint = r.strictOverridden > 0
         ? `（${r.strictOverridden} 个原本是防误触的，已强制更新）`
         : '';
-      showToast(`✅ 布局已应用 ${r.applied} 个子形状${r.failed ? `，${r.failed} 个失败` : ''}${rHint}${strictHint}`);
+      showToast(i18n.t('toastLayoutAppliedFmt', { applied: r.applied, failed: r.failed ? i18n.t('failedStrFmt', { count: r.failed }) : '', rHint: rHint, strictHint: strictHint }));
     }
     await refreshSelection();
     if (selectedShapes.length > 0) startLockMonitor();
@@ -403,7 +403,7 @@
 
     // 没选 / 选区无 roundRect
     if (selectedShapes.length === 0) {
-      hint.textContent = '在 PPT 里选 1+ 个圆角矩形';
+      hint.textContent = i18n.t('layoutHintEmpty');
       empty.style.display = 'flex';
       $('layout-setup-btn').disabled = true;
       return;
@@ -411,10 +411,10 @@
     // 选区里有 layout 父 → 显示 active 面板
     const parentShape = selectedShapes.find((s) => s.layoutRole === 'parent');
     if (parentShape && currentLayout) {
-      hint.textContent = '已激活布局';
+      hint.textContent = i18n.t('layoutActive');
       active.style.display = 'flex';
       $('layout-parent-name').textContent = currentLayout.parentName;
-      $('layout-children-count').textContent = `${currentLayout.childIds.length} 个（${currentLayout.params.rows}×${currentLayout.params.cols}）`;
+      $('layout-children-count').textContent = i18n.t('layoutChildrenCountFmt', { count: currentLayout.childIds.length, rows: currentLayout.params.rows, cols: currentLayout.params.cols });
       // 滑块 + 数字输入填值
       const rowsR = $('layout-rows');
       const rowsN = $('layout-rows-num');
@@ -445,11 +445,11 @@
         if (N === 1) {
           rowsR.disabled = true;
           rowsN.disabled = true;
-          if (coupledHint) coupledHint.textContent = '（只有 1 个子）';
+          if (coupledHint) coupledHint.textContent = i18n.t('layoutCoupledOneChild');
         } else {
           rowsR.disabled = false;
           rowsN.disabled = false;
-          if (coupledHint) coupledHint.textContent = `（自动 = ${N} ÷ 行，N=${N} 的因子: ${factors.join('/')}）`;
+          if (coupledHint) coupledHint.textContent = i18n.t('layoutCoupledFactorFmt', { N: N, factors: factors.join('/') });
         }
       }
       // 同步：params 里的 rows/cols 应该等于 N 的因子（如果 tag 损坏 → 默认 row=N, col=1）
@@ -508,10 +508,10 @@
       const childCount = currentLayout.childIds.length;
       const expected = currentLayout.params.rows * currentLayout.params.cols;
       if (minSubW <= 0) {
-        warn.textContent = '⚠️ 边距/间距太大，挤不下';
+        warn.textContent = i18n.t('layoutWarnTooTight');
       } else if (childCount < expected) {
         // v1.2.11：理论上 N=rows*cols（联动保证），但旧的 layout tag 可能不对
-        warn.textContent = `⚠️ 子形状不足（需要 ${expected}，找到 ${childCount}）`;
+        warn.textContent = i18n.t('layoutWarnNotEnoughFmt', { expected: expected, childCount: childCount });
       } else {
         warn.textContent = '';
       }
@@ -521,10 +521,10 @@
     // 选区里只有子（无父）
     const childShape = selectedShapes.find((s) => s.layoutRole === 'child');
     if (childShape) {
-      hint.textContent = '当前形状是布局子项';
+      hint.textContent = i18n.t('layoutHintChildShape');
       childInfo.style.display = 'flex';
       const parentInSel = selectedShapes.find((s) => s.id === childShape.layoutParentId);
-      $('layout-child-parent').textContent = parentInSel ? (parentInSel.name || '(未命名)') : '（已不在选区）';
+      $('layout-child-parent').textContent = parentInSel ? (parentInSel.name || i18n.t('unnamed')) : i18n.t('layoutHintNotInSel');
       return;
     }
     // 选区里没 layout：显示 setup + 方案 A 列表
@@ -543,20 +543,20 @@
       && strictCount === 0;
     $('layout-setup-btn').disabled = !canBuild;
     if (roundShapes.length === 0) {
-      hint.textContent = '在 PPT 里选 1+ 个圆角矩形';
+      hint.textContent = i18n.t('layoutHintEmpty');
     } else if (strictCount > 0) {
       // 防误触：选区里有 N 个子启用了防误触 → 拒绝整个 setup
-      hint.textContent = `🔒 ${strictCount} 个启用了防误触，请先关闭后再建布局`;
+      hint.textContent = i18n.t('layoutHintStrictFmt', { count: strictCount });
       $('layout-setup-btn').disabled = true;  // 再次确认按钮禁用
     } else if (!canBuild) {
       const missing = !layoutSetupChoices.parentId
-        ? '请指定一个父'
+        ? i18n.t('toastSelectParent')
         : layoutSetupChoices.childIds.length < need
-          ? `子不足（需要 ${need}，选了 ${layoutSetupChoices.childIds.length}）`
-          : '检查行/列范围';
+          ? i18n.t('toastChildrenInsufficientFmt', { need: need, chosen: layoutSetupChoices.childIds.length })
+          : i18n.t('toastRowsRange') + ' / ' + i18n.t('toastColsRange');
       hint.textContent = missing;
     } else {
-      hint.textContent = `✅ 可以建 ${rows}×${cols} 布局`;
+      hint.textContent = i18n.t('layoutHintCanBuildFmt', { rows: rows, cols: cols });
     }
     empty.style.display = 'flex';
   }
@@ -694,7 +694,7 @@
     if (roundShapes.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'layout-setup-empty';
-      empty.textContent = '在 PPT 里选 1+ 个圆角矩形';
+      empty.textContent = i18n.t('layoutHintEmpty');
       list.appendChild(empty);
       return;
     }
@@ -710,7 +710,7 @@
       const isChild = layoutSetupChoices.childIds.includes(sh.id);
       const nameSpan = document.createElement('span');
       nameSpan.className = 'layout-setup-name';
-      nameSpan.textContent = sh.name || '(未命名)';
+      nameSpan.textContent = sh.name || i18n.t('unnamed');
       // strict 标记
       if (sh.strictLocked) {
         const lockBadge = document.createElement('span');
@@ -728,7 +728,7 @@
       parentRadio.value = 'parent';
       parentRadio.checked = isParent;
       const parentSpan = document.createElement('span');
-      parentSpan.textContent = '父';
+      parentSpan.textContent = i18n.t('layoutLabelParent');
       parentLabel.appendChild(parentRadio);
       parentLabel.appendChild(parentSpan);
       parentRadio.addEventListener('change', () => {
@@ -749,7 +749,7 @@
       childRadio.value = 'child';
       childRadio.checked = isChild;
       const childSpan = document.createElement('span');
-      childSpan.textContent = '子';
+      childSpan.textContent = i18n.t('layoutLabelChildren');
       childLabel.appendChild(childRadio);
       childLabel.appendChild(childSpan);
       childRadio.addEventListener('change', () => {
@@ -786,10 +786,10 @@
       currentLayout.params.gutter
     );
     if (!r.feasible) {
-      el.textContent = '⚠️ 挤不下';
+      el.textContent = i18n.t('layoutPreviewWarn');
       return;
     }
-    el.textContent = `${(r.subW / PT_PER_CM).toFixed(2)} × ${(r.subH / PT_PER_CM).toFixed(2)} cm`;
+    el.textContent = i18n.t('layoutPreviewSizeFmt', { w: (r.subW / PT_PER_CM).toFixed(2), h: (r.subH / PT_PER_CM).toFixed(2) });
   }
 
   // 从选区建立布局：使用 layoutSetupChoices（用户手动指定的父/子）
@@ -797,20 +797,20 @@
     const rows = parseInt($('layout-setup-rows').value, 10);
     const cols = parseInt($('layout-setup-cols').value, 10);
     if (!Number.isFinite(rows) || rows < 1 || rows > 5) {
-      showToast('行数范围 1~5');
+      showToast(i18n.t('toastRowsRange'));
       return;
     }
     if (!Number.isFinite(cols) || cols < 1 || cols > 5) {
-      showToast('列数范围 1~5');
+      showToast(i18n.t('toastColsRange'));
       return;
     }
     const need = rows * cols;
     if (!layoutSetupChoices.parentId) {
-      showToast('请在列表里指定一个父');
+      showToast(i18n.t('toastSelectParent'));
       return;
     }
     if (layoutSetupChoices.childIds.length < need) {
-      showToast(`子不足（需要 ${need}，选了 ${layoutSetupChoices.childIds.length}）`);
+      showToast(i18n.t('toastChildrenInsufficientFmt', { need: need, chosen: layoutSetupChoices.childIds.length }));
       return;
     }
     const parentId = layoutSetupChoices.parentId;
@@ -820,11 +820,11 @@
     stopLockMonitor();
     const r = await applyLayoutToChildren(parentId, params, childIds, { writeParentTag: true, syncR: true });
     if (!r.ok) {
-      showToast('建布局失败：' + (r.error || r.warn || '未知错误'));
+      showToast(i18n.t('toastBuildLayoutFailedFmt', { error: r.error || r.warn || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
     } else if (r.applied === 0) {
-      showToast('⚠️ 没写成功任何子形状：' + (r.warn || '未知问题，看 console'));
+      showToast(i18n.t('toastNoChildrenWrittenFmt', { warn: r.warn || (i18n.getLang() === 'zh' ? '未知问题，看 console' : 'unknown issue, see console') }));
     } else {
-      showToast(`🎯 已建立 ${rows}×${cols} 布局（${r.applied} 个子形状${r.failed ? '，' + r.failed + ' 个失败' : ''}）`);
+      showToast(i18n.t('toastLayoutBuiltFmt', { rows: rows, cols: cols, applied: r.applied, failed: r.failed ? i18n.t('failedStrFmt', { count: r.failed }) : '' }));
     }
     await refreshSelection();
     if (selectedShapes.length > 0) startLockMonitor();
@@ -838,9 +838,9 @@
     stopLockMonitor();
     const r = await deleteLayoutTags(parentId, childIds);
     if (!r.ok) {
-      showToast('脱离失败：' + (r.error || '未知错误'));
+      showToast(i18n.t('toastDetachFailedFmt', { error: r.error || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
     } else {
-      showToast('已脱离布局（子形状的位置/尺寸/R 角保留）');
+      showToast(i18n.t('toastDetached'));
     }
     await refreshSelection();
     if (selectedShapes.length > 0) startLockMonitor();
@@ -879,9 +879,9 @@
         }
         await ctx.sync();
       });
-      showToast('已脱离此布局');
+      showToast(i18n.t('toastDetachedThis'));
     } catch (e) {
-      showToast('脱离失败：' + (e.message || e));
+      showToast(i18n.t('toastDetachFailedFmt', { error: e.message || e }));
     }
     await refreshSelection();
     if (selectedShapes.length > 0) startLockMonitor();
@@ -928,15 +928,15 @@
     const text = lines.join('\n');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(() => {
-        showToast(`📋 已复制 ${lines.length} 行日志`);
+        showToast(i18n.t('toastCopiedFmt', { count: lines.length }));
       }).catch((err) => {
         // fallback
         fallbackCopy(text);
-        showToast(`📋 已复制 ${lines.length} 行（fallback）`);
+        showToast(i18n.t('toastCopiedFallbackFmt', { count: lines.length }));
       });
     } else {
       fallbackCopy(text);
-      showToast(`📋 已复制 ${lines.length} 行（fallback）`);
+      showToast(i18n.t('toastCopiedFallbackFmt', { count: lines.length }));
     }
   }
   function fallbackCopy(text) {
@@ -953,7 +953,7 @@
     const body = $('debug-log-body');
     if (!body) return;
     body.innerHTML = '';
-    showToast('🗑️ 调试日志已清空');
+    showToast(i18n.t('toastLogCleared'));
   }
 
   // ============================================================
@@ -1204,11 +1204,11 @@
           console.log(`[smoke]   ${t.ok ? '✅' : '❌'} ${t.name}: ${t.detail}`);
         }
         console.log('[smoke] ===== Driver 烟囱测试结束 =====');
-        showToast(`🧪 烟囱测试完成：${results.pass} 通过 / ${results.fail} 失败 — 看 debug 日志`);
+        showToast(i18n.t('toastSmokeTestDoneFmt', { pass: results.pass, fail: results.fail }));
       });
     } catch (e) {
       console.log('[smoke] FATAL: ' + (e.message || e));
-      showToast('🧪 烟囱测试失败：' + (e.message || e));
+      showToast(i18n.t('toastSmokeTestFailedFmt', { error: e.message || e }));
     }
   }
 
@@ -1406,7 +1406,7 @@
         if (layoutResult.staleParents && Object.keys(layoutResult.staleParents).length > 0) {
           const totalStale = Object.values(layoutResult.staleParents).reduce((s, arr) => s + arr.length, 0);
           if (totalStale > 0) {
-            showToast(`ℹ️ 检测到 ${totalStale} 个 layout 子已被删除/移走，下次应用布局时会自动清理`);
+            showToast(i18n.t('toastStaleLayoutsFmt', { count: totalStale }));
           }
         }
         for (const s of selectedShapes) {
@@ -1443,7 +1443,7 @@
       }
     } catch (err) {
       setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
-      showToast('读选区失败: ' + (err.message || err));
+      showToast(i18n.t('toastReadFailedFmt', { error: err.message || err }));
     }
   }
 
@@ -1616,9 +1616,9 @@
       // 轻量更新 UI（只改文本节点，不重建 DOM）
       if (needRefreshUI) renderCurrentRadius();
       if (recomputedIds.length > 0) {
-        showToast(`🔒 使用数值固定 R 角：反算了 ${recomputedIds.length} 个被改的 R 角`);
+        showToast(i18n.t('toastLockRecomputedFmt', { count: recomputedIds.length }));
       } else if (updatedLockIds.length > 0) {
-        showToast(`🪄 使用数值固定 R 角已跟随 R 角滑块更新（${updatedLockIds.length} 个）`);
+        showToast(i18n.t('toastLockFollowedFmt', { count: updatedLockIds.length }));
       }
 
       // v1.3.6 修 #2：layout 父 R 角变化 → 同步子 R 角
@@ -1712,7 +1712,7 @@
   function renderUI() {
     // 状态卡
     if (selectedShapes.length === 0) {
-      setStatus('选区', '未选中', 'status-warn');
+      setStatus(i18n.t('statusLabelSelection'), i18n.t('statusReading'), 'status-warn');
       $('current-radius').textContent = '—';
       $('locked-count').textContent = '—';
     } else {
@@ -1720,11 +1720,17 @@
       const anyRound = selectedShapes.some((s) => s.isRoundRect);
       const mixed = !allRound && anyRound;
       const ok = allRound;
-      setStatus('选区', `${selectedShapes.length} 个${mixed ? '（混合）' : ''}`, ok ? 'status-ok' : 'status-warn');
+      setStatus(
+        i18n.t('statusLabelSelection'),
+        mixed
+          ? i18n.t('statusShapeCountMixedFmt', { count: selectedShapes.length })
+          : i18n.t('statusShapeCountFmt', { count: selectedShapes.length }),
+        ok ? 'status-ok' : 'status-warn'
+      );
       // 当前 R 角（圆角矩形的）
       const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
       if (roundShapes.length > 0 && roundShapes[0].currentCm != null) {
-        $('current-radius').textContent = `${roundShapes[0].currentCm.toFixed(2)} 厘米`;
+        $('current-radius').textContent = i18n.t('statusCurrentRCmFmt', { value: roundShapes[0].currentCm.toFixed(2) });
       } else {
         $('current-radius').textContent = '—';
       }
@@ -1735,7 +1741,7 @@
     // 形状列表
     renderShapeList();
     // 输入框：单位标签 + 输入限制 + apply 按钮可用性
-    $('unit-label').textContent = currentUnit === 'cm' ? '厘米' : '百分比';
+    $('unit-label').textContent = i18n.t(currentUnit === 'cm' ? 'unitCm' : 'unitPercent');
     const hasRound = selectedShapes.length > 0 && selectedShapes.every((s) => s.isRoundRect);
     const inputVal = parseFloat($('radius-input').value);
     $('apply-btn').disabled = !(hasRound && Number.isFinite(inputVal) && inputVal >= 0);
@@ -1750,7 +1756,7 @@
     const list = $('shape-list');
     if (!list) return;
     if (selectedShapes.length === 0) {
-      list.innerHTML = '<div class="empty-list">在 PPT 里框选形状后会出现在这里</div>';
+      list.innerHTML = '<div class="empty-list">' + i18n.t('emptyShapes') + '</div>';
       return;
     }
     list.innerHTML = '';
@@ -1764,10 +1770,10 @@
       } else if (s.locked) {
         tag = `<span class="shape-lock">🔒 ${s.lockedCm.toFixed(2)}cm</span>`;
       } else if (!s.isRoundRect) {
-        tag = '<span class="shape-warn">非圆角矩形</span>';
+        tag = '<span class="shape-warn">' + i18n.t('nonRoundRect') + '</span>';
       }
       const rText = s.currentCm != null ? `${s.currentCm.toFixed(2)}cm` : '—';
-      row.innerHTML = `<span class="shape-name">${s.name || '(未命名)'}</span><span class="shape-r">${rText}</span>${tag}`;
+      row.innerHTML = `<span class="shape-name">${s.name || i18n.t('unnamed')}</span><span class="shape-r">${rText}</span>${tag}`;
       list.appendChild(row);
     }
   }
@@ -1777,7 +1783,7 @@
   function renderCurrentRadius() {
     const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
     if (roundShapes.length > 0 && roundShapes[0].currentCm != null) {
-      $('current-radius').textContent = `${roundShapes[0].currentCm.toFixed(2)} 厘米`;
+      $('current-radius').textContent = i18n.t('statusCurrentRCmFmt', { value: roundShapes[0].currentCm.toFixed(2) });
     } else {
       $('current-radius').textContent = '—';
     }
@@ -1798,8 +1804,8 @@
     if (selectedShapes.length === 0) {
       btn.disabled = true;
       $('lock-icon').textContent = '🔒';
-      $('lock-label').textContent = '使用数值固定 R 角';
-      $('lock-hint').textContent = '读选中…';
+      $('lock-label').textContent = i18n.t('lockRadius');
+      $('lock-hint').textContent = i18n.t('statusReading');
       updateStrictToggle();
       return;
     }
@@ -1807,10 +1813,10 @@
     const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
     const allLocked = roundShapes.length > 0 && roundShapes.every((s) => s.locked);
     $('lock-icon').textContent = allLocked ? '🔒' : '🔒';
-    $('lock-label').textContent = allLocked ? '关闭使用数值固定 R 角' : '使用数值固定 R 角';
+    $('lock-label').textContent = allLocked ? i18n.t('lockRadiusOff') : i18n.t('lockRadius');
     $('lock-hint').textContent = allLocked
-      ? `已使用数值固定 R 角 ${roundShapes.length} 个（PPT 内编辑会被反算回固定值）`
-      : `开启后 R 角按厘米值保持，PPT 内编辑会被反算`;
+      ? (i18n.getLang() === 'zh' ? `已使用数值固定 R 角 ${roundShapes.length} 个（PPT 内编辑会被反算回固定值）` : `Fix-R-by-value on ${roundShapes.length} shape(s) (in-PPT edits are reversed to fixed value)`)
+      : (i18n.getLang() === 'zh' ? '开启后 R 角按厘米值保持，PPT 内编辑会被反算' : 'When on, R is held in cm and in-PPT edits are reversed');
     updateStrictToggle();
   }
 
@@ -1829,7 +1835,7 @@
       label.classList.add('disabled');
       cb.disabled = true;
       cb.checked = false;
-      if (hintEl) hintEl.textContent = '开启后任何修改都不改 R 角';
+      if (hintEl) hintEl.textContent = i18n.t('strictHint');
     } else {
       // 任何时候都能开 strict（开启时自动 lock）
       label.classList.remove('disabled');
@@ -1837,8 +1843,8 @@
       const allStrict = roundShapes.every((s) => s.strictLocked);
       cb.checked = allStrict;
       if (hintEl) hintEl.textContent = allStrict
-        ? '已开启（任何修改都不会改 R 角）'
-        : '开启后任何修改都不改 R 角';
+        ? (i18n.getLang() === 'zh' ? '已开启（任何修改都不会改 R 角）' : 'Enabled (all edits rejected)')
+        : i18n.t('strictHint');
     }
   }
 
@@ -1847,18 +1853,18 @@
   /** 应用 R 角：所有选中的圆角矩形都改成输入的 cm 值 */
   async function onApply() {
     if (selectedShapes.length === 0) {
-      showToast('请先在 PPT 里框选圆角矩形');
+      showToast(i18n.t('toastSelectRoundRect'));
       return;
     }
     const raw = parseFloat($('radius-input').value);
     if (!Number.isFinite(raw) || raw < 0) {
-      showToast('请输入有效的 R 角值');
+      showToast(i18n.t('toastInvalidR'));
       return;
     }
     // v1.1 防误触拦截：选区里有任何 strict 锁定 → 全部拒绝
     const strictLocked = selectedShapes.filter((s) => s.isRoundRect && s.strictLocked);
     if (strictLocked.length > 0) {
-      showToast(`🔒 防误触已开启（${strictLocked.length} 个），不能改 R 角。先关掉防误触或解锁。`);
+      showToast(i18n.t('toastStrictBlocksFmt', { count: strictLocked.length }));
       return;
     }
     // 输入值按当前单位换算成 cm
@@ -1894,20 +1900,20 @@
         const lockHint = lockedSynced > 0
           ? `，${lockedSynced} 个使用数值固定 R 角已同步更新`
           : '';
-        showToast(`✅ 已更新 ${updated} 个圆角矩形为 ${displayVal}${lockHint}`);
+        showToast(i18n.t('toastRUpdatedFmt', { count: updated, value: displayVal, lockHint: lockHint }));
         if (updated > 0) {
           // 写到内存 + 渲染
           const newHistory = pushHistory(raw, currentUnit);
           renderHistory(newHistory);
         }
       } else {
-        showToast(`⚠️ ${updated} 个成功，${failed} 个失败（可能不是圆角矩形）`);
+        showToast(i18n.t('toastPartialSuccessFmt', { updated: updated, failed: failed }));
       }
       await refreshSelection();
       // v1.2: 选区里有 layout 父 → 同步子 R 角（联动）
       await syncLayoutChildrenRIfNeeded();
     } catch (err) {
-      showToast('应用失败：' + (err.message || err));
+      showToast(i18n.t('toastApplyFailedFmt', { error: err.message || err }));
     } finally {
       // 写完恢复 monitor（stopLockMonitor 已清空 last 状态，startLockMonitor 从干净开始）
       if (selectedShapes.length > 0) startLockMonitor();
@@ -1917,12 +1923,12 @@
   /** 使用数值固定 R 角 开启/关闭：用 shape.tags 存固定值，跟 .pptx 文件走 */
   async function onToggleLock() {
     if (selectedShapes.length === 0) {
-      showToast('请先在 PPT 里框选圆角矩形');
+      showToast(i18n.t('toastSelectRoundRect'));
       return;
     }
     const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
     if (roundShapes.length === 0) {
-      showToast('选中的形状都不是圆角矩形');
+      showToast(i18n.t('toastNotRoundRect'));
       return;
     }
     const allLocked = roundShapes.every((s) => s.locked);
@@ -1949,7 +1955,7 @@
     }
     const r = await saveLocksViaTags(locks, strict);
     if (!r.ok) {
-      showToast('操作失败：' + (r.error?.message || r.error));
+      showToast(i18n.t('toastApplyFailedFmt', { error: r.error?.message || r.error }));
       return;
     }
     showToast(allLocked
@@ -1965,12 +1971,12 @@
    *  - 关闭"使用数值固定 R 角"时会同时清掉 strict（见 onToggleLock，因为反算目标没了） */
   async function onToggleStrict(newValue) {
     if (selectedShapes.length === 0) {
-      showToast('请先在 PPT 里框选圆角矩形');
+      showToast(i18n.t('toastSelectRoundRect'));
       return;
     }
     const roundShapes = selectedShapes.filter((s) => s.isRoundRect);
     if (roundShapes.length === 0) {
-      showToast('选中的形状都不是圆角矩形');
+      showToast(i18n.t('toastNotRoundRect'));
       return;
     }
     if (newValue) {
@@ -1985,7 +1991,7 @@
           locks[s.id] = s.currentCm;
         } else {
           // R 角 = 0 / 未知：没法设 fixed value
-          showToast(`无法开启防误触：${s.name || '(未命名)'} 当前 R 角未知或为 0`);
+          showToast(i18n.t('toastStrictCannotEnableFmt', { name: s.name || i18n.t('unnamed') }));
           return;
         }
       }
@@ -1993,16 +1999,16 @@
       for (const s of roundShapes) strict[s.id] = true;
       const r = await saveLocksViaTags(locks, strict);
       if (!r.ok) {
-        showToast('操作失败：' + (r.error?.message || r.error));
+        showToast(i18n.t('toastApplyFailedFmt', { error: r.error?.message || r.error }));
         return;
       }
-      showToast(`🔒 防误触已开启（${roundShapes.length} 个）— 已自动用当前 R 角作固定值`);
+      showToast(i18n.t('toastStrictEnabledFmt', { count: roundShapes.length }));
     } else {
       // 关闭：只删 strict tag（不动 lock tag）
       for (const s of roundShapes) {
         await updateLockTagForShape(s.id, undefined, false);
       }
-      showToast(`防误触已关闭（${roundShapes.length} 个）— 允许主动调整 R 角${roundShapes.some((s) => s.locked) ? '，固定值保留' : ''}`);
+      showToast(i18n.t('toastStrictDisabledFmt', { count: roundShapes.length, keepHint: roundShapes.some((s) => s.locked) ? i18n.t('keepLockHint') : '' }));
     }
     await refreshSelection();
   }
@@ -2011,7 +2017,7 @@
   async function onReapply() {
     const locked = selectedShapes.filter((s) => s.locked);
     if (locked.length === 0) {
-      showToast('当前选区没有锁定的圆角矩形');
+      showToast(i18n.t('toastNoLockedRects'));
       return;
     }
     let applied = 0;
@@ -2033,10 +2039,10 @@
         }
         await driver.sync();
       });
-      showToast(`🔒 重新应用了 ${applied} 个锁定的 R 角${failed > 0 ? `，${failed} 个失败` : ''}`);
+      showToast(i18n.t('toastReappliedFmt', { count: applied, failed: failed > 0 ? i18n.t('failedStrFmt', { count: failed }) : '' }));
       await refreshSelection();
     } catch (err) {
-      showToast('操作失败：' + (err.message || err));
+      showToast(i18n.t('toastApplyFailedFmt', { error: err.message || err }));
     }
   }
 
@@ -2068,7 +2074,7 @@
       $('radius-input').removeAttribute('max');
       $('radius-input').placeholder = '0.30';
     }
-    $('unit-label').textContent = newUnit === 'cm' ? '厘米' : '百分比';
+    $('unit-label').textContent = i18n.t(newUnit === 'cm' ? 'unitCm' : 'unitPercent');
     renderUI();
   }
 
@@ -2099,7 +2105,7 @@
     if (arr.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'preset-empty';
-      empty.textContent = '保存常用 R 角，一键应用。点击「+ 保存当前值」开始。';
+      empty.textContent = i18n.t('emptyPreset');
       list.appendChild(empty);
       return;
     }
@@ -2119,7 +2125,7 @@
         const v = nameInput.value.trim();
         if (v) {
           p.name = v;
-          showToast(`已重命名为「${v}」`);
+          showToast(i18n.t('toastRenamedFmt', { name: v }));
         } else {
           nameInput.value = p.name;
         }
@@ -2145,7 +2151,7 @@
       valInput.value = p.unit === '%'
         ? (Number.isInteger(p.value) ? String(p.value) : p.value.toFixed(1))
         : p.value.toFixed(2);
-      valInput.title = `点击编辑数值（按 ${p.unit === '%' ? '百分比' : '厘米'} 解读），回车保存`;
+      valInput.title = i18n.t('presetEditTitleFmt', { unit: i18n.t(p.unit === '%' ? 'unitPercent' : 'unitCm') });
       valInput.addEventListener('change', () => {
         const v = parseFloat(valInput.value);
         if (!Number.isFinite(v) || v < 0) {
@@ -2153,18 +2159,18 @@
           valInput.value = p.unit === '%'
             ? (Number.isInteger(p.value) ? String(p.value) : p.value.toFixed(1))
             : p.value.toFixed(2);
-          showToast('请输入有效的 R 角值');
+          showToast(i18n.t('toastInvalidR'));
           return;
         }
         if (p.unit === '%' && v > 50) {
           valInput.value = String(p.value);
-          showToast('百分比模式范围 0~50%');
+          showToast(i18n.t('toastPercentRange'));
           return;
         }
         p.value = v;
         // 更新应用按钮的 title 提示
         applyBtn.title = `应用 ${p.name} = ${formatPresetValue(p.value, p.unit)} 到当前选区`;
-        showToast(`已更新「${p.name}」为 ${formatPresetValue(v, p.unit)}`);
+        showToast(i18n.t('toastPresetUpdatedFmt', { name: p.name, value: formatPresetValue(v, p.unit) }));
       });
       valInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') valInput.blur();
@@ -2196,7 +2202,7 @@
 
   function addPresetFromInput() {
     if (userPresets.length >= MAX_PRESETS) {
-      showToast(`预设库已满（${MAX_PRESETS} 个），请先删一个再加`);
+      showToast(i18n.t('toastPresetsFullFmt', { max: MAX_PRESETS }));
       return;
     }
     // 优先用当前选中的圆角矩形的 R 角；没有就退回输入框
@@ -2210,14 +2216,14 @@
       raw = parseFloat($('radius-input').value);
       unit = currentUnit;
       if (!Number.isFinite(raw) || raw < 0) {
-        showToast('请先在 PPT 里选 1 个圆角矩形，或在输入框里输入有效的 R 角值');
+        showToast(i18n.t('toastNoRValue'));
         $('radius-input').focus();
         return;
       }
     }
     // 单位校验
     if (unit === '%' && (raw < 0 || raw > 50)) {
-      showToast('百分比模式范围 0~50%');
+      showToast(i18n.t('toastPercentRange'));
       return;
     }
     // 默认命名：「预设 N」
@@ -2225,17 +2231,17 @@
     const p = { id: nextPresetId(), name, value: raw, unit };
     userPresets = [p, ...userPresets].slice(0, MAX_PRESETS);
     renderPresets(userPresets);
-    showToast(`已保存为「${name}」(${formatPresetValue(raw, unit)})`);
+    showToast(i18n.t('toastPresetSavedFmt', { name: name, value: formatPresetValue(raw, unit) }));
   }
 
   function applyPreset(preset) {
     if (selectedShapes.length === 0) {
-      showToast('请先在 PPT 里框选圆角矩形');
+      showToast(i18n.t('toastSelectRoundRect'));
       return;
     }
     const roundCount = selectedShapes.filter((s) => s.isRoundRect).length;
     if (roundCount === 0) {
-      showToast('选中的形状都不是圆角矩形');
+      showToast(i18n.t('toastNotRoundRect'));
       return;
     }
     // 切到预设的单位 + 把值写到输入框 + 触发 onApply
@@ -2253,7 +2259,7 @@
     userPresets = userPresets.filter((p) => p.id !== id);
     if (userPresets.length < before) {
       renderPresets(userPresets);
-      showToast('预设已删除');
+      showToast(i18n.t('toastPresetDeleted'));
     }
   }
 
@@ -2275,17 +2281,17 @@
     btn.dataset.state = newState;
     if (newState === 'idle') {
       badge.className = 'pipette-state-badge idle';
-      badge.textContent = '空闲';
+      badge.textContent = i18n.t('pipetteStateIdle');
       hint.classList.remove('has-source');
-      hint.textContent = '点击吸取一个圆角矩形的 R 角，再点其他形状应用';
+      hint.textContent = i18n.t('hintPipette');
       icon.textContent = '🖌️';
-      label.textContent = '吸取 R 角';
+      label.textContent = i18n.t('pipettePickR');
       btn.classList.remove('state-sourcing', 'state-brushing');
     } else if (newState === 'sourcing') {
       badge.className = 'pipette-state-badge sourcing';
-      badge.textContent = '吸取中…';
+      badge.textContent = i18n.getLang() === 'zh' ? '吸取中…' : 'Sourcing…';
       hint.classList.add('has-source');
-      hint.textContent = '在 PPT 里点选 1 个圆角矩形吸取其 R 角';
+      hint.textContent = i18n.t('pipetteHintSourcing');
       icon.textContent = '🎯';
       label.textContent = '取消吸取';
       btn.classList.add('state-sourcing');
@@ -2320,15 +2326,15 @@
         return;
       }
       if (selectedShapes.length > 0) {
-        showToast('当前选中的不是圆角矩形，请先在 PPT 里点 1 个圆角矩形');
+        showToast(i18n.t('toastNotRoundRectPickup'));
       }
       setPipetteState('sourcing');
-      showToast('🎯 进入吸取模式 — 在 PPT 里点 1 个圆角矩形');
+      showToast(i18n.t('toastEnterPipette'));
     } else {
       // 任意非 idle 状态点击按钮都退出
       setPipetteState('idle');
       pipetteSource = null;
-      showToast('样式刷已关闭');
+      showToast(i18n.t('toastPipetteClosed'));
     }
   }
 
@@ -2350,11 +2356,11 @@
         }
       });
     } catch (e) {
-      showToast('吸取失败：' + (e.message || e));
+      showToast(i18n.t('toastPickupFailedFmt', { error: e.message || e }));
       return;
     }
     if (!picked) {
-      showToast('选区里没有圆角矩形');
+      showToast(i18n.t('toastNoRoundRectInSelection'));
       return;
     }
     // 把 cm 换算到当前 currentUnit（更直观）
@@ -2369,7 +2375,7 @@
     };
     setPipetteState('brushing');
     const strictHint = pipetteSyncStrict && picked.sourceStrict ? '（含防误触）' : '';
-    showToast(`🪣 已吸取「${pipetteSource.sourceShapeName}」= ${formatPresetValue(value, currentUnit)} — 选中目标形状自动应用${strictHint}`);
+    showToast(i18n.t('toastPickedFmt', { name: pipetteSource.sourceShapeName, value: formatPresetValue(value, currentUnit), strictHint: strictHint }));
     // 顺便把 selectedShapes 内存刷新一下（让状态卡同步显示源形状）
     refreshSelection();
   }
@@ -2406,18 +2412,18 @@
         );
       });
     } catch (err) {
-      showToast('样式刷失败：' + (err.message || err));
+      showToast(i18n.t('toastBrushFailedFmt', { error: err.message || err }));
       if (selectedShapes.length > 0) startLockMonitor();
       return;
     }
 
     if (!result || !result.ok) {
       if (result && result.rejectReason === 'strict') {
-        showToast('🔒 选区里有形状启用了防误触，样式刷不生效。先关掉目标的防误触或解锁。');
+        showToast(i18n.t('toastBrushBlocked'));
       } else if (result && result.applied === 0) {
-        showToast('选区为空，先在 PPT 里选 1 个圆角矩形');
+        showToast(i18n.t('toastBrushNoSelection'));
       } else if (result) {
-        showToast('样式刷失败：' + (result.error || '未知错误'));
+        showToast(i18n.t('toastBrushFailedFmt', { error: result.error || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
       }
       if (selectedShapes.length > 0) startLockMonitor();
       return;
@@ -2434,7 +2440,7 @@
     } else if (result.strictRemoved > 0) {
       strictHint = `，${result.strictRemoved} 个解除防误触`;
     }
-    showToast(`🪣 样式刷应用了 ${result.applied} 个圆角矩形${result.failed > 0 ? `，${result.failed} 个失败` : ''}${lockHint}${strictHint}`);
+    showToast(i18n.t('toastBrushAppliedFmt', { count: result.applied, failed: result.failed > 0 ? i18n.t('failedStrFmt', { count: result.failed }) : '', lockHint: lockHint, strictHint: strictHint }));
     await refreshSelection();
     // v1.2: layout 父被刷 R 角 → 同步子 R 角
     await syncLayoutChildrenRIfNeeded();
@@ -2559,6 +2565,10 @@
   // ---------------- 初始化 ----------------
 
   Office.onReady(() => {
+    // Apply i18n to any [data-i18n] / [data-i18n-*] attributes (HTML inline script
+    // already did this on DOMContentLoaded, but call again in case Office is slow
+    // and dynamic textContent / placeholder updates need to be re-translated).
+    if (window.i18n && window.i18n.applyAll) window.i18n.applyAll();
     bindEvents();
     renderPresets(userPresets); // 渲染空预设库
     refreshSelection();

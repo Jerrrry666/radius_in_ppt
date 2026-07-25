@@ -2,7 +2,7 @@
 
 > 🌍 **[中文版](./CONTRIBUTING.md)**
 
-Thanks for considering contributing to **RadiusInPpt** (R 角调整)! 🎉
+Thanks for considering contributing to **RadiusInPpt**! 🎉
 
 This is a macOS PowerPoint add-in that lets users set the corner radius of rounded rectangles in **centimeters** or **percentages**.
 
@@ -76,7 +76,7 @@ WEF="$HOME/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef"
 mkdir -p "$WEF" && cp manifest.xml "$WEF/manifest.xml"
 ```
 
-Fully quit PowerPoint (`Cmd+Q`), reopen, and the **"R 角调整"** tab will appear on the ribbon.
+Fully quit PowerPoint (`Cmd+Q`), reopen, and the **"RadiusInPpt"** tab will appear on the ribbon.
 
 ## Build
 
