@@ -382,6 +382,74 @@ function detectLayoutParentChanges(knownCmMap, selectedShapes) {
 }
 
 /**
+ * v1.2.9：检测哪些 layout 父的 size (width/height) 变了（cm 单位）
+ *
+ * 场景：用户在 PPT 里**直接拖父的边缘**改 width/height（不走 task pane 的 onApply），
+ *       子图形的 size 应该按 layout 公式 (subW = (W - 2d - (cols-1)*g) / cols) 重算。
+ *       monitorTick 检测到 size 变化，触发 applyLayoutToChildren → 重写子位置/尺寸/R 角。
+ *
+ * 跟 detectLayoutParentChanges 的关系：
+ *   - detectLayoutParentChanges 看 R 角变化（触发 syncR）
+ *   - detectLayoutParentSizeChanges 看 size 变化（触发重算 layout 几何 + syncR）
+ *   - 两个并行检测，任一 fire 都触发 scheduleParentRSync → applyLayoutToChildren
+ *   - applyLayoutToChildren 已经会同时重算子位置/尺寸 + R 角，所以 R/size 触发同一路径
+ *
+ * 为什么不合并到 detectLayoutParentChanges：
+ *   - R 角 map 和 size map 是两套独立状态（lastCm / lastSize），caller 维护成本不同
+ *   - 合并会让函数返回类型变复杂、caller 判断逻辑变长
+ *   - 两个独立函数 + caller merge「任一变了就 fire」更清晰
+ *
+ * 容差：
+ *   - 1e-3 cm = 0.001 cm = 0.028 pt
+ *   - monitorTick PPT 读 width/height 走 driver.size，ppt 浮点可能有 0.01 pt 误差
+ *   - 1e-3 cm 是合理阈值（< 1 像素 / 96 dpi）
+ *
+ * @param {Object} knownSizeMap - { [parentId]: { widthCm, heightCm } }（dialog.js 维护）
+ * @param {Array} selectedShapes - dialog.js 内存里的 selectedShapes
+ *   - 每项至少含 { id, layoutRole, widthCm, heightCm }
+ *   - 兼容 width/height 字段（pt 单位，自动除 PT_PER_CM）
+ * @returns {Array<{parentId, lastSize, newSize}>} 变了哪些父
+ *   - lastSize 为 null 表示首次见到（caller 决定是否 fire）
+ */
+function detectLayoutParentSizeChanges(knownSizeMap, selectedShapes) {
+  const changes = [];
+  if (!Array.isArray(selectedShapes)) return changes;
+  for (const s of selectedShapes) {
+    if (!s || s.layoutRole !== 'parent') continue;
+    // 兼容 widthCm/heightCm（cm）和 width/height（pt）两种入参
+    const wCm = Number.isFinite(s.widthCm)
+      ? s.widthCm
+      : (Number.isFinite(s.width) ? s.width / PT_PER_CM : NaN);
+    const hCm = Number.isFinite(s.heightCm)
+      ? s.heightCm
+      : (Number.isFinite(s.height) ? s.height / PT_PER_CM : NaN);
+    if (!Number.isFinite(wCm) || !Number.isFinite(hCm)) continue;
+    const newSize = { widthCm: wCm, heightCm: hCm };
+    const lastSize = knownSizeMap && knownSizeMap[s.id] ? knownSizeMap[s.id] : null;
+    if (!lastSize) {
+      // 首次见到：算"变了"（caller 可以选择忽略）
+      changes.push({ parentId: s.id, lastSize: null, newSize });
+      continue;
+    }
+    if (
+      !Number.isFinite(lastSize.widthCm) ||
+      !Number.isFinite(lastSize.heightCm)
+    ) {
+      // lastSize 损坏：当成首次
+      changes.push({ parentId: s.id, lastSize: null, newSize });
+      continue;
+    }
+    if (
+      Math.abs(newSize.widthCm - lastSize.widthCm) > 1e-3 ||
+      Math.abs(newSize.heightCm - lastSize.heightCm) > 1e-3
+    ) {
+      changes.push({ parentId: s.id, lastSize, newSize });
+    }
+  }
+  return changes;
+}
+
+/**
  * 模拟写 R 角后：locked 形状的 fixed value 同步逻辑
  * @param {Object} shape - { isLocked, lockedCm }
  * @param {number} newCm - 写完后的 R 角（cm）
@@ -1278,6 +1346,7 @@ if (typeof module !== 'undefined' && module.exports) {
     pushHistory,
     computeSquircleHint,
     IOS7_DEFAULT_SMOOTHING,
+    detectLayoutParentSizeChanges,
   };
 }
 if (typeof window !== 'undefined') {
@@ -1317,5 +1386,6 @@ if (typeof window !== 'undefined') {
     applyPickedToSelection,
     computeSquircleHint,
     IOS7_DEFAULT_SMOOTHING,
+    detectLayoutParentSizeChanges,
   };
 }

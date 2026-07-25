@@ -84,7 +84,8 @@
     lastAdj: {},       // shapeId -> 上次读到的 adj
     stableCount: {},   // shapeId -> adj 连续稳定次数
     lastCm: {},        // shapeId -> 上次读到的 currentCm（cm）—— 仅 layout 父用
-    parentRDirty: false,  // 是否有 layout 父 R 角变化需要联动
+    lastSizeCm: {},    // shapeId -> 上次读到的 { widthCm, heightCm } —— 仅 layout 父用（v1.2.9 size 联动）
+    parentRDirty: false,  // 是否有 layout 父 R 角或 size 变化需要联动（v1.2.9 合并）
     parentRSyncTimer: null,  // 节流 timer（避免 10ms tick 频繁触发新 run）
   };
   const PARENT_R_SYNC_DEBOUNCE_MS = 200;  // 父 R 角变化 → 同步子的节流窗口
@@ -1318,6 +1319,7 @@
     lockMonitor.lastAdj = {};
     lockMonitor.stableCount = {};
     lockMonitor.lastCm = {};
+    lockMonitor.lastSizeCm = {};  // v1.2.9
     lockMonitor.parentRDirty = false;
     if (lockMonitor.parentRSyncTimer) {
       clearTimeout(lockMonitor.parentRSyncTimer);
@@ -1336,6 +1338,7 @@
     lockMonitor.lastAdj = {};
     lockMonitor.stableCount = {};
     lockMonitor.lastCm = {};
+    lockMonitor.lastSizeCm = {};  // v1.2.9
     lockMonitor.parentRDirty = false;
     if (lockMonitor.parentRSyncTimer) {
       clearTimeout(lockMonitor.parentRSyncTimer);
@@ -1479,14 +1482,16 @@
       }
 
       // v1.3.6 修 #2：layout 父 R 角变化 → 同步子 R 角
-      // 场景：用户在 PPT 里直接拖父的 R 角黄色滑块（不走 task pane 的 onApply），
-      //       monitorTick 检测到 currentCm 变化，detectLayoutParentChanges 返回变化的父，
-      //       调 syncLayoutChildrenRIfNeeded 联动子 R 角
-      // 首次见到（lastCm = null）只记录不触发 sync（避免启动时无意义重写子 R 角）
+      // v1.2.9：同时检测父 size 变化（width/height）→ 同步子位置/尺寸 + R 角
+      // 场景：用户在 PPT 里直接拖父的 R 角黄色滑块 / 拖父的边缘 / 角控制柄（不走 task pane 的 onApply），
+      //       monitorTick 检测到 currentCm 或 width/height 变化，detectLayoutParentChanges / detectLayoutParentSizeChanges 返回变化的父，
+      //       调 syncLayoutChildrenRIfNeeded → applyLayoutToChildren → 重算 layout 几何 + R 角
+      // 首次见到（lastCm / lastSizeCm = null）只记录不触发 sync（避免启动时无意义重写子 R 角）
       try {
-        const changes = window.RadiusCore.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
         let hasRealChange = false;
-        for (const c of changes) {
+        // 1) R 角变化
+        const rChanges = window.RadiusCore.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+        for (const c of rChanges) {
           if (c.lastCm == null) {
             // 首次见到：只记 lastCm，不触发 sync
             lockMonitor.lastCm[c.parentId] = c.newCm;
@@ -1496,7 +1501,21 @@
           // 真正变了：更新 lastCm + 标 dirty
           lockMonitor.lastCm[c.parentId] = c.newCm;
           hasRealChange = true;
-          console.log(`[layout-link] fire parentId=${c.parentId} lastCm=${c.lastCm.toFixed(3)} newCm=${c.newCm.toFixed(3)} (→ 200ms 后调 syncLayoutChildrenR)`);
+          console.log(`[layout-link] R-fire parentId=${c.parentId} lastCm=${c.lastCm.toFixed(3)} newCm=${c.newCm.toFixed(3)} (→ 200ms 后调 syncLayoutChildrenR)`);
+        }
+        // 2) v1.2.9：size 变化（widthCm / heightCm）
+        const sChanges = window.RadiusCore.detectLayoutParentSizeChanges(lockMonitor.lastSizeCm, selectedShapes);
+        for (const c of sChanges) {
+          if (c.lastSize == null) {
+            // 首次见到：只记 lastSizeCm，不触发 sync
+            lockMonitor.lastSizeCm[c.parentId] = c.newSize;
+            console.log(`[layout-link] first-see parentId=${c.parentId} newSize=${JSON.stringify({ w: c.newSize.widthCm.toFixed(2), h: c.newSize.heightCm.toFixed(2) })} (记 lastSize 不 fire)`);
+            continue;
+          }
+          // 真正变了：更新 lastSize + 标 dirty
+          lockMonitor.lastSizeCm[c.parentId] = c.newSize;
+          hasRealChange = true;
+          console.log(`[layout-link] SIZE-fire parentId=${c.parentId} lastSize=${JSON.stringify({ w: c.lastSize.widthCm.toFixed(2), h: c.lastSize.heightCm.toFixed(2) })} newSize=${JSON.stringify({ w: c.newSize.widthCm.toFixed(2), h: c.newSize.heightCm.toFixed(2) })} (→ 200ms 后调 syncLayoutChildrenR)`);
         }
         if (hasRealChange) {
           lockMonitor.parentRDirty = true;

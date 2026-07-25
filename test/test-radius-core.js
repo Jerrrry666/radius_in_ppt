@@ -733,6 +733,125 @@ t.test('computeSquircleHint figmaEquivalent 标签分档', () => {
 });
 
 // ============================================================
+// 10. detectLayoutParentSizeChanges — v1.2.9 父 size 联动检测
+// ============================================================
+
+t.test('detectLayoutParentSizeChanges 父 width 变了 → 返回 changed 列表', () => {
+  const knownSize = { p1: { widthCm: 10, heightCm: 5 } };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', widthCm: 12, heightCm: 5 },  // width 10 → 12
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].parentId, 'p1');
+  assert.deepStrictEqual(changes[0].lastSize, { widthCm: 10, heightCm: 5 });
+  assert.deepStrictEqual(changes[0].newSize, { widthCm: 12, heightCm: 5 });
+});
+
+t.test('detectLayoutParentSizeChanges 父 height 变了 → 返回 changed 列表', () => {
+  const knownSize = { p1: { widthCm: 10, heightCm: 5 } };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', widthCm: 10, heightCm: 7 },  // height 5 → 7
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].newSize.heightCm, 7);
+});
+
+t.test('detectLayoutParentSizeChanges size 没变（容差内） → 返回空', () => {
+  const knownSize = { p1: { widthCm: 10, heightCm: 5 } };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', widthCm: 10.0005, heightCm: 5.0005 },  // < 1e-3 容差
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentSizeChanges 首次见到（lastSize null） → 算变了（lastSize: null）', () => {
+  const knownSize = {};  // 空
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', widthCm: 10, heightCm: 5 },
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].parentId, 'p1');
+  assert.strictEqual(changes[0].lastSize, null);
+  assert.deepStrictEqual(changes[0].newSize, { widthCm: 10, heightCm: 5 });
+});
+
+t.test('detectLayoutParentSizeChanges 非 layout 父 → 跳过', () => {
+  const knownSize = { x1: { widthCm: 10, heightCm: 5 } };
+  const sel = [
+    { id: 'x1', layoutRole: null, widthCm: 12, heightCm: 7 },  // 不是 parent
+    { id: 'x2', layoutRole: 'child', widthCm: 12, heightCm: 7 },  // 是 child 不是 parent
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentSizeChanges 兼容 width/height 字段（pt，自动转 cm）', () => {
+  const knownSize = { p1: { widthCm: 5, heightCm: 3 } };
+  const PT_PER_CM = 28.3464567;
+  const sel = [
+    {
+      id: 'p1',
+      layoutRole: 'parent',
+      // width/height 是 pt（不是 cm）；5cm × 1.5 = 7.5cm
+      width: 5 * 1.5 * PT_PER_CM,
+      height: 3 * 1.5 * PT_PER_CM,
+    },
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.ok(Math.abs(changes[0].newSize.widthCm - 7.5) < 1e-6);
+  assert.ok(Math.abs(changes[0].newSize.heightCm - 4.5) < 1e-6);
+});
+
+t.test('detectLayoutParentSizeChanges 缺 size 字段 → 跳过', () => {
+  const knownSize = { p1: { widthCm: 5, heightCm: 3 } };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent' /* 没 widthCm / width */ },
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 0);
+});
+
+t.test('detectLayoutParentSizeChanges lastSize 字段损坏（NaN） → 当首次', () => {
+  const knownSize = { p1: { widthCm: NaN, heightCm: 3 } };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', widthCm: 10, heightCm: 5 },
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0].lastSize, null);
+});
+
+t.test('detectLayoutParentSizeChanges selectedShapes 非数组 → 返回空', () => {
+  const changes = RC.detectLayoutParentSizeChanges({}, null);
+  assert.deepStrictEqual(changes, []);
+});
+
+t.test('detectLayoutParentSizeChanges 多个父混合（部分变） → 只返回变了的', () => {
+  const knownSize = {
+    p1: { widthCm: 10, heightCm: 5 },
+    p2: { widthCm: 8, heightCm: 4 },
+  };
+  const sel = [
+    { id: 'p1', layoutRole: 'parent', widthCm: 12, heightCm: 5 },  // 变了
+    { id: 'p2', layoutRole: 'parent', widthCm: 8, heightCm: 4 },    // 没变
+    { id: 'p3', layoutRole: 'parent', widthCm: 6, heightCm: 3 },    // 首次（→ 不在 fire 列表里也是变了）
+  ];
+  const changes = RC.detectLayoutParentSizeChanges(knownSize, sel);
+  assert.strictEqual(changes.length, 2);
+  // p1: 真变
+  assert.strictEqual(changes[0].parentId, 'p1');
+  assert.deepStrictEqual(changes[0].lastSize, { widthCm: 10, heightCm: 5 });
+  // p3: 首次
+  assert.strictEqual(changes[1].parentId, 'p3');
+  assert.strictEqual(changes[1].lastSize, null);
+});
+
+// ============================================================
 // 跑
 // ============================================================
 
