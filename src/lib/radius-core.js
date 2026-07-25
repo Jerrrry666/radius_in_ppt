@@ -575,6 +575,8 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
     }
 
     // 7. 写每个子的位置 + 尺寸 + R 角 + child tag
+    // v1.3.6 修 #6：先 readTagsBulk 拿全部 tag（避开 per-call readTag + sync 在 for 循环内累积）
+    const tagsById = driver.readTagsBulk(slideShapes.items);
     for (let k = 0; k < childShapes.length; k++) {
       const csh = childShapes[k];
       const pos = layout.positions[k];
@@ -591,7 +593,23 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
       if (syncR && linkRMode !== 'off') {
         const subRcm = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - params.padding);
         console.log(`[applyLayout/driver] R link #${k}: parentRcm=${parentRcm}, mode=${linkRMode}, padding=${params.padding}, target subRcm=${subRcm}`);
-        const r = await writeRadius(driver, csh, subRcm, { layoutParentId: parentId });
+        // 从 readTagsBulk 拿的 tag 构造 knownLockState，传给 writeRadius（跳过 per-call readTag + sync）
+        const cTags = tagsById[driver.shapeId(csh)] || {};
+        const lockRaw = cTags[LOCK_TAG_KEY];
+        let isLocked = false;
+        let lockedCm = 0;
+        if (lockRaw != null) {
+          const cm = parseFloat(lockRaw);
+          if (Number.isFinite(cm) && cm > 0) {
+            isLocked = true;
+            lockedCm = cm;
+          }
+        }
+        const isStrict = cTags[LOCK_STRICT_TAG_KEY] === '1';
+        const r = await writeRadius(driver, csh, subRcm, {
+          layoutParentId: parentId,
+          knownLockState: { isLocked, lockedCm, isStrict },
+        });
         if (r.ok) {
           console.log(`[applyLayout/driver] R link #${k}: written subRcm=${r.newCm}, wasLocked=${r.wasLocked}`);
           if (r.wasLocked) {

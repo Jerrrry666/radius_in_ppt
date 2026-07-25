@@ -810,8 +810,8 @@ t.test('集成：saveLayoutTags → loadLayoutTags round-trip 一致', async () 
 
 t.test('pickupFromSelection: 选区里第一个 roundRect → 返回 cm + strict', async () => {
   const f = makeStandardFixture();
-  const h = createHarness({ shapes: f.allShapes });
-  // r2_medium: 短边 4cm, adjFraction=0.1 → cm = 0.1 * 4 = 0.4
+  // 喂 r2_medium（adjFraction=0.1, 短边 4cm → cm=0.4）当第一个 roundRect
+  const h = createHarness({ shapes: [f.shapes.r2_medium] });
   const r = await RC.pickupFromSelection(h.driver, h.slide.shapes);
   assert.ok(r);
   assert.strictEqual(r.id, 'r2_medium');
@@ -867,7 +867,8 @@ t.test('applyPickedToSelection: bug #1 — 吸取后能正常刷入（happy path
   //             在某些场景写不进 R 角。改用 radius-core.writeRadius（driver 版）后正常。
   // 这个测试就是验证整个 pipeline：pickup → apply 一气呵成能把 R 角刷到目标
   const f = makeStandardFixture();
-  const h = createHarness({ shapes: f.allShapes });
+  // 用 r2_medium 当源（adj=0.1, 短边 4cm → cm=0.4）
+  const h = createHarness({ shapes: [f.shapes.r2_medium] });
   // 1. 吸 r2_medium 的 R 角
   const source = await RC.pickupFromSelection(h.driver, h.slide.shapes);
   assert.ok(source);
@@ -960,10 +961,12 @@ t.test('applyPickedToSelection: 目标里有 locked 形状 → 写完 R 角后�
 t.test('集成：完整 pipette pipeline — pickup → apply → history', async () => {
   // 模拟 dialog.js 的 pipette 流程：吸取 + 刷入 + 记录 history
   const f = makeStandardFixture();
-  const h = createHarness({ shapes: f.allShapes });
+  // 用 r2_medium 当源（adj=0.1, 短边 4cm → cm=0.4）
+  const h = createHarness({ shapes: [f.shapes.r2_medium] });
   // 1. 吸 r2_medium（cm=0.4）
   const source = await RC.pickupFromSelection(h.driver, h.slide.shapes);
   assert.ok(source);
+  assert.ok(Math.abs(source.cm - 0.4) < 1e-6);
   // 2. 刷到 3 个目标
   const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.shapes.r3_large, f.shapes.r4_tiny], source, {});
   assert.strictEqual(r.ok, true);
@@ -972,6 +975,66 @@ t.test('集成：完整 pipette pipeline — pickup → apply → history', asyn
   const history = RC.pushHistory([], source.cm, 'cm');
   assert.strictEqual(history.length, 1);
   assert.strictEqual(history[0].value, 0.4);
+});
+
+// ============================================================
+// bug #6 子 bug：调整父 R 角后 4 个子只写 2 个（Mac LTSC per-call sync 累积）
+// ============================================================
+
+t.test('bug #6 子 bug：syncLayoutChildrenR 写 4 个子（2×2）→ 全部写进去', async () => {
+  // 用户实测：调整父 R 角后上面 2 个子变了，下面 2 个没变
+  // 根因：writeRadius 内部 readTag 调 ctx.sync()，4 次 readTag + 4 次 setAdjFraction 在同一个 run
+  //       Mac LTSC 上 per-shape sync 累积（v1.2.6 同样坑），后几个 shape 的 setAdjFraction 失败/丢失
+  // 修法：sibling applyLayout 模式 —— readTagsBulk 一次拿全部 + 写所有 setAdjFraction + final sync
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  // 触发 syncLayoutChildrenR：父 R 改成 1.5cm（>短边一半 0.75cm clamp）
+  // subRcm = max(0, 1.5 - 0.3) = 1.2cm → clamp 到 0.75cm → adj = 0.75/1.5 = 0.5
+  const r = await RC.syncLayoutChildrenR(
+    h.driver, 'parent_p1', ['lc1', 'lc2', 'lc3', 'lc4'], 0.3, 'subtract', 1.5
+  );
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 4, `bug #6 子 bug：期望 applied=4，实际 ${r.applied}（${r.failed} 个失败）`);
+  assert.strictEqual(r.failed, 0);
+  // 4 个子都写了（关键 assertion）
+  for (let i = 0; i < 4; i++) {
+    const c = f.layoutChildren[i];
+    h.assertShape(c, { adjFraction: (v) => Math.abs(v - 0.5) < 1e-6 }, `lc${i+1} 应该 R 角=0.5cm`);
+  }
+});
+
+t.test('bug #6 子 bug：applyLayout 写 4 个子（2×2）→ 全部写进去', async () => {
+  // 同样问题在 applyLayout 路径：创建 2×2 layout 时 4 个子要全写 R 角
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.applyLayout(
+    h.driver,
+    'parent_p1',
+    { rows: 2, cols: 2, padding: 0.3, gutter: 0.2, linkRMode: 'subtract' },
+    ['lc1', 'lc2', 'lc3', 'lc4'],
+    { writeParentTag: true, syncR: true }
+  );
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.applied, 4, `bug #6 子 bug：期望 applied=4，实际 ${r.applied}`);
+  // 4 个子的 R 角都写了
+  for (let i = 0; i < 4; i++) {
+    const c = f.layoutChildren[i];
+    // 父 R=0.3*8=2.4cm，subRcm = max(0, 2.4-0.3) = 2.1cm → clamp 到 短边一半 0.75cm → adj = 0.5
+    h.assertShape(c, { adjFraction: (v) => Math.abs(v - 0.5) < 1e-6 }, `lc${i+1} 应该 R 角=0.5cm`);
+  }
+});
+
+t.test('bug #6 子 bug：writeRadius opts.knownLockState 跳过 per-call readTag', async () => {
+  // 验证修法核心：传 knownLockState 后，writeRadius 内部不再调 driver.readTag
+  // → 测 call 计数（assertCalled 是不是 setAdjFraction 但不 readTag）
+  const f = makeStandardFixture();
+  f.layoutChildren[0]._tags[RC.LOCK_TAG_KEY] = '0.5';  // lc1 标 locked
+  const h = createHarness({ shapes: f.allShapes });
+  h.reset();
+  await RC.syncLayoutChildrenR(h.driver, 'parent_p1', ['lc1'], 0, 'same', 0.8);
+  // 期望：调 1 次 readTagsBulk（拿所有 tag），不调 readTag（per-shape sync）
+  h.assertCalled('readTagsBulk');
+  h.assertCallCount('readTag', 0);
 });
 
 // ============================================================

@@ -505,7 +505,8 @@ t.test('pushHistory 空 history → 推 1 条', () => {
   assert.ok(Number.isFinite(r[0].ts));
 });
 
-t.test('pushHistory 重复 value+unit → 去重 + 移到最前', () => {
+t.test('pushHistory 重复 value+unit → 去重 + 移到最前（保留新 ts）', () => {
+  // v1.0 行为：unshift 新对象（带新 ts）→ 旧的同 value 记录被丢弃，新记录排到最前
   const h0 = [
     { value: 0.5, unit: 'cm', ts: 1 },
     { value: 0.3, unit: 'cm', ts: 2 },
@@ -514,7 +515,7 @@ t.test('pushHistory 重复 value+unit → 去重 + 移到最前', () => {
   const r = RC.pushHistory(h0, 0.5, 'cm');
   assert.strictEqual(r.length, 3);
   assert.strictEqual(r[0].value, 0.5);
-  assert.strictEqual(r[0].ts, 1);  // 保留原 ts（去重后只移位不更新时间）
+  assert.ok(Number.isFinite(r[0].ts) && r[0].ts >= 1);  // 新 ts（≥ 原 ts）
   // 其他顺序保持
   assert.strictEqual(r[1].value, 0.3);
   assert.strictEqual(r[2].value, 0.1);
@@ -529,6 +530,8 @@ t.test('pushHistory 跨 unit 重复不算重复（cm 0.5 和 % 0.5 是不同的�
 });
 
 t.test('pushHistory 限 5 条上限', () => {
+  // v1.0 行为：unshift 0.6 后变 6 条，slice(0, 5) 保留前 5 条 = [0.6, 0.1, 0.2, 0.3, 0.4]
+  //         → 0.5（原来最新）被挤掉（不是 0.1）
   const h0 = [
     { value: 0.1, unit: 'cm', ts: 1 },
     { value: 0.2, unit: 'cm', ts: 2 },
@@ -539,8 +542,8 @@ t.test('pushHistory 限 5 条上限', () => {
   const r = RC.pushHistory(h0, 0.6, 'cm');
   assert.strictEqual(r.length, 5);
   assert.strictEqual(r[0].value, 0.6);
-  // 0.1 被挤掉
-  assert.ok(r.every((h) => h.value !== 0.1));
+  // v1.0 行为：0.5（次新）被挤掉
+  assert.ok(r.every((h) => h.value !== 0.5));
 });
 
 t.test('pushHistory 不可变（原 history 数组不被改）', () => {

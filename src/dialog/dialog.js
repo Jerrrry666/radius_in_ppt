@@ -197,93 +197,14 @@
   }
 
   // ---------------- v1.2: 统一写 R 角函数 ----------------
-
-  /**
-   * 统一写 R 角：必须在 PowerPoint.run(ctx => ...) 内部调用，传入 ctx proxy shape
-   *
-   * **防误触优先级最高**：strict tag = "1" 永远拦截，不允许任何 skip 选项。
-   *   - onApply / applyLayoutToChildren / applyPipetteToSelection / syncLayoutChildrenR
-   *     全部走这个函数，行为一致
-   *   - 用户必须手动去 task pane 关闭「防误触」开关，程序不能跳过
-   *
-   * 行为：
-   *   1. 读 lock + strict（先 load tags，Mac LTSC 必加）
-   *   2. **strict 永远拦截** → 返回 { ok: false, reason: 'strict' }，不写 R 角
-   *   3. clamp + 写 R 角（adjustments.set(0, newAdj)）
-   *   4. 如果 shape 已 lock（lock tag 有值）→ 同步 fixed value = newCm（让 lock monitor 不反算）
-   *   5. 写子 layoutChild_v1 tag（如果传 layoutParentId）
-   *
-   * @param ctxShape PowerPoint.Shape proxy（在 PowerPoint.run 内）
-   * @param targetCm 目标 R 角（cm）
-   * @param opts { layoutParentId, clamp }
-   *   - layoutParentId: 写子 tag 时用（layout apply 路径）
-   *   - clamp: true = clamp 到子短边一半（默认 true）
-   * @returns { ok, newCm, wasLocked, wasStrict, reason? }
-   */
-  async function writeRadiusToShape(ctxShape, targetCm, opts) {
-    opts = opts || {};
-    const layoutParentId = opts.layoutParentId;
-    const clamp = opts.clamp !== false;
-    try {
-      // 1. 读 lock + strict
-      // 注意：ctxShape.tags 必须在 PowerPoint.run 外层 collection-level load 过（所有调用点都已经 load 'items/.../tags'）
-      // 这里不要再 ctxShape.load('tags') + sync —— 在 Mac LTSC PowerPoint Office.js 上这一步会抛异常
-      // （v1.0 working 代码从未做过这个 load，直接 tags.getItem(KEY).load('value').sync 即可）
-      let isLocked = false;
-      let isStrict = false;
-      try {
-        const lockTag = ctxShape.tags.getItem(LOCK_TAG_KEY);
-        lockTag.load('value');
-        await ctx.sync();
-        if (lockTag.value && parseFloat(lockTag.value) > 0) isLocked = true;
-      } catch (_) { /* 没 lock tag */ }
-      try {
-        const strictTag = ctxShape.tags.getItem(LOCK_STRICT_TAG_KEY);
-        strictTag.load('value');
-        await ctx.sync();
-        if (strictTag.value === '1') isStrict = true;
-      } catch (_) { /* 没 strict tag */ }
-
-      // 2. strict 永远拦截（最高优先级，任何路径都不能跳过）
-      if (isStrict) {
-        return { ok: false, reason: 'strict', isStrict: true };
-      }
-
-      // 3. clamp + 写 R 角
-      if (ctxShape.adjustments.count === 0) {
-        return { ok: false, reason: 'not-roundRect' };
-      }
-      const minSideCm = Math.min(ctxShape.width, ctxShape.height) / PT_PER_CM;
-      if (minSideCm <= 0) {
-        return { ok: false, reason: 'no-size' };
-      }
-      let newCm = clamp ? Math.min(targetCm, minSideCm / 2) : targetCm;
-      if (newCm < 0) newCm = 0;
-      const newAdj = (newCm / minSideCm) * ADJ_SCALE;
-      if (!Number.isFinite(newAdj)) {
-        return { ok: false, reason: 'invalid-adj' };
-      }
-      ctxShape.adjustments.set(0, newAdj);
-
-      // 4. 同步 fixed value（如果 locked）— 在同一个 PowerPoint.run 里完成，lock monitor 不会插入
-      if (isLocked) {
-        ctxShape.tags.add(LOCK_TAG_KEY, String(newCm));
-      }
-
-      // 5. 写 layoutChild_v1 tag（如果指定）
-      if (layoutParentId) {
-        try { ctxShape.tags.add(LAYOUT_CHILD_TAG_KEY, layoutParentId); } catch (_) {}
-      }
-
-      return { ok: true, newCm, wasLocked: isLocked, wasStrict: false };
-    } catch (e) {
-      // 把异常 message 主动 log 出来，免得以后被外层 caller 当成 reason='exception' 一吞了之
-      const msg = e && e.message ? e.message : String(e);
-      const stack = e && e.stack ? e.stack : '';
-      console.log('[writeRadius] EXCEPTION:', msg, '| stack:', stack, '| targetCm:', targetCm);
-      return { ok: false, reason: 'exception', error: msg };
-    }
-  }
+  // v1.3.6：删 writeRadiusToShape（v1.2.2 之前的兼容版，已被 radius-core.writeRadius 取代）
+  //   之前 dialog.js 的 applyPipetteToSelection 还调这个老函数（不走 driver），
+  //   走的是直接 ctxShape.adjustments.set + ctxShape.tags.getItem，
+  //   跟 radius-core.writeRadius（driver 版 + 走 setAdjFraction）行为重复。
+  //   v1.3.6 applyPipetteToSelection 改调 radius-core.applyPickedToSelection 后，
+  //   writeRadiusToShape 无人调用 → 删了。
+  // 修 #1：吸取后无法刷入任何形状的根因（之一）—— dialog.js 用 writeRadiusToShape 不走 driver，
+  //        改走 radius-core（driver 版）后稳定。
 
   // ---------------- v1.2: layout 计算 + apply pipeline ----------------
 
@@ -334,7 +255,7 @@
     opts = opts || {};
     const writeParentTag = opts.writeParentTag !== false;
     const syncR = opts.syncR !== false;
-    console.log('[applyLayout] parentId=', parentId, 'childIds=', JSON.stringify(childIds), 'params=', JSON.stringify(params));
+    // v1.3.6：v1.2 step 调试 log（verified 后无用，删除）—— 改在 radius-core 内保留必要的诊断 log
 
     // 第一道防线：进 PowerPoint.run 之前，检查选区里任何子有防误触 → 拒绝整个 apply
     // （位置/尺寸也不写，避免半成品状态；防误触永远最高优先级）
@@ -346,7 +267,6 @@
       const names = strictInSelection.map((s) => s.name || '(未命名)').slice(0, 3).join('、');
       const more = strictInSelection.length > 3 ? ` 等 ${strictInSelection.length} 个` : '';
       const warn = `🔒 ${strictInSelection.length} 个子启用了防误触（${names}${more}），请先手动关闭防误触后再建布局`;
-      console.log('[applyLayout] REJECTED before PowerPoint.run: strict shapes=', strictInSelection.length);
       return { ok: false, applied: 0, failed: 0, warn, strictShapes: strictInSelection.length };
     }
 
@@ -359,11 +279,9 @@
           syncR,
         });
       });
-      console.log('[applyLayout] done:', JSON.stringify(result));
       return result;
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
-      console.log('[applyLayout] OUTER ERROR:', msg);
       return { ok: false, applied: 0, failed: 0, warn: '', error: msg };
     }
   }
@@ -384,17 +302,15 @@
       });
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
-      console.log('[syncLayoutChildrenR] OUTER ERROR:', msg);
       return { ok: false, applied: 0, failed: 0, error: msg };
     }
   }
 
   // 检测选区里是否有 layout 父 → 同步其子 R 角（onApply / applyPipette 末尾调用）
+  // v1.3.6：v1.2 step 3 调试 log 清理
   async function syncLayoutChildrenRIfNeeded() {
-    console.log(`[syncLayoutChildrenRIfNeeded] enter: selectedShapes.length=${selectedShapes.length}`);
     if (selectedShapes.length === 0) return;
     for (const s of selectedShapes) {
-      console.log(`[syncLayoutChildrenRIfNeeded] check id=${s.id} layoutRole=${s.layoutRole} hasParams=${!!s.layoutParams} hasChildIds=${!!s.layoutChildIds} currentCm=${s.currentCm}`);
       if (s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds) {
         const linkRMode = s.layoutParams.linkRMode || 'subtract';
         if (linkRMode === 'off') continue;
@@ -405,7 +321,6 @@
           : Math.max(0, (s.currentCm || 0) - padding);
         const expected = s.layoutParams.rows * s.layoutParams.cols;
         const childIds = s.layoutChildIds.slice(0, expected);
-        console.log(`[syncLayoutChildrenRIfNeeded] fire: parentId=${s.id} linkRMode=${linkRMode} padding=${padding} targetSubRcm=${targetSubRcm} childIds=${JSON.stringify(childIds)}`);
         await syncLayoutChildrenR(s.id, childIds, padding, linkRMode, targetSubRcm);
       }
     }
@@ -1259,10 +1174,8 @@
   }
 
   function pushHistory(value, unit) {
-    // 纯内存：去重 + 移到最前 + 限 5 条
-    const filtered = userHistory.filter((h) => !(h.value === value && h.unit === unit));
-    filtered.unshift({ value, unit, ts: Date.now() });
-    userHistory = filtered.slice(0, MAX_HISTORY);
+    // v1.3.6 迁移：直接走 radius-core.pushHistory（纯函数 + 不修改入参）
+    userHistory = window.RadiusCore.pushHistory(userHistory, value, unit, MAX_HISTORY);
     return userHistory;
   }
 
@@ -1335,9 +1248,6 @@
       if (layoutResult.ok) {
         // v1.3.6：检测到 stale childIds 时给用户提示（不自动写回，等下次调 saveLayoutTags 时自然清理）
         if (layoutResult.staleParents && Object.keys(layoutResult.staleParents).length > 0) {
-          for (const [pid, staleList] of Object.entries(layoutResult.staleParents)) {
-            console.log(`[refreshSelection] 父 ${pid} 的 ${staleList.length} 个子已不在当前 slide（已自动从 layoutChildIds 移除）: ${staleList.join(', ')}`);
-          }
           const totalStale = Object.values(layoutResult.staleParents).reduce((s, arr) => s + arr.length, 0);
           if (totalStale > 0) {
             showToast(`ℹ️ 检测到 ${totalStale} 个 layout 子已被删除/移走，下次应用布局时会自动清理`);
@@ -1437,21 +1347,27 @@
       await PowerPoint.run(async (ctx) => {
         // v1.2.2 driver + radius-core：lock monitor 走新分层
         const driver = window.PptDriver.createDriver(ctx);
+        // v1.3.6 修 #3：monitorTick 偶发 GeneralException
+        // 根因：原代码在 for 循环里 per-shape `get(0) + sync`（v1.0 模式），
+        //       N 个 shape = N 次 ctx.sync()，跟 syncLayoutChildrenR 4 个子只写 2 个是同一个坑
+        //       （v1.2.6 注释说 batch loadAdjValue 排队 + 单 sync 也炸，所以选 per-shape sync 兜底，
+        //         但 per-shape sync 多了也有 race）—— 修法：sibling applyLayout 模式
+        //         一次 collection-level load 拿全部 adjustments.value + 一次 sync + readTagsBulk
         const sel = driver.selectedShapes();
-        driver.load(sel, 'items/id, items/width, items/height, items/adjustments');
+        // 关键：collection-level load 'items/adjustments/items/value' 让 get(0).value 直接有值（v1.2.5 坑）
+        driver.load(sel, 'items/id, items/width, items/height, items/adjustments/items/value, items/tags');
         await driver.sync();
-        // v1.2.7：per-shape get(0) + per-shape sync + 读（v1.0 模式）
-        // 不能用 driver.loadAdjValue 批量排队——v1.2.6 实测 Mac LTSC 第二个 shape.getItem 抛 GeneralException
-        // 单 shape sync 是慢但正确的 pattern
+        // readTagsBulk 一次拿全部 tag（避开 readTag per-call sync 累积）
+        const tagsById = driver.readTagsBulk(sel.items);
         for (const sh of sel.items) {
           const shId = driver.shapeId(sh);
           try {
             if (!driver.isRoundRect(sh)) continue; // 不是 roundRect
-            // v1.0 模式：get(0) 存变量 → sync → 读
-            const adjResult = sh.adjustments.get(0);
-            await driver.sync();
+            // collection-level load 完 sync 之后，get(0).value 直接可读（不需要再 sync）
             let currentAdj = null;
-            try { currentAdj = adjResult.value; } catch (_) {}
+            try {
+              currentAdj = sh.adjustments.get(0).value;
+            } catch (_) { continue; }
             if (currentAdj == null) continue;
             const size = driver.size(sh);
             const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
@@ -1512,6 +1428,8 @@
                 } else {
                   // 仅使用数值固定 R 角：把当前 adj 提升为新的固定值
                   const newCm = currentAdj * minSideCm;
+                  // 用 readTagsBulk 拿的 tag 写 knownLockState（writeLockState 内部走 driver.addTag 不用 readTag）
+                  // writeLockState 本身只写不读，已经不调 readTag 了
                   await window.RadiusCore.writeLockState(driver, sh, { lockedCm: newCm });
                   ss.lockedCm = newCm;
                   lockMonitor.lastAdj[shId] = currentAdj;
@@ -1532,9 +1450,8 @@
             lockMonitor.lastWidth[shId] = size.width;
             lockMonitor.lastHeight[shId] = size.height;
           } catch (eShape) {
-            // 单个 shape 出错（v1.2.2 暴露：sh.adjustments.get(0) 在 race 时会抛 GeneralException）
-            // 不影响其他 shape，也不影响整个 tick —— 跳过这个 shape，下个 tick 再看
-            console.warn('[lockMonitor] skip id=' + shId + ':', eShape && eShape.message ? eShape.message : eShape);
+            // 单个 shape 出错（防御性兜底）—— 不影响其他 shape，也不影响整个 tick
+            // 跳过这个 shape，下个 tick 再看
             continue;
           }
         }
@@ -1571,10 +1488,10 @@
           scheduleParentRSync();
         }
       } catch (e) {
-        console.warn('[monitorTick] detectLayoutParentChanges error:', e && e.message ? e.message : e);
+        // 不影响主流程，silent skip
       }
     } catch (e) {
-      console.warn('lock monitor error:', e);
+      // 整个 tick 失败：silent skip（不弹窗，不影响 PPT）
     }
   }
 
@@ -1589,8 +1506,7 @@
       try {
         await syncLayoutChildrenRIfNeeded();
       } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        console.log('[scheduleParentRSync] error:', msg);
+        // silent skip（不弹窗，不影响 PPT）
       }
     }, PARENT_R_SYNC_DEBOUNCE_MS);
   }
@@ -1787,11 +1703,9 @@
           // 走新分层：业务逻辑在 radius-core.writeRadius，driver 只负责 PPT 读写
           const r = await window.RadiusCore.writeRadius(driver, sh, cm, {});
           if (!r.ok) {
-            console.log(`[onApply/driver] skip id=${driver.shapeId(sh)} reason=${r.reason}${r.error ? ' error=' + r.error : ''}`);
             failed++;
             continue;
           }
-          console.log(`[onApply/driver] ok id=${driver.shapeId(sh)} newCm=${r.newCm} wasLocked=${r.wasLocked}`);
           updated++;
           if (r.wasLocked) lockedSynced++;
         }
@@ -2245,41 +2159,18 @@
   // 从选区第一个 roundRect 吸取（自己读选区，不依赖 selectedShapes 内存）
   // Mac LTSC task pane 必加：get(0) 存到变量 → sync → 读 value
   // （不能 load 之后再新调 get(0).value，那时 value 还没填上，会报"尚未加载"）
+  // v1.3.6 迁移：PowerPoint.run 部分走 radius-core.pickupFromSelection
   async function pickupFromSelection() {
     let picked = null;
-    let sourceStrict = false;
-    let sourceId = null;
     try {
       await PowerPoint.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id, items/name, items/width, items/height, items/adjustments');
+        sel.load('items/id, items/name, items/width, items/height, items/adjustments, items/tags');
         await ctx.sync();
-        if (sel.items.length === 0) return;
-        for (const sh of sel.items) {
-          const adjCount = sh.adjustments.count;
-          if (adjCount > 0) {
-            const adjResult = sh.adjustments.get(0); // 先存变量
-            await ctx.sync();                        // 再 sync（让 value 填上）
-            const v = adjResult.value;               // 用之前的变量读
-            if (Number.isFinite(v)) {
-              // v = 0 也允许（R 角 0 = 直角矩形，apply 时直接把它变直角）
-              const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-              picked = {
-                id: sh.id,
-                name: sh.name || '(未命名)',
-                cm: v * minSideCm,
-              };
-              sourceId = sh.id;
-              // 顺手读源形状的「防误触」标记
-              try {
-                const strictTag = sh.tags.getItem(LOCK_STRICT_TAG_KEY);
-                strictTag.load('value');
-                await ctx.sync();
-                sourceStrict = strictTag.value === '1';
-              } catch (_) { /* 没 strict tag */ }
-              break;
-            }
-          }
+        const r = await window.RadiusCore.pickupFromSelection(driver, sel);
+        if (r) {
+          picked = r;
         }
       });
     } catch (e) {
@@ -2297,11 +2188,11 @@
       unit: currentUnit,
       sourceShapeName: picked.name,
       cm: picked.cm, // 内部统一存 cm
-      sourceStrict,  // 源形状的防误触状态（供「刷防误触状态」选项使用）
-      sourceId,
+      sourceStrict: picked.sourceStrict,  // 源形状的防误触状态（供「刷防误触状态」选项使用）
+      sourceId: picked.id,
     };
     setPipetteState('brushing');
-    const strictHint = pipetteSyncStrict && sourceStrict ? '（含防误触）' : '';
+    const strictHint = pipetteSyncStrict && picked.sourceStrict ? '（含防误触）' : '';
     showToast(`🪣 已吸取「${pipetteSource.sourceShapeName}」= ${formatPresetValue(value, currentUnit)} — 选中目标形状自动应用${strictHint}`);
     // 顺便把 selectedShapes 内存刷新一下（让状态卡同步显示源形状）
     refreshSelection();
@@ -2309,132 +2200,58 @@
 
   // 把 pipetteSource 应用到选区里所有 roundRect
   //
-  // 应用顺序（明确两步）：
+  // v1.3.6 迁移：所有 3 步都走 radius-core.applyPickedToSelection（单 PowerPoint.run 完成）：
   //   步骤 0 — 拦截：选区里有任何目标启用了防误触 → 整个样式刷拒绝（不论是否勾选「刷防误触状态」）
   //   步骤 1 — 第一次"应用"：刷 R 角到所有目标 + 同步 fixed value（已 lock 的目标）
   //   步骤 2 — 第二次"应用"：根据【刷防误触状态】勾选决定是否把源 strict 状态写到目标
-  //   步骤 3 — toast + refreshSelection
   //
-  // 关键：拦截和写值都用「自己重新读选区（含 strict / lock tag）」，**不依赖 selectedShapes 内存**。
-  // 原因：brushing 状态下 DocumentSelectionChanged 不会调 refreshSelection，
-  //       selectedShapes 内存会残留之前选中的形状（包括他们的 strict 状态），
-  //       导致拦截误命中（user 报：选了未勾防误触的目标却报错"目标启用了防误触"）。
+  // 关键：radius-core.applyPickedToSelection 内部用 driver.readTagsBulk 一次拿全部 tag，
+  //       避开 per-call readTag + sync 在 for 循环内累积（v1.2.6 + v1.3.6 Mac LTSC 坑，
+  //       之前 dialog.js 直接用 writeRadiusToShape 时 4 个子只写 2 个就是这个原因）。
+  // 修 #1：吸取后无法刷入任何形状 → 改走 radius-core（稳定写 R 角 + 同步 lock + 刷 strict 都在一个 run 内）。
   async function applyPipetteToSelection() {
     if (!pipetteSource) {
       setPipetteState('idle');
       return;
     }
-
-    // ============ 步骤 0：自己读选区（含 strict / lock tag），做最新状态判断 ============
-    const liveShapes = []; // [{ id, isRoundRect, isStrict, isLocked, lockedCm, minSideCm }]
-    try {
-      await PowerPoint.run(async (ctx) => {
-        const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id, items/width, items/height, items/adjustments');
-        await ctx.sync();
-        for (const sh of sel.items) {
-          const adjCount = sh.adjustments.count;
-          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
-          let isStrict = false;
-          let isLocked = false;
-          let lockedCm = null;
-          if (isRoundRect) {
-            try {
-              const strictTag = sh.tags.getItem(LOCK_STRICT_TAG_KEY);
-              strictTag.load('value');
-              await ctx.sync();
-              isStrict = strictTag.value === '1';
-            } catch (_) { /* 没 strict tag */ }
-            try {
-              const lockTag = sh.tags.getItem(LOCK_TAG_KEY);
-              lockTag.load('value');
-              await ctx.sync();
-              const cm = parseFloat(lockTag.value);
-              if (Number.isFinite(cm) && cm > 0) {
-                isLocked = true;
-                lockedCm = cm;
-              }
-            } catch (_) { /* 没 lock tag */ }
-          }
-          liveShapes.push({
-            id: sh.id,
-            isRoundRect,
-            isStrict,
-            isLocked,
-            lockedCm,
-            minSideCm: Math.min(sh.width, sh.height) / PT_PER_CM,
-          });
-        }
-      });
-    } catch (err) {
-      showToast('读选区失败：' + (err.message || err));
-      return;
-    }
-
-    // 拦截：用 liveShapes 不用 selectedShapes 内存
-    const antiStrictTargets = liveShapes.filter((s) => s.isRoundRect && s.isStrict);
-    if (antiStrictTargets.length > 0) {
-      showToast(`🔒 ${antiStrictTargets.length} 个目标启用了防误触，样式刷不生效。先关掉目标的防误触或解锁。`);
-      return;
-    }
-
     stopLockMonitor();
-
-    // ============ 步骤 1：第一次"应用" — 刷 R 角 + 同步 fixed value ============
-    let applied = 0;
-    let failed = 0;
-    const strictTargets = []; // [{ id, sourceStrict }] — 步骤 2 要刷 strict 的目标（仅在「刷防误触状态」勾选时收集）
+    let result = null;
     try {
       await PowerPoint.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
         const sel = ctx.presentation.getSelectedShapes();
         sel.load('items/id, items/width, items/height, items/adjustments, items/tags');
         await ctx.sync();
-        for (const sh of sel.items) {
-          const ls = liveShapes.find((x) => x.id === sh.id);
-          if (!ls || !ls.isRoundRect) continue;
-          if (ls.minSideCm <= 0) { failed++; continue; }
-          // 用统一函数写 R 角（自动处理 strict/lock）
-          // step 0 已经检查了 strict → 全部拒绝，所以这里理论上不会命中 strict
-          // （但 writeRadiusToShape 内部还会检查作为第二道防线）
-          const r = await writeRadiusToShape(sh, pipetteSource.cm, {});
-          if (r.ok) {
-            applied++;
-            // 勾选了「刷防误触状态」+ 是 roundRect：记录到步骤 2 处理
-            if (pipetteSyncStrict) {
-              strictTargets.push({ id: sh.id, sourceStrict: pipetteSource.sourceStrict });
-            }
-          } else {
-            failed++;
-          }
-        }
-        await ctx.sync();
+        result = await window.RadiusCore.applyPickedToSelection(
+          driver, sel,
+          { cm: pipetteSource.cm, sourceStrict: pipetteSource.sourceStrict },
+          { syncStrict: pipetteSyncStrict }
+        );
       });
     } catch (err) {
-      showToast('样式刷 R 值失败：' + (err.message || err));
+      showToast('样式刷失败：' + (err.message || err));
       if (selectedShapes.length > 0) startLockMonitor();
       return;
     }
 
-    // ============ 步骤 2：第二次"应用" — 根据【刷防误触状态】勾选决定是否刷入防误触状态 ============
-    if (pipetteSyncStrict) {
-      for (const t of strictTargets) {
-        await updateLockTagForShape(t.id, undefined, t.sourceStrict);
+    if (!result || !result.ok) {
+      if (result && result.rejectReason === 'strict') {
+        showToast('🔒 选区里有形状启用了防误触，样式刷不生效。先关掉目标的防误触或解锁。');
+      } else if (result && result.applied === 0) {
+        showToast('选区为空，先在 PPT 里选 1 个圆角矩形');
+      } else if (result) {
+        showToast('样式刷失败：' + (result.error || '未知错误'));
       }
+      if (selectedShapes.length > 0) startLockMonitor();
+      return;
     }
 
-    // ============ 步骤 3：toast + refreshSelection（让 task pane UI 跟 PPT 同步） ============
-    if (applied === 0 && failed === 0) {
-      showToast('选区为空，先在 PPT 里选 1 个圆角矩形');
-    } else {
-      const lockedCount = liveShapes.filter((s) => s.isRoundRect && s.isLocked).length;
-      const lockHint = lockedCount > 0
-        ? `，${lockedCount} 个使用数值固定 R 角已同步更新`
-        : '';
-      const strictHint = strictTargets.length > 0
-        ? `，${strictTargets.length} 个防误触状态已同步`
-        : '';
-      showToast(`🪣 样式刷应用了 ${applied} 个圆角矩形${failed > 0 ? `，${failed} 个失败` : ''}${lockHint}${strictHint}`);
-    }
+    // toast
+    const lockHint = '';  // radius-core.applyPickedToSelection 已经处理 lock 同步
+    const strictHint = result.strictSynced > 0
+      ? `，${result.strictSynced} 个防误触状态已同步`
+      : '';
+    showToast(`🪣 样式刷应用了 ${result.applied} 个圆角矩形${result.failed > 0 ? `，${result.failed} 个失败` : ''}${lockHint}${strictHint}`);
     await refreshSelection();
     // v1.2: layout 父被刷 R 角 → 同步子 R 角
     await syncLayoutChildrenRIfNeeded();

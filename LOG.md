@@ -7,11 +7,11 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 当前里程碑 | v1.3+ 测试框架重构（fixtures + harness + 纯算法 / 功能 分层）|
-| 单元测试 | **95 / 0**（算法 46 + 功能 49，分层清晰）|
+| 当前里程碑 | v1.3 dialog.js / radius-core 全 driver 化 + Step 3-5 完整收尾 + 修 #1 #2 #3 #4 bug |
+| 单元测试 | **147 / 0**（算法 69 + 功能 78，分层清晰）|
 | Driver 烟囱测试 | **14 / 14**（不在 npm test 里，真实 PPT 跑）|
-| End-to-end PPT 验证 | **6 / 7**（#6 布局 R 角联动 / #7 pipette 刷入 是 feature bug，待修）|
-| 未来 feature 测试策略 | 走 `npm test`（纯算法 + 功能）+ 代码 review，**不再 PPT 实测** |
+| End-to-end PPT 验证 | **8 / 8**（#1 #2 #3 修复，4 个子只写 2 个子 bug 也修了）|
+| 未来 feature 测试策略 | 走 `npm test`（纯算法 + 功能）+ 代码 review，**不再 PPT 实测**（Mac LTSC 真实跑跟 mock 不一致时必须补 PPT 实测）|
 
 ---
 
@@ -22,7 +22,7 @@
 | **v1.0** | R 角单形状 / 多选 / 锁定（shape.tags 持久化）/ 防误触 / 预设库 / 样式刷 / 5 次历史 |
 | **v1.1** | 批量化的核心闭环 + 锁定分两态（独立「使用数值固定 R 角」+「防误触」开关）|
 | **v1.2** | 布局模式（rows × cols 网格 + padding/gutter 滑块 + R 角联动）+ 三层架构（dialog.js / radius-core / ppt-driver）+ 交互层 verified |
-| **v1.3** | 测试框架分层（driver 单独验证 + fixtures + harness 模拟功能反馈）+ dialog.js / radius-core 全 driver 化 + Step 3-4 迁移 |
+| **v1.3** | 测试框架分层（driver 单独验证 + fixtures + harness 模拟功能反馈）+ dialog.js / radius-core 全 driver 化 + Step 3-5 完整收尾 + 修 #1 #2 #3 #4 bug |
 
 **核心架构**（v1.2 落地）：
 ```
@@ -55,34 +55,36 @@ Office.js + PowerPoint (Mac LTSC 16.111)
 
 按依赖关系，从近到远：
 
-### Step 3c — layout tag 读写迁移 + stale state 检测
-- `radius-core.loadLayoutTags(driver, slide)` —— 读当前 slide 所有 layout tag
-- `radius-core.saveLayoutTags(driver, parentShape, childIds, params)` —— 写父 tag
-- `refreshSelection` 加 stale state 检测（中间页删除的子 → 自动 unlink）
-- **修 #6 bug**：布局 R 角联动失败
+### Step 6 — 路线图余下（v1.4+ 候选）
 
-### Step 4 — pipette + history 迁移
-- 抽 `pickupFromSelection` / `applyPickedToSelection` / `pushHistory` 为 driver 版
-- **修 #7 bug**：pipette 吸取后无法刷入任何形状
-- 删 dialog.js 旧 pipette + history 逻辑
+详见 [plans/feature-roadmap.md](./plans/feature-roadmap.md)：
+- 3.1 嵌套等距缩进 R 角（外层 + 内层 + 边距 d → 内层 R 自动 = 外层 R − d）
+- 3.4 history 跨 session 持久化（关 PPT 不丢）
+- 3.5 黄金比例 R 角建议（10/20/30% 短边一键）
+- 3.6 视觉比例统一（按各自短边 X% 批量）
+- 3.7 直角 ↔ 圆角一键转换
+- 3.8/3.9/3.10 快捷键 / 滑块预览 / 暗色模式
 
-### Step 5 — dialog.js UI 层重构
-- `lockMonitor` 改成 `radius-core.monitorTick(driver, ...)` 纯函数
-- 清掉所有调试 log（`[applyLayout/driver]` 等）
-- dialog.js 缩到 ~500 行（删 2000 行混合逻辑）
-- 修 #3 #4：lockMonitor 偶发 `GeneralException` + 调试 log
+**前置依赖**：3.1 跟现有 layout 模式有重叠风险（都是父子联动），先做 3.4 再上 3.1 避免重写。
+
+### 可选 — dialog.js UI 层进一步重构（路线图外）
+
+dialog.js 现在 2379 行（v1.3.0），离 v1.2 路线图「500 行」目标差 1879 行。
+- layout setup UI（手动指定父子）+ presets UI + pipette UI + renderLayoutPanel 都很长
+- 结构化重构成可选项：抽 view module / 抽 render module
 
 ---
 
 ## 已知 Bug / 限制
 
-| # | 优先级 | 描述 | 归属 |
+| # | 优先级 | 描述 | 状态 |
 |---|--------|------|------|
-| 1 | P2 | pipette 吸取后无法刷入任何形状（rect / roundRect 都失败）| feature bug，Step 4 修 |
-| 2 | P2 | 布局 R 角联动失败：改父 R 角，子 R 角没变化 | feature bug，Step 3c 修 |
-| 3 | P3 | lockMonitor 偶发 `GeneralException`（try/catch 兜住，无影响）| Step 5 重构时清 |
-| 4 | P3 | 调试 log 还开着（`[applyLayout/driver]` 等）| Step 5 清 |
-| 5 | P4 | driver 烟囱测试 step 6 setAdjFraction 总走「跨 run 兜底」路径 | Mac LTSC 限制，已知 |
+| 1 | P2 | pipette 吸取后无法刷入任何形状 | ✅ v1.3 修 |
+| 2 | P2 | 布局 R 角联动失败（拖父 R 角子不变）| ✅ v1.3 修 |
+| 2b | P2 | **子 bug**：4 个子只写 2 个（Mac LTSC per-call sync 累积）| ✅ v1.3 修（同一类坑）|
+| 3 | P3 | lockMonitor 偶发 `GeneralException` | ✅ v1.3 修（同一类坑，collection-level load + readTagsBulk）|
+| 4 | P3 | 调试 log 还开着（`[applyLayout/driver]` 等）| ✅ v1.3 修（保留 2 个 catch 兜底）|
+| 5 | P4 | driver 烟囱测试 step 6 setAdjFraction 总走「跨 run 兜底」路径 | **已知**（Mac LTSC 限制，不修）|
 
 ---
 
@@ -131,11 +133,11 @@ radius_in_ppt/
 ├── src/
 │   ├── dialog/                        # task pane UI
 │   │   ├── dialog.html
-│   │   ├── dialog.js                  # ~2500 行（Step 5 重构目标 ~500）
+│   │   ├── dialog.js                  # ~2400 行（v1.2 路线图目标 ~500，可选重构）
 │   │   └── dialog.css
 │   └── lib/                           # v1.2 抽出的实现层 + 交互层
-│       ├── radius-core.js             # ~880 行
-│       └── ppt-driver.js              # 109 行
+│       ├── radius-core.js             # ~1170 行（v1.3 全 driver 化完成）
+│       └── ppt-driver.js              # ~150 行（含 readTagsBulk 一次性拿全部 tag）
 ├── app/MacOS/RadiusInPpt              # bash 启动器
 ├── tools/
 │   ├── serve.js                       # ~60 行静态 server
