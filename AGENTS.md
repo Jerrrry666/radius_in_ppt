@@ -187,8 +187,11 @@ function createDriver(ctx) {
 ├── dist/                             # build 输出（git ignore）
 ├── test.pptx                         # 测试用文件
 ├── AGENTS.md                         # ← 本文件
+├── LOG.md                            # 主日志（状态/已完成/待办/Bug/规划）
 └── changelogs/
-    └── 2026-07-23.md                 # v1.0 发布日志
+    ├── v1.0.md
+    ├── v1.1.md
+    └── v1.2.md
 ```
 
 ## 4. Mac LTSC Office.js 行为差异（重点！）

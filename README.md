@@ -23,7 +23,7 @@ v1.1 把"按设计意图批量设 R 角"做完了，v1.2 把"嵌套圆角矩形�
 - **单元测试 112/0** — 103 算法 + 70 mock harness + 109 driver 集成，全过
 - **未来 feature 走单测** — 之后 Step 3c/4/5 不再 PPT 实测，信任 `npm test` + 代码 review
 
-完整变更日志：[`changelogs/2026-07-24-v1.2.md`](./changelogs/2026-07-24-v1.2.md)（含 v1.2.0 → v1.3.5 全部 hotfix）　·　进度总览：[`PROGRESS.md`](./PROGRESS.md)　·　路线图：[`plans/feature-roadmap.md`](./plans/feature-roadmap.md)
+完整变更日志：[`changelogs/v1.2.md`](./changelogs/v1.2.md)（含 v1.2.0 → v1.3.5 全部 hotfix）　·　主日志：[`LOG.md`](./LOG.md)　·　路线图：[`plans/feature-roadmap.md`](./plans/feature-roadmap.md)
 
 ## 它解决什么问题
 
@@ -101,12 +101,12 @@ radius_in_ppt/
 ├── dist/                              # build 输出（git ignore）
 │   └── RadiusInPpt.app
 ├── AGENTS.md                          # 必读：三层架构 + Mac LTSC 踩坑
-├── PROGRESS.md                        # 项目进度总览
+├── LOG.md                             # 主日志（状态/已完成/待办/Bug/规划）
 ├── README.md                          # 本文件
-├── changelogs/                        # 版本日志
-│   ├── 2026-07-23.md                  # v1.0
-│   ├── 2026-07-23-v1.1.md             # v1.1
-│   └── 2026-07-24-v1.2.md             # v1.2 + v1.2.0 → v1.3.5 全部 hotfix
+├── changelogs/                        # 子日志（per-version 详细变更）
+│   ├── v1.0.md
+│   ├── v1.1.md
+│   └── v1.2.md                        # 含 v1.2.0 → v1.3.5 全部 hotfix
 ├── plans/
 │   └── feature-roadmap.md             # v1.1+ 路线图
 └── package.json                       # npm test 跑 3 个测试文件
