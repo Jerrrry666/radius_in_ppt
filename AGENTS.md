@@ -17,6 +17,17 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
 
 > 这是硬约束，违反任何一条都会出 bug。
 
+### 1.0 ⭐ Git commit / push 规则（用户授权）
+
+**只在用户明确说 "commit" 时才 commit；只在用户明确说 "push" 时才 push。**
+
+- AI 改完代码后**不要自动**跑 `git add / commit / push` / `build-and-deploy.sh`
+- 默认行为：改完代码 → 跑 `npm test` 验证 + 写 changelog → **停下来等用户指令**
+- 用户说"commit" → 才 `git add` + `git commit`
+- 用户说"push" → 才 `git push`（含 push tag）
+- 例外（**显式授权过的 deploy 流程**）：用户事先说"帮我部署" / "commit 并 push" / "deploy 一下" → 一次性跑 build-and-deploy.sh 完成全流程
+- v1.2.14 教训：用户反馈"位置错了" → 已经 commit + push 完 → 撤回要 force-push 改写公共历史（麻烦 + 风险）。**早问一句"现在要 commit/push 吗"省事**
+
 ### 1.1 ⭐ 版本号规则
 
 格式 `v{MAJOR}.{MINOR}.{PATCH}`：

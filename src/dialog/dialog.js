@@ -61,6 +61,12 @@
   // 当前输入单位：'cm' | '%'
   let currentUnit = 'cm';
 
+  // v1.2.14：边距/间距锁链联动（Photoshop 风格）
+  // linkPG=true：间距 slider/num 变灰 + 不可用，间距值 = 边距值（自动同步）
+  // linkPG=false：默认状态，间距独立
+  // 持久化：只在内存（关 task pane 后失效——跟 history / preset 一致）
+  let linkPG = false;
+
   // lock monitor 状态：选区里有 locked 形状时启动，10ms 轮询
   // v1.1 行为：通过 width / adj 变化识别两种拖动
   //  - 拖尺寸手柄（width/height 变） → 立刻反算回固定值
@@ -419,6 +425,9 @@
       const padN = $('layout-padding-num');
       const gutR = $('layout-gutter');
       const gutN = $('layout-gutter-num');
+      const pgPair = $('layout-pg-pair');
+      const pgLinkBtn = $('layout-pg-link');
+      const pgLinkIcon = $('layout-pg-link-icon');
       const warn = $('layout-warn');
       // v1.2.13：行的可取值 = N 的所有因子（不是 [1, N] 连续范围）
       // 例：N=4 → [1, 2, 4]；N=6 → [1, 2, 3, 6]；N=12 → [1, 2, 3, 4, 6, 12]
@@ -453,8 +462,35 @@
       if (colsReadout) colsReadout.textContent = String(currentLayout.params.cols);
       padR.value = String(currentLayout.params.padding);
       padN.value = currentLayout.params.padding.toFixed(2);
-      gutR.value = String(currentLayout.params.gutter);
-      gutN.value = currentLayout.params.gutter.toFixed(2);
+      // v1.2.14：锁链联动状态下，间距初始 = 边距（首次开启时同步）
+      // v1.2.15 改：直接禁用 gutter 控件（disabled 属性，不只是 CSS pointer-events）
+      // 原因：用户报 bug —— 在链接状态修改间距 → 形状被改，间距被锁链改回 → 形状没被改回
+      //       根因链不好根除（lockMonitor / 节流 / apply 异步返回等竞态），最稳的做法是**不让用户能改**
+      //       disabled 是 input 原生属性，挡 mouse + keyboard + focus + input 事件，比 CSS pointer-events 彻底
+      if (linkPG) {
+        if (currentLayout.params.gutter !== currentLayout.params.padding) {
+          currentLayout.params.gutter = currentLayout.params.padding;
+        }
+        gutR.value = String(currentLayout.params.padding);
+        gutN.value = currentLayout.params.padding.toFixed(2);
+        gutR.disabled = true;
+        gutN.disabled = true;
+      } else {
+        gutR.value = String(currentLayout.params.gutter);
+        gutN.value = currentLayout.params.gutter.toFixed(2);
+        gutR.disabled = false;
+        gutN.disabled = false;
+      }
+      // 锁链 button 状态（只用 emoji + 颜色指示，不写"已联动"/"未联动"文字）
+      if (pgLinkBtn) {
+        pgLinkBtn.dataset.linked = linkPG ? 'true' : 'false';
+        if (pgLinkIcon) pgLinkIcon.textContent = linkPG ? '🔗' : '🔓';
+        pgLinkBtn.title = linkPG
+          ? '锁链已激活：间距跟随边距（点解开）'
+          : '锁链解开：间距独立（点激活）';
+      }
+      // pair 容器 data-linked → CSS 控制 gutter 变灰 + 不可用
+      if (pgPair) pgPair.dataset.linked = linkPG ? 'true' : 'false';
       // 选对应 R 角联动模式（v1.2.6 默认 'same' 等距，v1.0/v1.2 默认 'subtract' 不等距——见 radius-core 注释）
       const linkRMode = currentLayout.params.linkRMode || 'same';
       document.querySelectorAll('input[name="layout-link-r-mode"]').forEach((r) => {
@@ -530,11 +566,27 @@
     const r = $(rangeId);
     const n = $(numId);
     if (!r || !n) return;
+
+    // v1.2.14：边距/间距锁链联动辅助函数
+    // 改 padding 时，如果 linkPG=true → 把 gutter 也同步到 padding 值
+    function syncLinkedPartner() {
+      if (!linkPG) return;
+      if (paramKey !== 'padding') return;  // 改 gutter 不再触发反向（避免循环）
+      const gutR = $('layout-gutter');
+      const gutN = $('layout-gutter-num');
+      if (gutR) gutR.value = r.value;
+      if (gutN) gutN.value = r.value;
+      if (currentLayout) {
+        currentLayout.params.gutter = parseFloat(r.value);
+      }
+    }
+
     r.addEventListener('input', () => {
       n.value = r.value;
       if (!currentLayout) return;
       currentLayout.params[paramKey] = isInt ? parseInt(r.value, 10) : parseFloat(r.value);
-      updateLayoutPreview(); // 拖动时立即更新子尺寸预览（不等 apply）
+      syncLinkedPartner();
+      updateLayoutPreview();
       scheduleLayoutApply();
     });
     n.addEventListener('input', () => {
@@ -544,6 +596,7 @@
       r.value = String(v);
       if (!currentLayout) return;
       currentLayout.params[paramKey] = v;
+      syncLinkedPartner();
       updateLayoutPreview();
       scheduleLayoutApply();
     });
@@ -2457,6 +2510,27 @@
     bindLayoutGridRangeAndNum('layout-rows', 'layout-rows-num', 'layout-cols-readout');
     bindLayoutRangeAndNum('layout-padding', 'layout-padding-num', 'padding', false);
     bindLayoutRangeAndNum('layout-gutter', 'layout-gutter-num', 'gutter', false);
+    // v1.2.14：边距/间距 锁链联动按钮（Photoshop 风格，跨两行垂直居中）
+    const pgLinkBtn = $('layout-pg-link');
+    if (pgLinkBtn) {
+      pgLinkBtn.addEventListener('click', () => {
+        linkPG = !linkPG;
+        renderLayoutPanel();  // 同步 params.gutter = params.padding（linkPG=true 时）+ 禁用 gutter UI
+        if (linkPG && currentLayout) {
+          // v1.2.15：立即 apply 形状，不等 200ms 节流
+          // 原因：用户报 bug —— 锁链激活时如果之前 gutter 已经被改过（跟 padding 不同），
+          //   scheduleLayoutApply 200ms 内可能被外层 input 事件覆盖，导致形状不按 padding 写
+          // 锁链切换是"明确意图"，不走节流，立即 apply
+          // v1.2.15 改：这里只是"初始 snap 写入"——之后 gutter 控件 disabled，用户碰不到，不需要再 sync
+          if (layoutApplyTimer) {
+            clearTimeout(layoutApplyTimer);
+            layoutApplyTimer = null;
+            layoutApplyPending = false;
+          }
+          applyLayoutFromUI({ writeParentTag: true, syncR: true });
+        }
+      });
+    }
     // setup rows/cols 变化时重算 canBuild
     ['layout-setup-rows', 'layout-setup-cols'].forEach((id) => {
       const el = $(id);

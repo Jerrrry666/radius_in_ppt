@@ -853,7 +853,7 @@ body {
 
 .layout-range {
   flex: 1;
-  height: 18px;
+  height: 8px;
   margin: 0;
   -webkit-appearance: none;
   appearance: none;
@@ -1251,4 +1251,65 @@ body {
   font-size: 11px;
   color: #888;
   font-style: italic;
+}
+
+/* v1.2.14：边距/间距 锁链联动 UI（Photoshop 风格）—— 锁链跨两行垂直居中 */
+.layout-pg-pair {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;  /* 锁链在 column 2 单元内垂直居中 */
+  column-gap: 6px;
+  row-gap: 0;  /* 紧贴，跟原来两个 .layout-grid-row 直接相邻的间距相同 */
+}
+
+.layout-pg-link {
+  /* 跨两行 + 垂直居中 */
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #d0d0d0;
+  background: #fff;
+  border-radius: 50%;  /* 圆形 frame */
+  cursor: pointer;
+  color: #888;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  user-select: none;
+}
+
+.layout-pg-link:hover {
+  border-color: #ff9500;
+  color: #ff9500;
+}
+
+.layout-pg-link-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* 联动激活：橙色（border + 背景 + icon） */
+.layout-pg-link[data-linked="true"] {
+  background: #ff9500;
+  border-color: #ff9500;
+  color: #fff;
+}
+
+/* 联动激活时：间距 slider + 数字输入变灰 + 不可用
+ * v1.2.15 改：用 input 原生 :disabled 选择器（不用纯 CSS pointer-events）
+ *   - disabled 属性挡 mouse + keyboard + focus + input 事件，比 pointer-events: none 彻底
+ *   - data-linked 选择器保留作为兜底（万一 JS 跑挂了，CSS 至少把视觉灰掉）
+ */
+.layout-pg-pair[data-linked="true"] #layout-gutter,
+.layout-pg-pair[data-linked="true"] #layout-gutter-num,
+#layout-gutter:disabled,
+#layout-gutter-num:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;  /* 兜底：即使 disabled 失效也挡 mouse */
 }

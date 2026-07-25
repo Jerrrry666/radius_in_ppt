@@ -6,7 +6,7 @@
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
   xsi:type="TaskPaneApp">
   <Id>8c2d8a9c-aaaa-4def-9abc-111111111111</Id>
-  <Version>1.2.13</Version>
+  <Version>1.2.14</Version>
   <ProviderName>R PowerPoint Tools</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="R 角调整" />
