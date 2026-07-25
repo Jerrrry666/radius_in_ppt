@@ -7,8 +7,8 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 当前里程碑 | v1.2 布局模式 + 交互层 verified |
-| 单元测试 | **112 / 0**（算法 103 + mock harness 70 + driver 集成 109，加 2 个 v1.3.5 回归）|
+| 当前里程碑 | v1.3+ 测试框架重构（driver + radius-core 全 driver 化）|
+| 单元测试 | **227 / 0**（算法 103 + mock harness 70 + driver 集成 54，全用新框架）|
 | Driver 烟囱测试 | **14 / 14** |
 | End-to-end PPT 验证 | **6 / 7**（#6 布局 R 角联动 / #7 pipette 刷入 是 feature bug，待修）|
 | 未来 feature 测试策略 | 走 `npm test` + 代码 review，**不再 PPT 实测** |
@@ -22,6 +22,7 @@
 | **v1.0** | R 角单形状 / 多选 / 锁定（shape.tags 持久化）/ 防误触 / 预设库 / 样式刷 / 5 次历史 |
 | **v1.1** | 批量化的核心闭环 + 锁定分两态（独立「使用数值固定 R 角」+「防误触」开关）|
 | **v1.2** | 布局模式（rows × cols 网格 + padding/gutter 滑块 + R 角联动）+ 三层架构（dialog.js / radius-core / ppt-driver）+ 交互层 verified |
+| **v1.3** | 测试框架重构（fixtures + harness）+ dialog.js / radius-core 全 driver 化 + Step 3-4 迁移 |
 
 **核心架构**（v1.2 落地）：
 ```
@@ -143,10 +144,12 @@ radius_in_ppt/
 │   ├── build-dmg.sh                   # 打包 .dmg
 │   └── sign-and-notarize.sh           # 公证
 ├── assets/                            # ribbon icon（5 个尺寸，manifest.xml 引用）
-├── test/                              # 单元测试（112 个）
+├── test/                              # 单元测试（227 个）
+│   ├── fixtures.js                   # 标准 5+ R 角矩形（v1.3）
+│   ├── test-harness.js               # driver call tracker + assertion（v1.3）
 │   ├── test-radius-core.js
 │   ├── test-mock-harness.js
-│   ├── test-driver-integration.js
+│   ├── test-driver-integration.js    # 重写用新框架（54 个）
 │   └── README.md
 ├── dist/                              # build 输出（git ignore）
 ├── AGENTS.md                          # 三层架构 + Mac LTSC 踩坑
@@ -167,10 +170,26 @@ radius_in_ppt/
 
 ```bash
 cd /Users/ma/Documents/minimax/radius_in_ppt
-npm test                                            # 跑全部 3 个测试文件（112 个）
+npm test                                            # 跑全部 3 个测试文件（227 个）
 node test/test-radius-core.js                       # 仅算法（103 个）
 node test/test-mock-harness.js                      # 仅 mock harness（70 个）
-node test/test-driver-integration.js                # 仅 driver 集成（109 个）
+node test/test-driver-integration.js                # 仅 driver 集成（54 个，新框架）
+```
+
+**测试框架**（v1.3 重构）：
+
+- `test/fixtures.js` — 标准 5+ R 角矩形 fixture（basic/medium/large/tiny/wide + locked/strict/locked+strict + clamp 边界 + 0 尺寸 + 非圆角 + layout 父子）
+- `test/test-harness.js` — driver call tracker + snapshot + assertion helpers（`assertCalled` / `assertNotCalled` / `assertCallCount` / `assertShape`）
+
+写法新功能测试：
+
+```js
+const f = makeStandardFixture();
+const h = createHarness({ shapes: f.allShapes });
+const r = await RC.writeRadius(h.driver, f.shapes.r1_basic, 0.5);
+h.assertCalled('setAdjFraction');
+h.assertNotCalled('addTag');
+h.assertShape(f.shapes.r1_basic, { adjFraction: 0.5 / 3 });
 ```
 
 **烟囱测试（PPT 内）**：任务窗格 → 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified。
