@@ -133,12 +133,37 @@ function createDriver(ctx) {
   - 不再需要 mock 整个 PowerPoint.run，只 mock 10 个 driver 方法
   - 覆盖率从纯算法扩到全部 feature 路径
 
-### 2.5 当前状态（2026-07-24）
+### 2.5 当前状态（2026-07-25 v1.3.5）
 
 - [x] 实现层纯算法 + mock PowerPoint 集成（173 个测试全过）
-- [x] dialog.js 当前混合业务逻辑 + Office.js 调用（迁移未完成）
-- [ ] **driver 层文件未抽出**（chat 内已讨论，待实施）
-- [ ] UI 层重构（迁移完成后 dialog.js 应缩到 ~500 行）
+- [x] **driver 层抽出完成**（v1.2.2）—— `src/lib/ppt-driver.js` 16 方法，createDriver 工厂
+- [x] **writeRadius 迁移完成**（v1.2.2）—— `onApply` 走 driver + radius-core
+- [x] **applyLayout 迁移完成**（v1.3.0）—— `applyLayoutToChildren` 160 行 → 50 行
+- [x] **syncLayoutChildrenR 迁移完成**（v1.3.2）—— 36 行 → 11 行
+- [x] **onToggleLock 关闭路径 fix**（v1.3.5）—— `locks[id]=null` + `strict[id]=false` 显式 delete
+- [x] **writeRadius Infinity/NaN 防御**（v1.3.5）—— `!Number.isFinite(targetCm)` 在 clamp 前 reject
+- [x] **112 个单测全过**（v1.3.5）—— 103 算法 + 70 mock harness + 109 driver 集成（含 v1.3.5 加的 2 个回归）
+- [x] **driver 烟囱测试 14/14**（v1.3.4）—— 16 方法全 PPT 实测通过
+- [x] **7 场景 end-to-end PPT 验证**（v1.3.5）—— onApply ×3 + strict / lock / pipette+history / layout
+- [ ] **Step 3c** layout tag 读写迁移 + stale state 检测
+- [ ] **Step 4** pipette + history 迁移到 driver + radius-core
+- [ ] **Step 5** dialog.js UI 层重构（lockMonitor 重写、调试 log 清掉、dialog.js 缩到 ~500 行）
+
+### 2.6 交互层 verified 状态（v1.3.5 决定）
+
+**driver + radius-core + dialog.js wiring 正式 verified**。未来 feature（Step 3c/4/5）走：
+- 单元测试覆盖（mock driver + radius-core）
+- 代码 review（PR / diff 检查）
+- **不再 PPT 实测**（除非逻辑有重大变更）
+
+**verified 依据**：
+- driver 16 方法：烟囱测试 14/14 ✅
+- radius-core 8 个 driver 版函数：109 个集成测试 ✅
+- dialog.js 关键 wiring（onApply / onToggleLock / onReapply / applyLayout / syncR）：7 场景 PPT 验证通过（除 feature bug #6/#7 外）
+
+**回归保护**：
+- 任何对 `writeRadius` / `writeLockState` / `applyLayout` / `syncLayoutChildrenR` 的修改必须先跑 `npm test`（112 个单测）
+- 任何对 `onToggleLock` / `onApply` 的 dialog.js 逻辑修改需手动跑 7 场景 PPT 验证（一次性，verified 后转单测覆盖）
 
 
 
