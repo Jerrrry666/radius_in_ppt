@@ -14,7 +14,23 @@
 
 ## 📌 最新更新
 
-v1.2 把"嵌套圆角矩形分布"做完了，v1.3 专注把布局 / 样式刷的细节做顺手，并完成 dialog.js / radius-core 全 driver 化 + Step 3-4 迁移收尾。
+**v1.3.1** 是 v1.3 的 Group 兼容与布局稳定性修复版本。
+
+**Group 读取与布局修复**：
+- 选中 Group 时可正确读取并统一修改内部所有圆角矩形
+- 修复单选普通圆角矩形时的 `读失败：GeneralException`
+- Group 内可以建立和保存布局；连续拉宽、缩小、拉高后会按新父框安全重算子图形
+- 固定厘米边距 / 间距不再随 Group 比例缩放
+- 切换「等距 / 层级感」只更新 R 与 tag，不再破坏子图形位置和尺寸
+- 边距 / 间距按钮始终显示 `🔗`，仅通过橙色 / 白色背景区分联动状态
+- 测试增至 **251/0**（115 算法 + 96 功能 + 40 Group driver / 集成）
+
+**v1.3.1 下载**：
+- [macOS — RadiusInPpt.app.zip](./releases/v1.3.1/RadiusInPpt.app.zip)
+- [Windows — RadiusInPpt-win.zip](./releases/v1.3.1/RadiusInPpt-win.zip)（尚未在 Windows 实机验证）
+- [SHA-256 校验值](./releases/v1.3.1/SHA256SUMS.txt)
+
+**v1.3.0 布局 / 样式刷精修**：
 
 **布局模式精修**：
 - **行 / 列互斥联动** — 一条滑块就够，列自动 = 子数 ÷ 行（rows × cols = N 严格成立，不留空位）
@@ -49,6 +65,7 @@ PowerPoint 自带的「圆角矩形」形状：
 - ✅ 同时作用于 **多个选中的圆角矩形**
 - ✅ v1.2 布局模式：1 父 + N 子 → 拖滑块 → 实时均匀分布 + R 角联动
 - ✅ v1.3 样式刷：吸 1 个形状的 R 角，连刷其他；可选「刷防误触状态」双向覆盖
+- ✅ v1.3.1 Group 兼容：整组选中也能读取 / 改 R / 建布局，缩放后自动恢复固定边距与间距
 
 ## 功能
 
@@ -64,6 +81,8 @@ PowerPoint 自带的「圆角矩形」形状：
 | **v1.3** 行离散因子列表 | 行的可取值 = N 的正因子（[1, 2, 4] / [1, 2, 3, 6] / 质数 [1, N]），不留空位 |
 | **v1.3** 边距/间距锁链联动 | Photoshop 风格锁链 icon，激活后间距 = 边距；链接状态 gutter 整体禁用（避免误操作竞态） |
 | **v1.3** 样式刷 strict 双向覆盖 | 勾选后源 strict 状态**覆盖**到目标（双向：源开启→目标开启，源未开启→目标也解除） |
+| **v1.3.1** Group 读取与写入 | 整组选中时递归读取内部圆角矩形，支持批量改 R、锁定、样式刷和布局角色识别 |
+| **v1.3.1** Group 布局稳定 | 缩放松手后安全解组、按新父框恢复固定 padding/gutter、再重新组合；R 模式切换不改几何 |
 | 使用数值固定 R 角 | 按钮开启/关闭；开启后 PPT 内拖尺寸按比例反算回固定值 |
 | 防误触 | 独立 toggle；开启时自动用当前 R 角作 fixed value；拒绝 task pane 改值 + 拖 R 角滑块反算 |
 | R 角预设库 | 5 个用户自定义预设，名称/数值可编辑，一键应用 |
@@ -75,9 +94,9 @@ PowerPoint 自带的「圆角矩形」形状：
 
 ## 使用方法
 
-打包后是 macOS `.app`（约 405 KB），双击即可：
+下载 [RadiusInPpt.app.zip](./releases/v1.3.1/RadiusInPpt.app.zip)，解压后得到 macOS `.app`，双击即可：
 
-1. 双击 `R 角调整.app`
+1. 双击 `RadiusInPpt.app`
 2. 弹一个引导框 → 选「退出并重新打开 PowerPoint」
 3. 重新打开 PowerPoint → 顶部 ribbon 出现 **「R 角调整」** Tab
 4. 点 Tab 里的 **「调整 R 角」** 按钮 → 右侧弹出 **task pane**
@@ -89,9 +108,9 @@ PowerPoint 自带的「圆角矩形」形状：
 
 ### Windows 安装
 
-GitHub Release 还提供一个 **Windows 版本**（`RadiusInPpt-win.zip`，约 95 KB）。**未在 Windows 实测**，有问题请提 issue。
+同时提供 **Windows 版本**（`RadiusInPpt-win.zip`，约 100 KB）。**未在 Windows 实测**，有问题请提 issue。
 
-1. 从 [GitHub Releases](https://github.com/Jerrrry666/radius_in_ppt/releases/tag/v1.3) 下载 `RadiusInPpt-win.zip`
+1. 下载 [RadiusInPpt-win.zip](./releases/v1.3.1/RadiusInPpt-win.zip)
 2. 解压到任意目录
 3. 确认已装 [Node.js 18+](https://nodejs.org/)（`.bat` 启动器会自动找）
 4. 双击 `RadiusInPpt.bat` → 弹框提示「完全退出 PowerPoint 后重启」

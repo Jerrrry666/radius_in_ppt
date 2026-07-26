@@ -14,7 +14,23 @@ If you also work on rounded rectangles in PowerPoint on Mac, feel free to try it
 
 ## 📌 Latest update
 
-v1.2 finished "nested rounded-rectangle distribution." v1.3 polishes the layout / style-brush details, completes the dialog.js / radius-core full driver migration, and finishes Step 3-4 migration.
+**v1.3.1** is the Group compatibility and layout-stability bugfix release for v1.3.
+
+**Group reading and layout fixes**:
+- Selecting a Group now correctly reads and updates every rounded rectangle inside it
+- Fixed `Read failed: GeneralException` when selecting a single regular rounded rectangle
+- Layouts can be created and persisted inside a Group; repeated widening, shrinking, or height changes safely recompute children from the new parent box
+- Fixed-centimetre padding and gutter no longer scale proportionally with the Group
+- Switching Equal / Hierarchy R modes updates only R values and tags without corrupting child geometry
+- The padding/gutter button always displays `🔗`; orange / white background indicates linked / unlinked
+- Tests increased to **251/0** (115 algorithm + 96 feature + 40 Group driver/integration)
+
+**v1.3.1 downloads**:
+- [macOS — RadiusInPpt.app.zip](./releases/v1.3.1/RadiusInPpt.app.zip)
+- [Windows — RadiusInPpt-win.zip](./releases/v1.3.1/RadiusInPpt-win.zip) (not yet tested on Windows)
+- [SHA-256 checksums](./releases/v1.3.1/SHA256SUMS.txt)
+
+**v1.3.0 layout / style-brush refinements**:
 
 **Layout mode refinements**:
 - **Row/column coupled slider** — one slider is enough; columns = children ÷ rows (rows × cols = N strictly, no empty slots)
@@ -49,6 +65,7 @@ This add-in lets you:
 - ✅ Act on **multiple selected rounded rectangles** at once
 - ✅ v1.2 Layout Mode: 1 parent + N children → drag a slider → real-time even distribution + R-coupling
 - ✅ v1.3 Style brush: pick the R from one shape, paint to others; optional "apply strict-lock state" bidirectional override
+- ✅ v1.3.1 Group compatibility: read / edit R / build layouts from a Group selection, then restore fixed padding and gutter after resize
 
 ## Features
 
@@ -64,6 +81,8 @@ This add-in lets you:
 | **v1.3** Row discrete factor list | valid row values = positive factors of N ([1, 2, 4] / [1, 2, 3, 6] / prime [1, N]), no empty slots |
 | **v1.3** Padding/gutter chain link | Photoshop-style chain icon; when active, gutter = padding; gutter fully disabled when chained (avoids race conditions) |
 | **v1.3** Style brush strict bidirectional | checkbox toggles bidirectional override: source strict=true → target strict=true; source strict=false → target strict=false |
+| **v1.3.1** Group reading and writing | recursively reads rounded rectangles from a Group selection; supports batch R edits, locks, style brush, and layout-role detection |
+| **v1.3.1** Stable Group layouts | after resize: safely ungroup, restore fixed padding/gutter from the new parent box, and regroup; R-mode switching does not rewrite geometry |
 | Fix R by value | button on/off; when on, resizing in PPT re-computes to fixed value |
 | Anti-misclick (strict) | independent toggle; when on, uses current R as fixed value; rejects task pane edits + reverses R-slider drags |
 | R preset library | 5 user-editable presets, name + value, one-click apply |
@@ -75,7 +94,7 @@ This add-in lets you:
 
 ## Usage
 
-Distributed as a macOS `.app` (~405 KB), double-click to launch:
+Download [RadiusInPpt.app.zip](./releases/v1.3.1/RadiusInPpt.app.zip), extract the macOS `.app`, then double-click to launch:
 
 1. Double-click `RadiusInPpt.app`
 2. A prompt appears → choose "Quit and reopen PowerPoint"
@@ -89,9 +108,9 @@ Distributed as a macOS `.app` (~405 KB), double-click to launch:
 
 ### Windows install
 
-A **Windows version** is also available from [GitHub Releases](https://github.com/Jerrrry666/radius_in_ppt/releases/tag/v1.3) as `RadiusInPpt-win.zip` (~95 KB). **Not yet tested on Windows** — please report issues.
+A **Windows version** is also available as `RadiusInPpt-win.zip` (~100 KB). **Not yet tested on Windows** — please report issues.
 
-1. Download `RadiusInPpt-win.zip` from the Releases page
+1. Download [RadiusInPpt-win.zip](./releases/v1.3.1/RadiusInPpt-win.zip)
 2. Extract to any folder
 3. Make sure [Node.js 18+](https://nodejs.org/) is installed (the `.bat` launcher auto-detects it)
 4. Double-click `RadiusInPpt.bat` → popup says "fully quit PowerPoint and reopen"
