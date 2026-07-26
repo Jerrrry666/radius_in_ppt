@@ -57,6 +57,13 @@
   // v1.2: 当前激活的 layout（当且仅当选中形状里有 layout 父时存在）
   // { parentId, parentName, childIds: [string], params: {rows,cols,padding,gutter,linkR} }
   let currentLayout = null;
+  // applyLayout 的 group 安全事务会触发 ungroup/regroup 选区事件；
+  // 事务未完成前禁止事件处理器启动并发 refreshSelection。
+  let layoutMutationDepth = 0;
+  // Mac LTSC 会把 regroup 后的 DocumentSelectionChanged 延迟到 PowerPoint.run
+  // 返回之后再派发；给事务后的主动 refreshSelection 留一个很短的保护窗口，
+  // 避免同一次内部选区恢复再启动第二个并发刷新。
+  let layoutSelectionIgnoreUntil = 0;
 
   // 当前输入单位：'cm' | '%'
   let currentUnit = 'cm';
@@ -87,9 +94,12 @@
     lastCm: {},        // shapeId -> 上次读到的 currentCm（cm）—— 仅 layout 父用
     lastSizeCm: {},    // shapeId -> 上次读到的 { widthCm, heightCm } —— 仅 layout 父用（v1.2.9 size 联动）
     parentRDirty: false,  // 是否有 layout 父 R 角或 size 变化需要联动（v1.2.9 合并）
+    parentRSyncGeometry: true,
     parentRSyncTimer: null,  // 节流 timer（避免 10ms tick 频繁触发新 run）
+    groupLayoutSyncTimer: null, // group 拖拽停止后，安全解组重排布局
   };
   const PARENT_R_SYNC_DEBOUNCE_MS = 200;  // 父 R 角变化 → 同步子的节流窗口
+  const GROUP_LAYOUT_SYNC_DEBOUNCE_MS = 300; // group 尺寸稳定 300ms 后再解组重排
 
   // ---------------- 单位换算 ----------------
 
@@ -128,11 +138,10 @@
         try {
           const driver = window.PptDriver.createDriver(ctx);
           const sel = driver.selectedShapes();
-          driver.load(sel, 'items/id, items/tags');
-          await driver.sync();
+          const selLeaves = await driver.loadShapeTree(sel, 'id, tags');
           const locks = {};   // id -> cm（使用数值固定 R 角）
           const strict = {};  // id -> true（防误触开关）
-          for (const sh of sel.items) {
+          for (const sh of selLeaves) {
             const state = await window.RadiusCore.readLockState(driver, sh);
             const id = driver.shapeId(sh);
             if (state.lockedCm != null) locks[id] = state.lockedCm;
@@ -153,9 +162,8 @@
         try {
           const driver = window.PptDriver.createDriver(ctx);
           const sel = driver.selectedShapes();
-          driver.load(sel, 'items/id');
-          await driver.sync();
-          for (const sh of sel.items) {
+          const selLeaves = await driver.loadShapeTree(sel, 'id');
+          for (const sh of selLeaves) {
             const id = driver.shapeId(sh);
             const state = {};
             if (id in locks) state.lockedCm = locks[id];  // number 写 / null 删 / undefined 跳过
@@ -182,9 +190,8 @@
         try {
           const driver = window.PptDriver.createDriver(ctx);
           const sel = driver.selectedShapes();
-          driver.load(sel, 'items/id');
-          await driver.sync();
-          for (const sh of sel.items) {
+          const selLeaves = await driver.loadShapeTree(sel, 'id');
+          for (const sh of selLeaves) {
             if (driver.shapeId(sh) !== shapeId) continue;
             const state = {};
             if (cm !== undefined) state.lockedCm = cm;       // number 写 / null 删 / undefined 跳过
@@ -255,6 +262,7 @@
   // opts: { writeParentTag: bool, syncR: bool }
   //   - writeParentTag: 写 layoutParent_v1 tag（首次创建时 true；只调参数时 false）
   //   - syncR: 是否同步 R 角（链接时 true，单纯调位置时 false）
+  //   - writeGeometry: 是否写子位置/尺寸（切换 R 联动模式时 false）
   // 返回：{ ok, applied, failed, warn }
   // v1.2.9 迁移：applyLayoutToChildren 第一道防线（strict 检查）保留在 dialog.js（依赖 selectedShapes 状态），
   // PowerPoint.run 部分（写位置/尺寸/R 角/父 tag + 过滤 stale childIds）全部走 radius-core.applyLayout
@@ -262,6 +270,7 @@
     opts = opts || {};
     const writeParentTag = opts.writeParentTag !== false;
     const syncR = opts.syncR !== false;
+    const writeGeometry = opts.writeGeometry !== false;
     // v1.3.6：v1.2 step 调试 log（verified 后无用，删除）—— 改在 radius-core 内保留必要的诊断 log
 
     // 第一道防线：进 PowerPoint.run 之前，检查选区里任何子有防误触 → 拒绝整个 apply
@@ -279,14 +288,23 @@
 
     // PowerPoint.run + 业务逻辑全部走 radius-core.applyLayout（driver 模式）
     try {
-      const result = await PowerPoint.run(async (ctx) => {
-        const driver = window.PptDriver.createDriver(ctx);
-        return await window.RadiusCore.applyLayout(driver, parentId, params, childIds, {
-          writeParentTag,
-          syncR,
+      layoutMutationDepth++;
+      try {
+        const result = await PowerPoint.run(async (ctx) => {
+          const driver = window.PptDriver.createDriver(ctx);
+          return await window.RadiusCore.applyLayout(driver, parentId, params, childIds, {
+            writeParentTag,
+            syncR,
+            writeGeometry,
+          });
         });
-      });
-      return result;
+        if (result && result.regrouped) {
+          layoutSelectionIgnoreUntil = Date.now() + 300;
+        }
+        return result;
+      } finally {
+        layoutMutationDepth = Math.max(0, layoutMutationDepth - 1);
+      }
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       return { ok: false, applied: 0, failed: 0, warn: '', error: msg };
@@ -316,8 +334,11 @@
   // 检测选区里是否有 layout 父 → 同步其子 R 角（onApply / applyPipette 末尾调用）
   // v1.2.7：改成调 applyLayoutToChildren —— 父 R 角变化时**重算 layout 几何**（autoPadding 触发时子位置/尺寸也变）
   // v1.3.6：v1.2 step 3 调试 log 清理
-  async function syncLayoutChildrenRIfNeeded() {
-    if (selectedShapes.length === 0) return;
+  async function syncLayoutChildrenRIfNeeded(opts) {
+    if (selectedShapes.length === 0) return { geometry: true, results: [] };
+    opts = opts || {};
+    const geometry = opts.geometry !== false;
+    const results = [];
     for (const s of selectedShapes) {
       if (s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds) {
         // v1.2.6：默认从 'subtract' 改成 'same'（等距公式 R_sub = R_父，v1.0/v1.2 的 subtract 公式 R_sub = R_父 - d 几何上**不等距**）
@@ -326,14 +347,29 @@
         if (linkRMode === 'off') continue;
         const expected = s.layoutParams.rows * s.layoutParams.cols;
         const childIds = s.layoutChildIds.slice(0, expected);
-        // v1.2.7：调 applyLayoutToChildren 而不是 syncLayoutChildrenR
-        // 原因：autoPadding 需要重新算 layout 几何（子位置/尺寸），syncLayoutChildrenR 只写 R 角
-        // writeParentTag=false（父 tag 不重写——tag 里存的是 d_init，effectivePadding 是动态算的）
-        // syncR=true（重写子 R 角）
-        const params = { ...s.layoutParams, linkRMode };
-        await applyLayoutToChildren(s.id, params, childIds, { writeParentTag: false, syncR: true });
+        if (geometry) {
+          // 普通叶子选区：父 size/R 变化后完整重算 layout 几何 + R。
+          const params = { ...s.layoutParams, linkRMode };
+          results.push(await applyLayoutToChildren(
+            s.id,
+            params,
+            childIds,
+            { writeParentTag: false, syncR: true }
+          ));
+        } else {
+          // group 整体缩放：PowerPoint 已经原生缩放所有后代。
+          // Mac LTSC 此时逐个写 group 子的 box 会让部分子错位，只同步已验证稳定的 R 角。
+          results.push(await syncLayoutChildrenR(
+            s.id,
+            childIds,
+            s.layoutParams.padding,
+            linkRMode,
+            s.currentCm
+          ));
+        }
       }
     }
+    return { geometry, results };
   }
 
   // ---------------- v1.2: layout UI 渲染 + 交互 ----------------
@@ -341,20 +377,44 @@
   // 节流：滑块拖动时只在最后一次输入后 apply
   let layoutApplyTimer = null;
   let layoutApplyPending = false;
+  let layoutApplyPendingOpts = null;
 
   // 方案 A：用户手动指定父/子。{ parentId, childIds[] }
   // 选区变化时自动重置（renderLayoutSetupList 检测 roundRect 列表变化）
   let layoutSetupChoices = { parentId: null, childIds: [] };
   let layoutSetupListSignature = '';  // 上次渲染的列表签名（用 roundRect ids 拼接），变了就重置 choices
 
-  function scheduleLayoutApply() {
+  function scheduleLayoutApply(opts) {
+    const incoming = {
+      writeParentTag: true,
+      syncR: true,
+      writeGeometry: !(opts && opts.writeGeometry === false),
+    };
     layoutApplyPending = true;
+    if (layoutApplyPendingOpts) {
+      // 如果同一个 50ms 窗口里既改了几何参数又切换了 R 模式，必须保留几何写入；
+      // 单独切 R 模式时则保持 R-only，避免一次无关的全布局反算。
+      layoutApplyPendingOpts.writeParentTag =
+        layoutApplyPendingOpts.writeParentTag || incoming.writeParentTag;
+      layoutApplyPendingOpts.syncR =
+        layoutApplyPendingOpts.syncR || incoming.syncR;
+      layoutApplyPendingOpts.writeGeometry =
+        layoutApplyPendingOpts.writeGeometry || incoming.writeGeometry;
+    } else {
+      layoutApplyPendingOpts = incoming;
+    }
     if (layoutApplyTimer) clearTimeout(layoutApplyTimer);
     layoutApplyTimer = setTimeout(() => {
       layoutApplyTimer = null;
       if (layoutApplyPending && currentLayout) {
+        const pendingOpts = layoutApplyPendingOpts || {
+          writeParentTag: true,
+          syncR: true,
+          writeGeometry: true,
+        };
         layoutApplyPending = false;
-        applyLayoutFromUI({ writeParentTag: true });
+        layoutApplyPendingOpts = null;
+        applyLayoutFromUI(pendingOpts);
       }
     }, LAYOUT_LAYOUT_RT_DEBOUNCE_MS);
   }
@@ -484,7 +544,8 @@
       // 锁链 button 状态（只用 emoji + 颜色指示，不写"已联动"/"未联动"文字）
       if (pgLinkBtn) {
         pgLinkBtn.dataset.linked = linkPG ? 'true' : 'false';
-        if (pgLinkIcon) pgLinkIcon.textContent = linkPG ? '🔗' : '🔓';
+        // 图标始终保持为链条；仅通过按钮背景色区分联动状态。
+        if (pgLinkIcon) pgLinkIcon.textContent = '🔗';
         pgLinkBtn.title = linkPG
           ? '锁链已激活：间距跟随边距（点解开）'
           : '锁链解开：间距独立（点激活）';
@@ -605,6 +666,7 @@
         clearTimeout(layoutApplyTimer);
         layoutApplyTimer = null;
         layoutApplyPending = false;
+        layoutApplyPendingOpts = null;
         applyLayoutFromUI({ writeParentTag: true, syncR: true });
       }
     });
@@ -668,6 +730,7 @@
         clearTimeout(layoutApplyTimer);
         layoutApplyTimer = null;
         layoutApplyPending = false;
+        layoutApplyPendingOpts = null;
         applyLayoutFromUI({ writeParentTag: true, syncR: true });
       }
     });
@@ -855,11 +918,11 @@
     stopLockMonitor();
     try {
       await PowerPoint.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
         const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-        activeSlide.load('shapes/items/id');
-        await ctx.sync();
+        const slideLeaves = await driver.loadShapeTree(activeSlide.shapes, 'id');
         const idToShape = new Map();
-        for (const sh of activeSlide.shapes.items) {
+        for (const sh of slideLeaves) {
           idToShape.set(sh.id, sh);
         }
         const csh = idToShape.get(childShape.id);
@@ -1229,12 +1292,11 @@
         try {
           const driver = window.PptDriver.createDriver(ctx);
           const sel = ctx.presentation.getSelectedShapes();
-          sel.load('items/id');
+          const selLeaves = await driver.loadShapeTree(sel, 'id');
           // 拿整 slide 的 shapes —— 用于 stale 检测（v1.3.7 修复）
           const slide = ctx.presentation.getSelectedSlides().getItemAt(0);
-          slide.load('shapes/items/id');
-          await ctx.sync();
-          const r = await window.RadiusCore.loadLayoutTags(driver, sel, slide.shapes);
+          const slideLeaves = await driver.loadShapeTree(slide.shapes, 'id');
+          const r = await window.RadiusCore.loadLayoutTags(driver, selLeaves, slideLeaves);
           resolve(r);
         } catch (e) {
           resolve({ ok: false, error: e });
@@ -1253,8 +1315,6 @@
         try {
           const driver = window.PptDriver.createDriver(ctx);
           const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-          activeSlide.load('shapes/items/id');
-          await ctx.sync();
           const r = await window.RadiusCore.saveLayoutTags(
             driver, activeSlide, parentId, params, childIds || []
           );
@@ -1272,10 +1332,10 @@
     return new Promise((resolve) => {
       PowerPoint.run(async (ctx) => {
         try {
+          const driver = window.PptDriver.createDriver(ctx);
           const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-          activeSlide.load('shapes/items/id');
-          await ctx.sync();
-          for (const sh of activeSlide.shapes.items) {
+          const slideLeaves = await driver.loadShapeTree(activeSlide.shapes, 'id');
+          for (const sh of slideLeaves) {
             if (sh.id === parentId) {
               try { sh.tags.delete(LAYOUT_PARENT_TAG_KEY); } catch (_) {}
             }
@@ -1283,7 +1343,7 @@
               try { sh.tags.delete(LAYOUT_CHILD_TAG_KEY); } catch (_) {}
             }
           }
-          await ctx.sync();
+          await driver.sync();
           resolve({ ok: true });
         } catch (e) {
           resolve({ ok: false, error: e });
@@ -1346,21 +1406,78 @@
   // ---------------- 选区 + 读选中的 R 角 ----------------
 
   async function refreshSelection() {
+    // 选区变化时先终止旧 monitor + 清掉 pending layout timer。
+    // 否则旧选区排队的 200ms geometry apply 可能在新选区（group → 叶子/单父）
+    // 状态下继续执行，绕过 GROUP-SCALE 的零写入保护。
+    stopLockMonitor();
+    if (layoutApplyTimer) {
+      clearTimeout(layoutApplyTimer);
+      layoutApplyTimer = null;
+    }
+    layoutApplyPending = false;
+    layoutApplyPendingOpts = null;
     try {
       await PowerPoint.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id, items/name, items/width, items/height, items/adjustments');
-        await ctx.sync();
+        // Mac LTSC：先读 type，再只展开真实 Group；普通 shape 不能加载 group path。
+        const selLeaves = await driver.loadShapeTree(
+          sel,
+          'id, name, width, height, adjustments'
+        );
+        // v1.3.1：打印选区 type 分布（debug 留作 hook，实际排查时用 debug panel 看）
+        try {
+          const typeSummary = (sel.items || []).map((s) => {
+            let t = '?'; try { t = JSON.stringify(s.type); } catch (_) {}
+            // 只在 type 已确认是 Group 后访问 group.shapes。
+            // Mac LTSC 普通 GeometricShape 上读取 s.group 会污染下一次 ctx.sync，
+            // 表现为这里 log "/?"，随后 adjustment sync 抛 GeneralException。
+            let g = '-leaf';
+            if (driver.isGroup(s)) {
+              try { g = `+shapes[${driver.groupShapes(s).length}]`; } catch (_) { g = '+group-read-failed'; }
+            }
+            return `${t}/${g}`;
+          }).join(' | ');
+          console.log('[refreshSelection] sel.items count=', (sel.items || []).length, 'types:', typeSummary);
+        } catch (e) {
+          console.log('[refreshSelection] type summary fail:', e.message || e);
+        }
+        console.log('[refreshSelection] selLeaves count=', selLeaves.length);
         const shapes = [];
-        for (const sh of sel.items) {
-          const minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-          // Mac LTSC task pane: get(0) 是 ClientResult 代理，先 get 再 sync
-          // 让 value 自动填上（不需要显式 load items/value）
-          const adjCount = sh.adjustments.count;
-          const adjResult = sh.adjustments.get(0);
-          await ctx.sync();
+        for (const sh of selLeaves) {
+          let readStage = 'size';
+          let shapeIdForLog = '?';
+          let adjCount = 0;
           let value = null;
-          try { value = adjResult.value; } catch (_) { /* 不是 roundRect */ }
+          let minSideCm = 0;
+          try {
+            shapeIdForLog = sh.id;
+            minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
+            readStage = 'adjustments.count';
+            adjCount = sh.adjustments.count;
+            // 非圆角形状 count=0，不能调用 get(0)，否则无效 ClientResult 会在 sync 才报错。
+            if ((typeof adjCount === 'number' ? adjCount : 0) > 0) {
+              readStage = 'adjustments.get(0)';
+              const adjResult = sh.adjustments.get(0);
+              readStage = 'adjustment ctx.sync';
+              await ctx.sync();
+              readStage = 'adjustment value';
+              try {
+                value = adjResult.value;
+              } catch (valueError) {
+                console.log(
+                  `[refreshSelection] shape id=${shapeIdForLog} adjustment value unavailable:`,
+                  valueError && valueError.message ? valueError.message : String(valueError)
+                );
+              }
+            }
+          } catch (e) {
+            console.log(
+              `[refreshSelection] shape id=${shapeIdForLog} readStage=${readStage} EXCEPTION:`,
+              e && e.message ? e.message : String(e)
+            );
+            throw e;
+          }
           const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
           let cm = null;
           if (isRoundRect && Number.isFinite(value) && value > 0) {
@@ -1429,6 +1546,18 @@
             childIds: parentShape.layoutChildIds.slice(),
             params: { ...parentShape.layoutParams },
           };
+          const childRSnapshot = currentLayout.childIds.map((id) => {
+            const child = selectedShapes.find((s) => s.id === id);
+            return child && Number.isFinite(child.currentCm)
+              ? `${id}:${child.currentCm.toFixed(3)}`
+              : `${id}:—`;
+          });
+          console.log(
+            `[refreshSelection] layout snapshot parent=${parentShape.id}` +
+            ` mode=${currentLayout.params.linkRMode || 'same'}` +
+            ` parentR=${Number.isFinite(parentShape.currentCm) ? parentShape.currentCm.toFixed(3) : '—'}` +
+            ` childR=[${childRSnapshot.join(', ')}]`
+          );
         } else {
           currentLayout = null;
         }
@@ -1442,6 +1571,8 @@
         stopLockMonitor();
       }
     } catch (err) {
+      // v1.3.1 debug：log 详细异常，方便排查
+      console.log('[refreshSelection] EXCEPTION:', err && err.message ? err.message : String(err), '| stack:', err && err.stack ? err.stack.split('\n').slice(0, 3).join(' / ') : 'n/a');
       setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
       showToast(i18n.t('toastReadFailedFmt', { error: err.message || err }));
     }
@@ -1461,9 +1592,14 @@
     lockMonitor.lastCm = {};
     lockMonitor.lastSizeCm = {};  // v1.2.9
     lockMonitor.parentRDirty = false;
+    lockMonitor.parentRSyncGeometry = true;
     if (lockMonitor.parentRSyncTimer) {
       clearTimeout(lockMonitor.parentRSyncTimer);
       lockMonitor.parentRSyncTimer = null;
+    }
+    if (lockMonitor.groupLayoutSyncTimer) {
+      clearTimeout(lockMonitor.groupLayoutSyncTimer);
+      lockMonitor.groupLayoutSyncTimer = null;
     }
     lockMonitor.timer = setInterval(monitorTick, interval);
   }
@@ -1480,9 +1616,14 @@
     lockMonitor.lastCm = {};
     lockMonitor.lastSizeCm = {};  // v1.2.9
     lockMonitor.parentRDirty = false;
+    lockMonitor.parentRSyncGeometry = true;
     if (lockMonitor.parentRSyncTimer) {
       clearTimeout(lockMonitor.parentRSyncTimer);
       lockMonitor.parentRSyncTimer = null;
+    }
+    if (lockMonitor.groupLayoutSyncTimer) {
+      clearTimeout(lockMonitor.groupLayoutSyncTimer);
+      lockMonitor.groupLayoutSyncTimer = null;
     }
   }
 
@@ -1493,6 +1634,8 @@
   }
 
   async function monitorTick() {
+    // group 安全事务期间不允许 monitor 插入新的 PowerPoint.run。
+    if (layoutMutationDepth > 0) return;
     if (selectedShapes.length === 0) {
       stopLockMonitor();
       return;
@@ -1501,6 +1644,7 @@
     let recomputedIds = [];     // 拖尺寸被反算的
     let updatedLockIds = [];    // 拖 R 角滑块被"更新固定值"的
     let layoutParentChanges = [];  // v1.3.6：layout 父 R 角变化（→ 同步子）
+    let selectionRootHasGroup = false; // 整体 group 缩放时禁止逐个重写后代 box
     try {
       await PowerPoint.run(async (ctx) => {
         // v1.2.2 driver + radius-core：lock monitor 走新分层
@@ -1512,12 +1656,12 @@
         //       refreshSelection 用的就是 v1.0 模式（1210-1213 行），实测 work。monitorTick 改回同样模式。
         // bug #3（per-shape sync 累积）→ catch 兜底（实测 v1.2 时期只偶发，无影响）
         const sel = driver.selectedShapes();
-        // 不 load 'items/adjustments/items/value'（v1.3.6 那个 load 没用）—— 改用 v1.0 per-shape 模式
-        driver.load(sel, 'items/id, items/width, items/height, items/adjustments, items/tags');
-        await driver.sync();
-        // readTagsBulk 一次拿全部 tag（避开 readTag per-call sync 累积，bug #2 子 bug 修法保留）
-        const tagsById = driver.readTagsBulk(sel.items);
-        for (const sh of sel.items) {
+        const selLeaves = await driver.loadShapeTree(
+          sel,
+          'id, width, height, adjustments, tags'
+        );
+        selectionRootHasGroup = driver.hasTopLevelGroup(sel);
+        for (const sh of selLeaves) {
           const shId = driver.shapeId(sh);
           try {
             if (!driver.isRoundRect(sh)) continue; // 不是 roundRect
@@ -1629,6 +1773,7 @@
       // 首次见到（lastCm / lastSizeCm = null）只记录不触发 sync（避免启动时无意义重写子 R 角）
       try {
         let hasRealChange = false;
+        let hasSizeChange = false;
         // 1) R 角变化
         const rChanges = window.RadiusCore.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
         for (const c of rChanges) {
@@ -1641,7 +1786,7 @@
           // 真正变了：更新 lastCm + 标 dirty
           lockMonitor.lastCm[c.parentId] = c.newCm;
           hasRealChange = true;
-          console.log(`[layout-link] R-fire parentId=${c.parentId} lastCm=${c.lastCm.toFixed(3)} newCm=${c.newCm.toFixed(3)} (→ 200ms 后调 syncLayoutChildrenR)`);
+          console.log(`[layout-link] R-fire parentId=${c.parentId} lastCm=${c.lastCm.toFixed(3)} newCm=${c.newCm.toFixed(3)} (→ 200ms 后联动)`);
         }
         // 2) v1.2.9：size 变化（widthCm / heightCm）
         const sChanges = window.RadiusCore.detectLayoutParentSizeChanges(lockMonitor.lastSizeCm, selectedShapes);
@@ -1655,11 +1800,21 @@
           // 真正变了：更新 lastSize + 标 dirty
           lockMonitor.lastSizeCm[c.parentId] = c.newSize;
           hasRealChange = true;
-          console.log(`[layout-link] SIZE-fire parentId=${c.parentId} lastSize=${JSON.stringify({ w: c.lastSize.widthCm.toFixed(2), h: c.lastSize.heightCm.toFixed(2) })} newSize=${JSON.stringify({ w: c.newSize.widthCm.toFixed(2), h: c.newSize.heightCm.toFixed(2) })} (→ 200ms 后调 syncLayoutChildrenR)`);
+          hasSizeChange = true;
+          console.log(`[layout-link] SIZE-fire parentId=${c.parentId} lastSize=${JSON.stringify({ w: c.lastSize.widthCm.toFixed(2), h: c.lastSize.heightCm.toFixed(2) })} newSize=${JSON.stringify({ w: c.newSize.widthCm.toFixed(2), h: c.newSize.heightCm.toFixed(2) })} (→ 200ms 后联动)`);
         }
         if (hasRealChange) {
-          lockMonitor.parentRDirty = true;
-          scheduleParentRSync();
+          if (selectionRootHasGroup) {
+            // 拖拽期间绝不直接写 group 后代；每次尺寸变化都重置 debounce。
+            // 用户松手且尺寸稳定后，再临时 ungroup，用新父 box 完整重算 padding /
+            // gutter / child box / R，最后 regroup。
+            console.log('[layout-link] GROUP-SCALE: drag native-only，等待稳定后安全重排');
+            if (hasSizeChange) scheduleGroupLayoutSync();
+          } else {
+            lockMonitor.parentRSyncGeometry = true;
+            lockMonitor.parentRDirty = true;
+            scheduleParentRSync();
+          }
         }
       } catch (e) {
         // 不影响主流程，silent skip
@@ -1677,14 +1832,49 @@
       lockMonitor.parentRSyncTimer = null;
       if (!lockMonitor.parentRDirty) return;
       lockMonitor.parentRDirty = false;
+      const geometry = lockMonitor.parentRSyncGeometry !== false;
+      lockMonitor.parentRSyncGeometry = true;
       try {
         const before = selectedShapes.filter((s) => s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds).length;
-        const r = await syncLayoutChildrenRIfNeeded();
-        if (before > 0) console.log(`[layout-link] syncLayoutChildrenRIfNeeded done: parents=${before} result=${JSON.stringify(r)}`);
+        const r = await syncLayoutChildrenRIfNeeded({ geometry });
+        if (before > 0) console.log(`[layout-link] syncLayoutChildrenRIfNeeded done: parents=${before} geometry=${geometry} result=${JSON.stringify(r)}`);
       } catch (e) {
         console.log('[layout-link] syncLayoutChildrenRIfNeeded error:', e && e.message ? e.message : e);
       }
     }, PARENT_R_SYNC_DEBOUNCE_MS);
+  }
+
+  // group 原生缩放会连同 padding / gutter 一起按比例缩放；UI 中保存的厘米值
+  // 因而与画面不再一致。不能直接修改 group.shapes 后代（Mac LTSC 会再次套用
+  // transform 导致错位），必须等用户松手后走安全事务：
+  // ungroup → 读取新父 box → 完整 applyLayout → regroup。
+  function scheduleGroupLayoutSync() {
+    if (lockMonitor.groupLayoutSyncTimer) {
+      clearTimeout(lockMonitor.groupLayoutSyncTimer);
+    }
+    lockMonitor.groupLayoutSyncTimer = setTimeout(async () => {
+      lockMonitor.groupLayoutSyncTimer = null;
+      if (layoutMutationDepth > 0) {
+        scheduleGroupLayoutSync();
+        return;
+      }
+      const before = selectedShapes.filter((s) =>
+        s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds
+      ).length;
+      if (before === 0) return;
+
+      console.log(`[layout-link] GROUP-SCALE stable: safe full layout parents=${before}`);
+      stopLockMonitor();
+      try {
+        const r = await syncLayoutChildrenRIfNeeded({ geometry: true });
+        console.log(`[layout-link] GROUP-SCALE safe layout done: result=${JSON.stringify(r)}`);
+      } catch (e) {
+        console.log('[layout-link] GROUP-SCALE safe layout error:', e && e.message ? e.message : e);
+      } finally {
+        // applyLayout 的 regroup 会生成新 group id；必须主动刷新选区和 monitor。
+        await refreshSelection();
+      }
+    }, GROUP_LAYOUT_SYNC_DEBOUNCE_MS);
   }
 
   // ---------------- UI helpers ----------------
@@ -1879,9 +2069,11 @@
         // === v1.2.2 driver + radius-core 集成：onApply 走新分层 ===
         const driver = window.PptDriver.createDriver(ctx);
         const sel = driver.selectedShapes();
-        driver.load(sel, 'items/id, items/width, items/height, items/adjustments, items/tags');
-        await driver.sync();
-        for (const sh of sel.items) {
+        const selLeaves = await driver.loadShapeTree(
+          sel,
+          'id, width, height, adjustments, tags'
+        );
+        for (const sh of selLeaves) {
           // 走新分层：业务逻辑在 radius-core.writeRadius，driver 只负责 PPT 读写
           const r = await window.RadiusCore.writeRadius(driver, sh, cm, {});
           if (!r.ok) {
@@ -2027,9 +2219,11 @@
         // v1.2.2 driver + radius-core：走 reapplyLock（自动处理 clamp）
         const driver = window.PptDriver.createDriver(ctx);
         const sel = driver.selectedShapes();
-        driver.load(sel, 'items/id, items/width, items/height, items/adjustments');
-        await driver.sync();
-        for (const sh of sel.items) {
+        const selLeaves = await driver.loadShapeTree(
+          sel,
+          'id, width, height, adjustments'
+        );
+        for (const sh of selLeaves) {
           const id = driver.shapeId(sh);
           const target = locked.find((x) => x.id === id);
           if (!target) continue;
@@ -2348,9 +2542,11 @@
       await PowerPoint.run(async (ctx) => {
         const driver = window.PptDriver.createDriver(ctx);
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id, items/name, items/width, items/height, items/adjustments, items/tags');
-        await ctx.sync();
-        const r = await window.RadiusCore.pickupFromSelection(driver, sel);
+        const selLeaves = await driver.loadShapeTree(
+          sel,
+          'id, name, width, height, adjustments, tags'
+        );
+        const r = await window.RadiusCore.pickupFromSelection(driver, selLeaves);
         if (r) {
           picked = r;
         }
@@ -2403,10 +2599,12 @@
       await PowerPoint.run(async (ctx) => {
         const driver = window.PptDriver.createDriver(ctx);
         const sel = ctx.presentation.getSelectedShapes();
-        sel.load('items/id, items/width, items/height, items/adjustments, items/tags');
-        await ctx.sync();
+        const selLeaves = await driver.loadShapeTree(
+          sel,
+          'id, width, height, adjustments, tags'
+        );
         result = await window.RadiusCore.applyPickedToSelection(
-          driver, sel,
+          driver, selLeaves,
           { cm: pipetteSource.cm, sourceStrict: pipetteSource.sourceStrict },
           { syncStrict: pipetteSyncStrict }
         );
@@ -2539,6 +2737,7 @@
             clearTimeout(layoutApplyTimer);
             layoutApplyTimer = null;
             layoutApplyPending = false;
+            layoutApplyPendingOpts = null;
           }
           applyLayoutFromUI({ writeParentTag: true, syncR: true });
         }
@@ -2557,7 +2756,12 @@
       r.addEventListener('change', () => {
         if (!r.checked || !currentLayout) return;
         currentLayout.params.linkRMode = r.value;
-        scheduleLayoutApply();
+        console.log('[layout-ui] linkRMode change → R-only apply mode=', r.value);
+        scheduleLayoutApply({
+          writeParentTag: true,
+          syncR: true,
+          writeGeometry: false,
+        });
       });
     });
   }
@@ -2576,6 +2780,14 @@
     Office.context.document.addHandlerAsync(
       Office.EventType.DocumentSelectionChanged,
       () => {
+        if (layoutMutationDepth > 0) {
+          console.log('[selection] ignored during layout group transaction');
+          return;
+        }
+        if (Date.now() < layoutSelectionIgnoreUntil) {
+          console.log('[selection] ignored delayed regroup selection event');
+          return;
+        }
         if (pipetteState === 'idle') {
           refreshSelection();
         } else {

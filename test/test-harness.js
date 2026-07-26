@@ -80,6 +80,14 @@ function createHarness(opts) {
     // mock proxy 不会真的记录 load 队列，反正我们的 mock shape 的所有字段都是同步可读的
   };
 
+  // 覆盖 loadShapeTree（v1.3.1 driver helper）
+  // mock 上 shapes 已同步可读；仍走 flattenSelected，覆盖 group 内叶子 lookup。
+  driver.loadShapeTree = async (collection, fields) => {
+    recordCall('loadShapeTree', [fields]);
+    await ctx.sync();
+    return driver.flattenSelected(collection);
+  };
+
   // 覆盖 collection accessors
   driver.activeSlide = () => { recordCall('activeSlide', []); return slide; };
   driver.slideShapes = (s) => { recordCall('slideShapes', []); return s.shapes; };
@@ -101,9 +109,8 @@ function createHarness(opts) {
     return s._tags[key] != null ? s._tags[key] : null;
   };
 
-  // 批量 read tags（一次性返回所有 shape 的 tag dict，**不**在内部 sync）
-  // 真实场景：用 shapes.load('items/tags') + ctx.sync() 一次拿全部
-  // 避免 readTag 的 per-call sync 在 for 循环内累积（v1.2.6 + v1.3.6 Mac LTSC 坑）
+  // 批量读取 tags：真实 driver 会先让每个 TagCollection load('key, value')，
+  // 然后只做一次 ctx.sync()。
   driver.readTagsBulk = (shapesArr) => {
     recordCall('readTagsBulk', [shapesArr.length]);
     const result = {};
@@ -111,6 +118,11 @@ function createHarness(opts) {
       result[s.id] = Object.assign({}, s._tags);
     }
     return result;
+  };
+  driver.loadTagsBulk = async (shapesArr) => {
+    recordCall('loadTagsBulk', [shapesArr.length]);
+    await ctx.sync();
+    return driver.readTagsBulk(shapesArr);
   };
 
   // 覆盖 setAdjFraction：调真实的 s.adjustments.set + 记录
@@ -126,6 +138,48 @@ function createHarness(opts) {
     s.top = box.top;
     s.width = box.width;
     s.height = box.height;
+  };
+
+  // group 安全事务（v1.3.1）：mock ungroup / regroup，并真实修改 slide.shapes.items，
+  // 让 applyLayout 能在解组后重新按 id 获取 fresh top-level proxy。
+  driver.ungroupShapeGroup = (group) => {
+    recordCall('ungroupShapeGroup', [group.id]);
+    const index = slide.shapes.items.indexOf(group);
+    if (index < 0) throw new Error(`mock group ${group.id} 不在 slide 顶层`);
+    const members = Array.isArray(group._groupShapes) ? group._groupShapes : [];
+    for (const member of members) member._groupLevel = 0;
+    slide.shapes.items.splice(index, 1, ...members);
+  };
+  let mockGroupSeq = 0;
+  driver.addGroup = (shapeCollection, values) => {
+    const ids = (values || []).map((v) => typeof v === 'string' ? v : v.id);
+    recordCall('addGroup', [ids.slice()]);
+    const members = ids.map((id) => shapeCollection.items.find((s) => s.id === id));
+    if (members.some((s) => !s)) throw new Error('mock addGroup 找不到成员');
+    const memberSet = new Set(members);
+    const indexes = members.map((s) => shapeCollection.items.indexOf(s));
+    const insertAt = Math.min(...indexes);
+    shapeCollection.items.splice(
+      0,
+      shapeCollection.items.length,
+      ...shapeCollection.items.filter((s) => !memberSet.has(s))
+    );
+    const group = {
+      id: `mock-regroup-${++mockGroupSeq}`,
+      name: '',
+      _isGroup: true,
+      _groupLevel: 0,
+      _groupShapes: members,
+      _tags: {},
+      adjustments: { count: 0, get: () => ({ value: 0 }), set: () => {} },
+    };
+    for (const member of members) member._groupLevel = 1;
+    shapeCollection.items.splice(Math.min(insertAt, shapeCollection.items.length), 0, group);
+    return group;
+  };
+  driver.selectShapes = (targetSlide, shapeIds) => {
+    recordCall('selectShapes', [shapeIds.slice()]);
+    targetSlide._selectedShapeIds = shapeIds.slice();
   };
 
   // 覆盖 loadAdjValue：mock 不需要真的 load（adjustments.get(0) 同步），只记录

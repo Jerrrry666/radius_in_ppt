@@ -22,6 +22,18 @@ const LOCK_STRICT_TAG_KEY = 'radiusLockStrict_v1';
 const LAYOUT_PARENT_TAG_KEY = 'layoutParent_v1';
 const LAYOUT_CHILD_TAG_KEY = 'layoutChild_v1';
 
+// PowerPoint 在 OOXML 中把 tag key 统一存成大写，但 mock / 旧内存对象可能保留
+// caller 传入的驼峰写法。批量读取后的业务查找必须大小写不敏感。
+function getBulkTagValue(tags, key) {
+  if (!tags || key == null) return null;
+  if (Object.prototype.hasOwnProperty.call(tags, key)) return tags[key];
+  const wanted = String(key).toUpperCase();
+  for (const actualKey of Object.keys(tags)) {
+    if (String(actualKey).toUpperCase() === wanted) return tags[actualKey];
+  }
+  return null;
+}
+
 // ---------------- 布局 math ----------------
 
 /**
@@ -514,7 +526,8 @@ async function writeRadius(driver, shape, targetCm, opts) {
     // 1. 读 lock + strict（优先用 caller 传的 knownLockState，避免 per-shape readTag + sync 在 for 循环内累积）
     //    Mac LTSC 实测坑：v1.3.6 修 #6 之前，syncLayoutChildrenR 调 readTag 4 次，每次都 await ctx.sync()，
     //                    第 3/4 个 shape 的 setAdjFraction 在真实 PPT 上会丢（mock 不模拟得到）
-    //    修法：caller 用 driver.readTagsBulk 一次拿全部 → 传 knownLockState → 跳过 per-shape readTag
+    //    修法：caller 用 driver.loadTagsBulk 一次 load + sync 拿全部 → 传 knownLockState
+    //          → 跳过 per-shape readTag
     let isLocked = false;
     let lockedCm = 0;
     let isStrict = false;
@@ -696,13 +709,16 @@ async function reapplyLock(driver, shape, lockedCm) {
  * @param {string} parentId
  * @param {Object} params - { rows, cols, padding, gutter, linkRMode }
  * @param {Array} childIds
- * @param {Object} [opts] - { writeParentTag, syncR }
+ * @param {Object} [opts] - { writeParentTag, syncR, writeGeometry }
  * @returns {Promise<{ok, applied, failed, warn, strictOverridden, lockedCount, error?}>}
  */
 async function applyLayout(driver, parentId, params, childIds, opts) {
   opts = opts || {};
   const writeParentTag = opts.writeParentTag !== false;
   const syncR = opts.syncR !== false;
+  // 切换 linkRMode 只应改变子 R 和持久化 tag；不能顺带把已由用户缩放的
+  // group 子位置/尺寸重新按 layout 公式“反算”一遍。
+  const writeGeometry = opts.writeGeometry !== false;
   // v1.2.6：默认 linkRMode 从 'subtract' 改成 'same'
   // 原因：subtract 公式 R_sub = R_父 - d 几何上**不等距**（45° 方向距离 = d - 0.414d ≈ 0.586d），
   //       user 报"子 R 角看着不美观，角部比边窄"。same 公式 R_sub = R_父 是真正的等距。
@@ -716,61 +732,72 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
   let lockedCount = 0;
   let warn = '';
   let lockedChildCm = [];
+  let regroupState = null;
+
+  // Mac LTSC 对已缩放 group 的后代直接写 box / adjustment 都不稳定。
+  // 如果本次布局临时解组了，成功和异常路径都必须尽力恢复原 group。
+  const restoreGroupIfNeeded = async () => {
+    if (!regroupState || regroupState.restored || regroupState.restoreAttempted) return null;
+    regroupState.restoreAttempted = true;
+    const newGroup = driver.addGroup(regroupState.shapeCollection, regroupState.memberIds);
+    if (regroupState.name) {
+      try { driver.setShapeName(newGroup, regroupState.name); } catch (_) {}
+    }
+    for (const [key, value] of Object.entries(regroupState.tags || {})) {
+      try { driver.addTag(newGroup, key, value); } catch (_) {}
+    }
+    try { driver.load(newGroup, 'id'); } catch (_) {}
+    await driver.sync();
+    regroupState.restored = true;
+    console.log('[applyLayout/driver] GROUP-TXN regroup done members=', regroupState.memberIds.length);
+    // addGroup 不保证保留原选区。主动选中新 group，避免布局面板在事务后消失。
+    try {
+      const newGroupId = driver.shapeId(newGroup);
+      driver.selectShapes(regroupState.slide, [newGroupId]);
+      await driver.sync();
+      console.log('[applyLayout/driver] GROUP-TXN selection restored groupId=', newGroupId);
+    } catch (selectionError) {
+      console.log(
+        '[applyLayout/driver] GROUP-TXN selection restore skipped:',
+        selectionError && selectionError.message ? selectionError.message : String(selectionError)
+      );
+    }
+    return newGroup;
+  };
 
   try {
-    // 1. 当前 slide + 集合层 load（Mac LTSC 必加，per-shape load .count 永远 = 0）
+    // 1. 当前 slide + shape tree collection-level load
+    // Mac LTSC 不能把 group path 无条件 load 到普通 shape；driver 会先读 type，
+    // 再只展开真实 Group 的 shapes collection。
     const slide = driver.activeSlide();
-    driver.load(slide, 'shapes/items/id, shapes/items/left, shapes/items/top, shapes/items/width, shapes/items/height, shapes/items/adjustments, shapes/items/tags');
-    await driver.sync();
+    const slideShapeCollection = driver.slideShapes(slide);
+    let slideLeaves = await driver.loadShapeTree(
+      slideShapeCollection,
+      'id, name, left, top, width, height, level, adjustments, tags'
+    );
 
     // 2. 建 id → shape 映射
-    const idToShape = new Map();
-    const slideShapes = driver.slideShapes(slide);
-    for (const sh of slideShapes.items) {
-      const id = driver.shapeId(sh);
-      if (id != null) idToShape.set(id, sh);
-    }
+    let idToShape = new Map();
+    const rebuildIdMap = () => {
+      idToShape = new Map();
+      for (const sh of slideLeaves) {
+        const id = driver.shapeId(sh);
+        if (id != null) idToShape.set(id, sh);
+      }
+    };
+    rebuildIdMap();
 
     // 3. 找父
-    const parentSh = idToShape.get(parentId);
+    let parentSh = idToShape.get(parentId);
     if (!parentSh) {
       warn = '父形状在当前 slide 找不到（可能选了别的页）';
       console.log('[applyLayout/driver] WARN parent not found in current slide');
       return { ok: false, applied, failed, warn };
     }
 
-    // 4. 父 R 角（v1.0 per-shape get(0) + sync + 读）
-    let parentRcm = 0;
-    try {
-      if (driver.isRoundRect(parentSh)) {
-        const adjResult = parentSh.adjustments.get(0);
-        await driver.sync();
-        try { parentRcm = adjResult.value * Math.min(driver.size(parentSh).width, driver.size(parentSh).height) / PT_PER_CM; } catch (_) {}
-      }
-    } catch (_) { /* 父不是 roundRect 时算 0 */ }
-
-    // 5. 父 box + 算 layout
-    const parentBox = driver.box(parentSh);
-    console.log('[applyLayout/driver] parent box:', JSON.stringify(parentBox), 'Rcm=', parentRcm);
-
-    // v1.2.7：autoPadding — 父 R 角过大时自动减小 padding，保证 same 模式子 R 角不 clamp
-    const parentWcm = parentBox.width / PT_PER_CM;
-    const parentHcm = parentBox.height / PT_PER_CM;
-    const ap = computeAutoPadding(parentWcm, parentHcm, parentRcm, params.padding);
-    const effectivePadding = ap.effectivePaddingCm;
-    if (ap.clamped) {
-      console.log(`[applyLayout/driver] autoPadding: R=${parentRcm.toFixed(3)}cm > d_max=${ap.dMaxCm.toFixed(3)}cm, d ${params.padding}→${effectivePadding.toFixed(3)}cm`);
-    }
-
-    const layout = computeLayout(parentBox, params.rows, params.cols, effectivePadding, params.gutter);
-    if (!layout.feasible) {
-      warn = layout.reason;
-      return { ok: false, applied, failed, warn };
-    }
-
-    // 6. 收集存在的子（过滤掉 stale / 不在当前 slide 的）
+    // 4. 收集存在的子（过滤掉 stale / 不在当前 slide 的）
     const validChildIds = [];
-    const childShapes = [];
+    let childShapes = [];
     for (let k = 0; k < expectedCount; k++) {
       const cid = childIds[k];
       const csh = idToShape.get(cid);
@@ -787,20 +814,122 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
       return { ok: false, applied, failed, warn };
     }
 
-    // 7. 写每个子的位置 + 尺寸 + R 角 + child tag
-    // v1.3.6 修 #6：先 readTagsBulk 拿全部 tag（避开 per-call readTag + sync 在 for 循环内累积）
-    const tagsById = driver.readTagsBulk(slideShapes.items);
+    // 5. group 安全事务：
+    //    已缩放 group 内直接改后代，哪怕逐子 sync 也会让 group transform 损坏。
+    //    仅支持父 + 全部 layout 子是同一个「顶层 group 的直接成员」：
+    //    临时 ungroup → 顶层坐标写布局/R → 按原全部成员 regroup。
+    const layoutShapes = [parentSh, ...childShapes];
+    const directGroups = layoutShapes.map((sh) =>
+      typeof driver.parentGroupOf === 'function' ? driver.parentGroupOf(sh) : null
+    );
+    const groupedCount = directGroups.filter(Boolean).length;
+    if (groupedCount > 0) {
+      const commonGroup = directGroups[0];
+      const commonGroupId = commonGroup ? driver.shapeId(commonGroup) : null;
+      const allSameDirectGroup = !!commonGroup && directGroups.every((g) =>
+        !!g && driver.shapeId(g) === commonGroupId
+      );
+      const groupIsTopLevel = allSameDirectGroup &&
+        (!driver.parentGroupOf || !driver.parentGroupOf(commonGroup));
+
+      if (!allSameDirectGroup || !groupIsTopLevel) {
+        warn = '布局父/子位于不同或嵌套组合中；为避免 PowerPoint 损坏组合，请先解除嵌套/混合组合';
+        console.log('[applyLayout/driver] WARN unsafe grouped layout:', warn);
+        return { ok: false, applied, failed, warn };
+      }
+
+      const memberIds = driver.groupShapes(commonGroup)
+        .map((sh) => driver.shapeId(sh))
+        .filter((id) => id != null);
+      if (memberIds.length < 2) {
+        warn = '组合成员不足，无法安全重建组合';
+        console.log('[applyLayout/driver] WARN', warn);
+        return { ok: false, applied, failed, warn };
+      }
+
+      let groupName = '';
+      try { groupName = driver.shapeName(commonGroup) || ''; } catch (_) {}
+      const groupTagsById = await driver.loadTagsBulk([commonGroup]);
+      regroupState = {
+        slide,
+        shapeCollection: slideShapeCollection,
+        memberIds,
+        name: groupName,
+        tags: groupTagsById[commonGroupId] || {},
+        restored: false,
+        restoreAttempted: false,
+      };
+
+      console.log('[applyLayout/driver] GROUP-TXN ungroup start members=', memberIds.length);
+      driver.ungroupShapeGroup(commonGroup);
+      await driver.sync();
+
+      // ungroup 后旧的 group scoped proxy 不再可靠；重新从 slide 顶层按 id 获取。
+      slideLeaves = await driver.loadShapeTree(
+        slideShapeCollection,
+        'id, name, left, top, width, height, level, adjustments, tags'
+      );
+      rebuildIdMap();
+      parentSh = idToShape.get(parentId);
+      childShapes = validChildIds.map((id) => idToShape.get(id));
+      if (!parentSh || childShapes.some((sh) => !sh)) {
+        throw new Error('解除组合后无法按原 id 找回布局父/子');
+      }
+      console.log('[applyLayout/driver] GROUP-TXN ungroup done; fresh top-level proxies ready');
+    }
+
+    // 6. 父 R 角（v1.0 per-shape get(0) + sync + 读）
+    let parentRcm = 0;
+    try {
+      if (driver.isRoundRect(parentSh)) {
+        const adjResult = parentSh.adjustments.get(0);
+        await driver.sync();
+        try { parentRcm = adjResult.value * Math.min(driver.size(parentSh).width, driver.size(parentSh).height) / PT_PER_CM; } catch (_) {}
+      }
+    } catch (_) { /* 父不是 roundRect 时算 0 */ }
+
+    // 7. 只有几何参数变化时才读父 box、算 layout。
+    // linkRMode 切换走 R-only，不碰任何子 box。
+    let layout = null;
+    if (writeGeometry) {
+      const parentBox = driver.box(parentSh);
+      console.log('[applyLayout/driver] parent box:', JSON.stringify(parentBox), 'Rcm=', parentRcm);
+
+      // v1.2.7：autoPadding — 父 R 角过大时自动减小 padding，保证 same 模式子 R 角不 clamp
+      const parentWcm = parentBox.width / PT_PER_CM;
+      const parentHcm = parentBox.height / PT_PER_CM;
+      const ap = computeAutoPadding(parentWcm, parentHcm, parentRcm, params.padding);
+      const effectivePadding = ap.effectivePaddingCm;
+      if (ap.clamped) {
+        console.log(`[applyLayout/driver] autoPadding: R=${parentRcm.toFixed(3)}cm > d_max=${ap.dMaxCm.toFixed(3)}cm, d ${params.padding}→${effectivePadding.toFixed(3)}cm`);
+      }
+
+      layout = computeLayout(parentBox, params.rows, params.cols, effectivePadding, params.gutter);
+      if (!layout.feasible) {
+        warn = layout.reason;
+        await restoreGroupIfNeeded();
+        return { ok: false, applied, failed, warn };
+      }
+    } else {
+      console.log('[applyLayout/driver] R-ONLY: skip parent box + all child geometry');
+    }
+
+    // 8. 写每个子的位置 + 尺寸 + R 角 + child tag
+    // 一次 loadTagsBulk 加载全部 TagCollection key/value，避免 per-call readTag + sync。
+    const tagsById = await driver.loadTagsBulk(slideLeaves);
     for (let k = 0; k < childShapes.length; k++) {
       const csh = childShapes[k];
-      const pos = layout.positions[k];
-      if (!pos) continue;
-      try {
-        console.log(`[applyLayout/driver] write child #${k} (id=${driver.shapeId(csh)}) pos=`, JSON.stringify(pos));
-        driver.setBox(csh, { left: pos.left, top: pos.top, width: pos.w, height: pos.h });
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        console.log(`[applyLayout/driver] write fail #${k} (id=${driver.shapeId(csh)}):`, msg);
-        throw new Error(`写子 #${k} 位置/尺寸失败: ${msg}`);
+      if (writeGeometry) {
+        const pos = layout.positions[k];
+        if (!pos) continue;
+        try {
+          console.log(`[applyLayout/driver] write child #${k} (id=${driver.shapeId(csh)}) pos=`, JSON.stringify(pos));
+          driver.setBox(csh, { left: pos.left, top: pos.top, width: pos.w, height: pos.h });
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          console.log(`[applyLayout/driver] write fail #${k} (id=${driver.shapeId(csh)}):`, msg);
+          throw new Error(`写子 #${k} 位置/尺寸失败: ${msg}`);
+        }
       }
       // 写 R 角（走 writeRadius，第二道防线实时查 strict + 同步 lock fixed value）
       if (syncR && linkRMode !== 'off') {
@@ -808,7 +937,7 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
         console.log(`[applyLayout/driver] R link #${k}: parentRcm=${parentRcm}, mode=${linkRMode}, padding=${params.padding}, target subRcm=${subRcm}`);
         // 从 readTagsBulk 拿的 tag 构造 knownLockState，传给 writeRadius（跳过 per-call readTag + sync）
         const cTags = tagsById[driver.shapeId(csh)] || {};
-        const lockRaw = cTags[LOCK_TAG_KEY];
+        const lockRaw = getBulkTagValue(cTags, LOCK_TAG_KEY);
         let isLocked = false;
         let lockedCm = 0;
         if (lockRaw != null) {
@@ -818,7 +947,7 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
             lockedCm = cm;
           }
         }
-        const isStrict = cTags[LOCK_STRICT_TAG_KEY] === '1';
+        const isStrict = getBulkTagValue(cTags, LOCK_STRICT_TAG_KEY) === '1';
         const r = await writeRadius(driver, csh, subRcm, {
           layoutParentId: parentId,
           knownLockState: { isLocked, lockedCm, isStrict },
@@ -840,7 +969,7 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
     }
     console.log('[applyLayout/driver] applied=', applied, 'failed=', failed);
 
-    // 8. 写父 tag（**用 validChildIds 过滤后的版本**，stale childIds 自动清理）
+    // 9. 写父 tag（**用 validChildIds 过滤后的版本**，stale childIds 自动清理）
     if (writeParentTag) {
       try {
         const payload = JSON.stringify({
@@ -858,10 +987,37 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
     }
     await driver.sync();
     console.log('[applyLayout/driver] sync done, lockedChildCm count=', lockedChildCm.length);
-    return { ok: true, applied, failed, warn, strictOverridden, lockedCount };
+    await restoreGroupIfNeeded();
+    return {
+      ok: true,
+      applied,
+      failed,
+      warn,
+      strictOverridden,
+      lockedCount,
+      regrouped: !!regroupState,
+      geometryWritten: writeGeometry,
+    };
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     console.log('[applyLayout/driver] OUTER ERROR:', msg);
+    if (regroupState && !regroupState.restored && !regroupState.restoreAttempted) {
+      try {
+        await restoreGroupIfNeeded();
+      } catch (restoreError) {
+        const restoreMsg = restoreError && restoreError.message
+          ? restoreError.message
+          : String(restoreError);
+        console.log('[applyLayout/driver] GROUP-TXN restore ERROR:', restoreMsg);
+        return {
+          ok: false,
+          applied,
+          failed,
+          warn,
+          error: `${msg}；组合恢复失败：${restoreMsg}`,
+        };
+      }
+    }
     return { ok: false, applied, failed, warn, error: msg };
   }
 }
@@ -896,16 +1052,17 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
     // 修法：sibling applyLayout 模式 —— 一次 load + sync 拿全部 tag（用 readTagsBulk 避开 per-call sync），
     //       写所有 setAdjFraction，final sync 一次
     const slide = driver.activeSlide();
-    driver.load(slide, 'shapes/items/id, shapes/items/width, shapes/items/height, shapes/items/adjustments, shapes/items/tags');
-    await driver.sync();
-    const slideShapes = driver.slideShapes(slide).items;
+    const slideShapes = await driver.loadShapeTree(
+      driver.slideShapes(slide),
+      'id, width, height, adjustments, tags'
+    );
     const idToShape = new Map();
     for (const sh of slideShapes) {
       const id = driver.shapeId(sh);
       if (id != null) idToShape.set(id, sh);
     }
-    // 一次拿全部 tag（不调 ctx.sync()，避免 per-call sync 累积）
-    const tagsById = driver.readTagsBulk(slideShapes);
+    // 一次 load + sync 拿全部 TagCollection key/value，避免 per-call sync 累积。
+    const tagsById = await driver.loadTagsBulk(slideShapes);
     for (const childId of childIds) {
       const csh = idToShape.get(childId);
       if (!csh) {
@@ -916,7 +1073,7 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
       console.log(`[syncLayoutChildrenR/driver] R link child=${childId} parentRcm=${parentRcm} mode=${linkRMode} padding=${paddingCm} target subRcm=${subRcm}`);
       // 从 readTagsBulk 拿的 tag 构造 knownLockState，传给 writeRadius（跳过 per-call readTag + sync）
       const childTags = tagsById[childId] || {};
-      const lockRaw = childTags[LOCK_TAG_KEY];
+      const lockRaw = getBulkTagValue(childTags, LOCK_TAG_KEY);
       let isLocked = false;
       let lockedCm = 0;
       if (lockRaw != null) {
@@ -926,7 +1083,7 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
           lockedCm = cm;
         }
       }
-      const isStrict = childTags[LOCK_STRICT_TAG_KEY] === '1';
+      const isStrict = getBulkTagValue(childTags, LOCK_STRICT_TAG_KEY) === '1';
       const r = await writeRadius(driver, csh, subRcm, {
         knownLockState: { isLocked, lockedCm, isStrict },
       });
@@ -1117,13 +1274,11 @@ async function loadLayoutTags(driver, selectedShapes, allSlideShapes) {
  */
 async function saveLayoutTags(driver, slide, parentId, params, childIds) {
   try {
-    // 集合层 load slide shapes（id only）
-    driver.load(slide, 'shapes/items/id');
-    await driver.sync();
+    // 集合层递归 load slide shape tree（id only）
+    const slideShapesArr = await driver.loadShapeTree(driver.slideShapes(slide), 'id');
 
     // 建 id → shape 映射
     const idToShape = new Map();
-    const slideShapesArr = driver.slideShapes(slide).items;
     for (const sh of slideShapesArr) {
       if (sh.id != null) idToShape.set(sh.id, sh);
     }

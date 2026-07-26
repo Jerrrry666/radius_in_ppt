@@ -17,6 +17,7 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const assert = require('assert');
 const RC = require(path.join(__dirname, '..', 'src', 'lib', 'radius-core.js'));
 const { createHarness, createTestRunner, makeStandardFixture, PT_PER_CM, cm } = require('./test-harness');
@@ -1343,8 +1344,8 @@ t.test('bug #6 子 bug：writeRadius opts.knownLockState 跳过 per-call readTag
   const h = createHarness({ shapes: f.allShapes });
   h.reset();
   await RC.syncLayoutChildrenR(h.driver, 'parent_p1', ['lc1'], 0, 'same', 0.8);
-  // 期望：调 1 次 readTagsBulk（拿所有 tag），不调 readTag（per-shape sync）
-  h.assertCalled('readTagsBulk');
+  // 期望：调 1 次 loadTagsBulk（一次 sync 拿所有 tag），不调 readTag（per-shape sync）
+  h.assertCalled('loadTagsBulk');
   h.assertCallCount('readTag', 0);
 });
 
@@ -1546,6 +1547,35 @@ t.test('自测：批量写 R 角 → 锁定 → 写 R 角 → 应用 layout 联�
 
   // 6. 验证 r6_locked 没被改（没参与）
   h.assertShape(f.shapes.r6_locked, { tags: { radiusLock_v1: '0.8' } });
+});
+
+// ============================================================
+// UI 静态回归：边距/间距联动按钮
+// ============================================================
+
+t.test('边距/间距联动按钮始终显示链条，只用背景色区分状态', () => {
+  const dialogHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'dialog', 'dialog.html'), 'utf8');
+  const dialogJs = fs.readFileSync(path.join(__dirname, '..', 'src', 'dialog', 'dialog.js'), 'utf8');
+  const i18nData = fs.readFileSync(path.join(__dirname, '..', 'src', 'dialog', 'i18n-data.js'), 'utf8');
+
+  assert.ok(
+    dialogHtml.includes('id="layout-pg-link-icon">🔗</span>'),
+    '初始图标应该是链条'
+  );
+  assert.ok(
+    dialogJs.includes("pgLinkIcon.textContent = '🔗';"),
+    '切换联动状态后仍应该写入链条图标'
+  );
+  assert.ok(
+    !dialogJs.includes("pgLinkIcon.textContent = linkPG ? '🔗' : '🔓';"),
+    '关闭联动时不能再切换成开锁图标'
+  );
+  assert.ok(
+    dialogHtml.includes('v1.3.1 · Group 布局与缩放稳定性修复') &&
+      i18nData.includes("footerVersion: 'v1.3.1 · Group 布局与缩放稳定性修复'") &&
+      i18nData.includes("footerVersion: 'v1.3.1 · Group layout and resize stability fixes'"),
+    '中英文页脚版本都应该与正式 v1.3.1 一致'
+  );
 });
 
 // ============================================================

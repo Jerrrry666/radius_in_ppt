@@ -19,14 +19,29 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
 
 ### 1.0 ⭐ Git commit / push 规则（用户授权）
 
-**只在用户明确说 "commit" 时才 commit；只在用户明确说 "push" 时才 push。**
+**build 可以自动跑（本地操作，无副作用）；commit / push / build-and-deploy.sh 仍需用户指令。**
 
-- AI 改完代码后**不要自动**跑 `git add / commit / push` / `build-and-deploy.sh`
-- 默认行为：改完代码 → 跑 `npm test` 验证 + 写 changelog → **停下来等用户指令**
-- 用户说"commit" → 才 `git add` + `git commit`
-- 用户说"push" → 才 `git push`（含 push tag）
-- 例外（**显式授权过的 deploy 流程**）：用户事先说"帮我部署" / "commit 并 push" / "deploy 一下" → 一次性跑 build-and-deploy.sh 完成全流程
-- v1.2.14 教训：用户反馈"位置错了" → 已经 commit + push 完 → 撤回要 force-push 改写公共历史（麻烦 + 风险）。**早问一句"现在要 commit/push 吗"省事**
+按操作风险分级：
+
+| 操作 | AI 能否自主 | 理由 |
+| --- | --- | --- |
+| `npm test` / 单测 | ✅ | 纯本地、零副作用 |
+| `bash tools/build-app.sh` / `build-dmg.sh` | ✅ | 纯本地、覆盖式重建 dist/，无远程操作 |
+| `git add` / `git commit` / `git push` | ❌ 需用户明确指令 | 改写本地/远程历史 |
+| `bash tools/build-and-deploy.sh` | ❌ 需用户明确指令 | **包含** commit + push + 移动 tag，复合操作 |
+| Push git tag / 移动 tag | ❌ 需用户明确指令 | tag 改写公共历史 |
+
+**默认行为**（改完代码后）：
+1. 跑 `npm test` 验证
+2. 写 changelog（v1.x.md）
+3. **自动跑** `bash tools/build-app.sh`（让用户可以马上 PPT 实测）
+4. 停下来，等用户指令：
+   - "commit" → `git add . && git commit`（v1.x changelog / version bump 一并 commit）
+   - "push" → `git push origin main && git push origin vX.Y`
+   - "commit 并 push" / "commit + push" / "commit and push" → 两步连做
+   - "帮我部署" / "deploy" / "打包部署" → 一次性跑 `build-and-deploy.sh`
+
+**v1.2.14 教训**：用户反馈"位置错了" → 已经 commit + push 完 → 撤回要 force-push 改写公共历史（麻烦 + 风险）。**早问一句"现在要 commit/push 吗"省事**。build 不算 commit/push（v1.3.1 修订：build 是本地操作，可以自动跑让用户马上实测）。
 
 ### 1.1 ⭐ 版本号规则
 
@@ -34,7 +49,7 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
 
 | 操作 | AI 能否自主 | 例子 |
 | --- | --- | --- |
-| Bump PATCH（第 3 位） | ✅ 可以 | v1.2.0 → v1.2.1 → v1.2.7 → v1.2.15 → v1.2.30 |
+| Bump PATCH（第 3 位） | ✅ 可以 | v1.3.0 → v1.3.1 |
 | Bump MINOR（第 2 位） | ❌ 需用户显式指令 | v1.2.x → v1.3.x |
 | Bump MAJOR（第 1 位） | ❌ 需用户显式指令 | v1.x.x → v2.x.x |
 | Push git tag | ✅ 可以（不动 manifest 版本号）| git push origin v1.2 |
@@ -45,6 +60,13 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
   - 加新 feature / 大改架构 / 破坏性变更 → MINOR（问用户）
   - 跨大版本不兼容 / 整体重写 → MAJOR（问用户）
 - 拿不准时 → 问用户
+
+**PATCH 是发布单元，不是调试次数**：
+- 同一个用户问题在尚未 commit / tag / 发布期间，无论经历多少次实机尝试，都只占
+  一个目标 PATCH；例如本轮所有 Group 验收修复统一为 `v1.3.1`。
+- 只有当前 PATCH 已验收/发布，之后又出现新的独立问题，才递增到下一个 PATCH。
+- 需要强制 PowerPoint 读取新前端时，不得靠递增正式版本号；关闭并重开 task pane，
+  或使用独立的非版本 cache-buster。
 
 ### 1.2 架构铁律
 
@@ -212,6 +234,118 @@ Office.js PowerPoint **不提供** `ShapeResized` / `ShapeMoved` / `ShapePropert
 | `sh.id` / `sh.name` | ✅ |
 | `DocumentSelectionChanged` | ✅（Common API）|
 | `ShapeResized` / `ShapeMoved` | ❌ 不存在（见 2.8）|
+
+### 2.10 GroupShape 处理（v1.3.1）
+
+**坑**：`getSelectedShapes()` 选组合时**不会**自动展平 group，返回的就是 group proxy（1 个，不是 N 个子）。`group.adjustments.count = 0`（group 本身不是 roundRect），被 `isRoundRect` 过滤掉 → **整个 group 在 UI 上"看不见"**。
+
+**修法**：driver 层加 `flattenSelected` 递归展平 → 业务层拿到的永远是叶子 shape，无感。
+
+```js
+// ppt-driver.js v1.3.1 结构方法
+driver.isGroup(s)               // 判定 group（只信 s.type，不兜底 s.group）
+driver.groupShapes(group)       // 拿子 shape 数组（同步，不调 sync）
+driver.flattenSelected(sel)     // 递归展平 → 叶子 shape 数组（普通数组，不是 Office.js collection）
+await driver.loadShapeTree(collection, fields) // 分层加载真实 group 子集合 → 叶子数组
+driver.hasTopLevelGroup(sel)     // 顶层选区是否含 group（区分整组缩放 vs 叶子编辑）
+driver.shapeLevel(s)             // 0=顶层，1+=group 内；caller 先 load level
+driver.parentGroupOf(s)          // 最近一次 tree 遍历记录的直接父 group（不碰 Shape.parentGroup）
+driver.topGroupOf(s)             // 沿安全索引取最外层 group
+```
+
+**关键事实**：
+- `PowerPoint.ShapeType.group` 实际是字符串 `'Group'`（不是数字 enum）
+- `PowerPointApi 1.8+` 才有 `ShapeGroup`（`sh.group.shapes.items` 拿子）
+- group 可嵌套（group 里再 group），要 depth-first 递归
+- 防死循环：用 `Set` 记已访问 shape id
+
+**⚠️ 两个禁止**：
+- 不要用 `s.group && s.group.shapes` 兜底判定 group。非 group 节点也可能出现空 group proxy，必须只信 `s.type === 'Group'`。
+- 不要把 `items/group/shapes/items/...` 嵌套路径无条件 load 到普通 shape。Mac LTSC 单选 `GeometricShape` 时会在 `ctx.sync()` 抛 `GeneralException`。
+- 调试日志也不能在普通 shape 上“试读” `s.group`。即使同步前的属性访问异常被 catch，无效代理仍可能污染队列，让下一次无关的 adjustment `ctx.sync()` 抛 `GeneralException`。必须先 `driver.isGroup(s)`，再访问 `driver.groupShapes(s)`。
+
+**caller 改造 pattern**：
+```js
+const sel = ctx.presentation.getSelectedShapes();
+const selLeaves = await driver.loadShapeTree(
+  sel,
+  'id, name, width, height, adjustments, tags'
+);
+```
+
+`loadShapeTree` 的加载顺序：
+1. 顶层 collection 只 load 普通字段 + `id` + `type`
+2. sync 后只找 `type === 'Group'` 的节点
+3. 对真实 group 的 `group.shapes` collection 做 collection-level load
+4. 每一层一个 sync，直到没有嵌套 group，再 `flattenSelected`
+
+**业务层**：
+- `writeRadius` / `pickupFromSelection` / `applyPickedToSelection` / `loadLayoutTags` 接"shape 数组"语义，flatten 后是叶子数组，一样 work
+- `applyLayout` / `syncLayoutChildrenR` / `saveLayoutTags` 在整 slide 按 id 查找时，必须用 `loadShapeTree(slide.shapes, fields)` 返回的叶子数组建 Map；只遍历 `slide.shapes.items` 会漏掉 group 内父子
+- layout 父/子按 tag 走（`LAYOUT_PARENT_TAG_KEY` / `LAYOUT_CHILD_TAG_KEY`），group 不影响角色识别
+- 防误触铁律不动：writeRadius 内部仍查 strict tag，命中跳过——展平后子能正常被拦截/通过
+
+**⚠️ group 整体缩放时禁止重写子 box（v1.3.1 实机调试结论）**：
+- PowerPoint 拖 group 手柄时会原生缩放所有后代；monitor 会同时观察到 layout 父的 R 和 size 改变。
+- Mac LTSC 在 group 刚完成整体变形后，再逐个给 `group.shapes` 子写 `left/top/width/height`，日志目标坐标即使正确，宿主也可能把部分子甩出 group。
+- 顶层选区含 group 时，monitor 联动必须走 **R-only**：调用 `syncLayoutChildrenR`，绝不调用 `applyLayout` / `setBox`。
+- 用户在布局面板主动改 rows/cols/padding/gutter 时仍走完整 `applyLayout`；用户进入 group 后选中单个 layout 父时也保留叶子级几何联动。
+
+**⚠️ 多个 group 子的 box 必须逐子 sync（v1.3.1 实机调试尝试，最终由安全事务取代）**：
+- 同一个 `ctx.sync()` 里连续给多个 `group.shapes` 子写 `left/top/width/height`，
+  Mac LTSC 16.111 可能只落实最后一个；日志无异常，前三个仍保留 group 原生拉伸后的旧尺寸。
+- `applyLayout` 必须 load `Shape.level`；只要任一目标子 `level > 0`，每次
+  `driver.setBox(child, box)` 后立刻 `await driver.sync()`，不能批量到 final sync。
+- 顶层普通 shape 仍可批量 setBox + 一次 final sync。
+- 识别方法：`driver.shapeLevel(s)`；0=顶层，1+=group 内（嵌套 group 会 >1）。
+
+**⚠️ v1.3.1 最终结论：已缩放 group 的后代不可直接写**：
+- group 原生缩放**拖拽期间**必须零布局写入；R-only 也不安全。只更新 last-known
+  状态，不直接改 group.shapes 的 box / adjustment / tag。
+- 最终实测：原生缩放也会把实际 padding / gutter 一起按比例缩放，导致 UI 的厘米值
+  与画面不一致。尺寸连续 300ms 不变（用户松手）后，必须走安全完整事务：
+  `ungroup → 读取新父 box → applyLayout 完整重算 → regroup`。
+- 禁止在 group 内“就地修正”子形状；即使目标坐标正确，Mac LTSC 仍可能再次应用
+  group transform，把部分子甩出 group。
+- `refreshSelection()` 必须先 `stopLockMonitor()`，清掉旧选区 pending timer；否则旧的
+  200ms layout apply 会跨选区执行，绕过 group 零写入保护。
+- ungroup/regroup 事务期间必须抑制 `DocumentSelectionChanged` 的并发刷新，完成后由
+  原 caller 统一 refresh；不能让第二个 `PowerPoint.run` 插入事务中间。
+- 用户主动改变布局参数或 R 联动模式时，父 + 子若是同一顶层 group 的直接成员，
+  必须走事务：保存成员/名称/tags → ungroup → fresh 顶层 proxy 写布局 → addGroup 恢复。
+- **R-only 收窄**：切换 R 联动模式只允许写 adjustment + layout tags，
+  `applyLayout({ writeGeometry: false })` 必须跳过 parent box / computeLayout / 全部 setBox；
+  只有 rows/cols/padding/gutter 等几何参数变化才允许完整布局。
+- regroup 后用 `Slide.setSelectedShapes([newGroupId])` 恢复 group 选区，避免布局面板消失。
+- regroup 的 `DocumentSelectionChanged` 可能延迟到 `PowerPoint.run` 返回后才派发；
+  事务结束后的短保护窗口必须忽略它，由 caller 主动 refresh 一次，避免重复 monitor。
+- 异常路径必须尽力 regroup，避免把用户的 group 留在解组状态。
+- 不同 group / 嵌套 group 的 layout 暂时拒绝写入，提示用户先解开为一个顶层 group。
+- `Shape.parentGroup` 在顶层 shape 会抛 `GeneralException`，禁止直接探测；只能使用
+  `flattenSelected` 遍历已确认 group 时建立的安全 parent 索引。
+
+**Mock 协议**（test 里用）：
+```js
+// 真实 PPT：s.type === 'Group' + s.group.shapes.items
+// Mock：s._isGroup = true + s._groupShapes = [c1, c2, ...]
+```
+
+**限制 / 不支持**：
+- 跨 slide 组合（slide A 的 group 跨页引用 slide B 的 shape）—— PowerPoint 不支持，跳过
+- "把 R 角应用到整个 group 但 group 内不是 roundRect"——没意义，isRoundRect 过滤掉
+- 写 R 角到 group 节点本身——group 不是 roundRect，跳过；只写叶子
+
+### 2.11 TagCollection 批量读取（v1.3.1）
+
+- `shapeCollection.load('items/tags')` 只加载 `tags` 导航属性，**不会**填充
+  `shape.tags.items` 的 `key/value`。
+- 批量业务必须走 `await driver.loadTagsBulk(shapes)`：
+  1. 给每个 `shape.tags` 排队 `load('key, value')`
+  2. 只做一次 `ctx.sync()`
+  3. 再统一读取 `tags.items`
+- PowerPoint 会把 tag key 统一存成大写；radius-core 从批量 dict 取 tag 时必须
+  大小写不敏感。
+- ❌ 不要在形状循环内逐个 `readTag + sync`，会重现后几个 adjustment 写入丢失。
 
 ---
 

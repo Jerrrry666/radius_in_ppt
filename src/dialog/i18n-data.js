@@ -112,7 +112,7 @@ window.I18N_DATA = {
     reapplyLock: '重新应用锁定（针对当前选区）',
 
     // --- Footer ---
-    footerVersion: 'v1.3 · 布局模式 + 样式刷精修 + 全 driver 化',
+    footerVersion: 'v1.3.1 · Group 布局与缩放稳定性修复',
 
     // --- Debug log ---
     debugTitle: '🔧 调试日志（点击展开）',
@@ -319,7 +319,7 @@ window.I18N_DATA = {
     reapplyLock: 'Re-apply lock (current selection)',
 
     // --- Footer ---
-    footerVersion: 'v1.3 · Layout + style-brush polish + full driver-ification',
+    footerVersion: 'v1.3.1 · Group layout and resize stability fixes',
 
     // --- Debug log ---
     debugTitle: '🔧 Debug log (click to expand)',

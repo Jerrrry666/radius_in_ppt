@@ -26,6 +26,10 @@ certs/
 *.zip
 dist/
 
+# 已确认发布并纳入版本控制的安装包
+!releases/
+!releases/**/*.zip
+
 # 编辑器 / IDE
 .vscode/
 .idea/

@@ -83,14 +83,19 @@ cp "$ROOT/tools/serve.js" "$RES_DIR/tools/"
 # 4.5 Release 构建：剥离调试日志块（dev 用，release 用户不需要）
 # 范围：dialog.html 里 @build-strip-debug-log:start 和 :end 之间的整块
 # 不影响 dev（直接通过 serve.js 跑的话，HTML 完整）
-echo "[build] stripping debug log section from release build"
-sed -i '' '/@build-strip-debug-log:start/,/@build-strip-debug-log:end/d' "$RES_DIR/src/dialog/dialog.html"
-# 验证：release 版的 dialog.html 不应再含 debug-log 元素
-if grep -q '<details id="debug-log"' "$RES_DIR/src/dialog/dialog.html"; then
-  echo "[build] ⚠️ WARNING: debug-log 仍然在 release build 中，sed 可能没匹配上"
-  exit 1
+# v1.3.1：临时保留 debug log（GroupShape 排查需要看 type 字段实际值）
+if [ "${KEEP_DEBUG:-0}" = "1" ]; then
+  echo "[build] KEEP_DEBUG=1 → 保留 debug log section（不 strip）"
+else
+  echo "[build] stripping debug log section from release build"
+  sed -i '' '/@build-strip-debug-log:start/,/@build-strip-debug-log:end/d' "$RES_DIR/src/dialog/dialog.html"
+  # 验证：release 版的 dialog.html 不应再含 debug-log 元素
+  if grep -q '<details id="debug-log"' "$RES_DIR/src/dialog/dialog.html"; then
+    echo "[build] ⚠️ WARNING: debug-log 仍然在 release build 中，sed 可能没匹配上"
+    exit 1
+  fi
+  echo "[build] debug log section stripped"
 fi
-echo "[build] debug log section stripped"
 
 # 5. 生成 .icns
 echo "[build] generating AppIcon.icns"
