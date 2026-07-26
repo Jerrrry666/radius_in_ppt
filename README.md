@@ -10,14 +10,9 @@
 
 **测试范围**：目前只在 macOS PowerPoint（**版本 16.111.1 (26071913)**）上验证过可用性，理论上 Office.js 加载项是跨平台的，Windows 上应该也能使用 —— **不过未在 Windows 上实测**，欢迎 Windows 用户试用后反馈兼容性。
 
-如果你也在 macOS 上做圆角矩形相关的 PPT，欢迎试用 + 提意见（issue / PR / 建议都很有价值）🙏
+如果你也在 macOS 上做圆角矩形相关的 PPT，欢迎试用 + 提意见 🙏
 
-> 在 PowerPoint 顶部 ribbon 添加一个 **「R 角调整」** 自定义 Tab，
-> 像 iSlide 一样。让你能用 **厘米** 为单位精确设置圆角矩形的 R 角（圆角半径），
-> 支持「锁定 R 角绝对值」「防误触」「样式刷」「5 次历史」
-> 和 **v1.2 新增的「布局模式」**（rows × cols 网格 + 边距/间距滑块 + R 角联动）。
-
-## 📌 v1.3 更新（2026-07-26）
+## 📌 最新更新
 
 v1.2 把"嵌套圆角矩形分布"做完了，v1.3 专注把布局 / 样式刷的细节做顺手，并完成 dialog.js / radius-core 全 driver 化 + Step 3-4 迁移收尾。
 
@@ -31,15 +26,14 @@ v1.2 把"嵌套圆角矩形分布"做完了，v1.3 专注把布局 / 样式刷�
 - **勾选「刷防误触状态」= 双向覆盖** — 源 strict=true → 目标 strict=true；源 strict=false → 目标 strict=false
 - 顺序关键：source=true 时**先写 R 角再加 strict**（避免 writeRadius 被拦截）；source=false 时**先删 strict 再写 R 角**（让 writeRadius 不被拦截）
 
-**架构收尾**（v1.3.0）：
+**架构收尾**：
 - **dialog.js / radius-core 全 driver 化** — 8 个 driver 版函数替代 dialog.js 散落的 ctxShape 操作
 - **Step 3-4 迁移完成** — layout tag 读写 + pipette 全部走 driver
 - **修 3 个遗留 bug** — 样式刷吸取后无法刷入 / 布局 R 角联动 4 子只写 2 / lockMonitor `GeneralException`
-- **AGENTS.md §1.0 新规则** — AI commit/push 权限限制（教训：v1.2.14 第一次部署位置错 → 撤回要 force-push 改写公共历史）
+- **双语 UI** — 按系统语言自动选 zh / en（ribbon tab、task pane、启动器弹窗全支持）
+- **测试 210/0** — 95 features + 115 radius-core
 
-**测试 210/0** — 95 features + 115 radius-core（这次加 6 个新测覆盖双向 strict 覆盖）
-
-完整变更日志：[`changelogs/v1.3.md`](./changelogs/v1.3.md)（含 v1.2.8 → v1.3.0 全部 hotfix）　·　历史：[`changelogs/v1.2.md`](./changelogs/v1.2.md)　·　主日志：[`LOG.md`](./LOG.md)　·　路线图：[`plans/feature-roadmap.md`](./plans/feature-roadmap.md)
+完整变更日志：[`changelogs/v1.3.md`](./changelogs/v1.3.md)　·　历史：[`changelogs/v1.2.md`](./changelogs/v1.2.md)　·　主日志：[`LOG.md`](./LOG.md)
 
 ## 它解决什么问题
 
@@ -53,21 +47,8 @@ PowerPoint 自带的「圆角矩形」形状：
 - ✅ 输入 `0.3 厘米` 这种 **绝对值** 来设置 R 角
 - ✅ 切换 **锁定** 状态：锁定后，R 角保持厘米值不变，改变形状大小时按比例自动调整
 - ✅ 同时作用于 **多个选中的圆角矩形**
-- ✅ v1.2：1 父 + N 子 → 拖滑块 → 实时均匀分布 + R 角联动
-
-## 用户视角
-
-打包后是 macOS `.app`（约 440 KB），双击即可：
-
-1. 双击 `R 角调整.app`
-2. 弹一个引导框 → 选「退出并重新打开 PowerPoint」
-3. 重新打开 PowerPoint → 顶部 ribbon 出现 **「R 角调整」** Tab
-4. 点 Tab 里的 **「调整 R 角」** 按钮 → 右侧弹出 **task pane**
-5. 选中圆角矩形 → task pane 里输入 `0.3` 厘米（或 `10` %）→ 应用 / 锁定 / 防误触
-6. **v1.2**：选 1 父 + N 子 → 进组合 → 「建布局」 → 拖滑块实时分布
-
-> 之后每次使用只需双击 .app 即可（server 后台跑，manifest 已持久化）。
-> 注意：改了代码需要 `Cmd + Q` 完全退出 PowerPoint 再重开一次，task pane 才会拉新代码。
+- ✅ v1.2 布局模式：1 父 + N 子 → 拖滑块 → 实时均匀分布 + R 角联动
+- ✅ v1.3 样式刷：吸 1 个形状的 R 角，连刷其他；可选「刷防误触状态」双向覆盖
 
 ## 功能
 
@@ -77,7 +58,7 @@ PowerPoint 自带的「圆角矩形」形状：
 | 任务窗格（task pane） | 360×560 侧边栏，无模式不挡视野 |
 | 厘米 / 百分比输入 | `cm` ↔ `%` 切换；% 按形状短边比例解读；输入 + 「应用 R 角」或回车 |
 | **v1.2** 布局模式 | 1 父 + N 子，rows×cols 网格 + padding/gutter 滑块 + R 角联动 |
-| **v1.2** R 角联动 | 子 R 角按 `max(0, 父R − padding)` 公式自动算；off/same/subtract 三档 |
+| **v1.2** R 角联动 | 子 R 角按 `max(0, 父R − padding)` 公式自动算；off / same / subtract 三档 |
 | **v1.2** 嵌套状态持久化 | 父挂 JSON + 子挂 parentShapeId 双向 tag，跟 .pptx 走 |
 | **v1.3** 行/列互斥联动 | 一条滑块就够，列 = 子数 ÷ 行（rows × cols = N 严格成立） |
 | **v1.3** 行离散因子列表 | 行的可取值 = N 的正因子（[1, 2, 4] / [1, 2, 3, 6] / 质数 [1, N]），不留空位 |
@@ -92,205 +73,33 @@ PowerPoint 自带的「圆角矩形」形状：
 | 锁定自动重应用 | setInterval 轮询，区分「拖尺寸」和「拖 R 角滑块」两种拖动 |
 | 持久化 | 锁定信息存到形状自己的 `shape.tags`（OOXML `<p:tagLst>`），跨设备/换机器都保留 |
 
-## 项目结构
-
-```
-radius_in_ppt/
-├── manifest.xml                       # Office Add-in 清单（指向 localhost:3000）
-├── src/
-│   ├── dialog/                        # task pane UI（dialog 是历史命名）
-│   │   ├── dialog.html
-│   │   ├── dialog.js                  # ~2580 行（v1.3 收尾后，Step 5 重构目标 ~500）
-│   │   └── dialog.css
-│   └── lib/                           # v1.2 抽出的实现层 + 交互层
-│       ├── radius-core.js             # ~1470 行，纯算法 + 10 个 driver 版 feature 函数
-│       └── ppt-driver.js              # 109 行，16 个 Office.js 交互方法
-├── app/MacOS/RadiusInPpt              # bash 启动器
-├── tools/
-│   ├── serve.js                       # ~60 行静态文件 server
-│   ├── build-app.sh                   # 打包成 .app
-│   ├── build-and-deploy.sh            # 一键 build + 部署 + git commit
-│   ├── build-dmg.sh                   # 可选：打包成 .dmg
-│   └── sign-and-notarize.sh           # 可选：代码签名 + 公证
-├── assets/                            # ribbon icon（5 个尺寸，manifest.xml 引用）
-├── test/                              # 单元测试（210 个）
-│   ├── test-radius-core.js            #   115 个纯算法
-│   ├── test-mock-harness.js           #   70 个 mock PowerPoint run 上下文
-│   ├── test-driver-integration.js     # 109 个 mock driver + radius-core 集成
-│   ├── test-features.js               #  95 个 feature 行为（v1.3 收尾后新增）
-│   └── README.md
-├── dist/                              # build 输出（git ignore）
-│   └── RadiusInPpt.app
-├── AGENTS.md                          # 必读：三层架构 + Mac LTSC 踩坑 + §1.0 commit/push 权限
-├── LOG.md                             # 主日志（状态/已完成/待办/Bug/规划）
-├── README.md                          # 本文件
-├── changelogs/                        # 子日志（per-version 详细变更）
-│   ├── v1.0.md
-│   ├── v1.1.md
-│   ├── v1.2.md                        # v1.2.0 → v1.2.7 主功能 + 早期 hotfix
-│   └── v1.3.md                        # v1.2.8 → v1.3.0 全部 hotfix + v1.3 收尾 + 新 feature
-├── plans/
-│   └── feature-roadmap.md             # v1.1+ 路线图
-└── package.json                       # npm test 跑 3 个测试文件
-```
-
-## 三层架构（v1.2 重构成果）
-
-```
-dialog.js (UI 层)          事件绑定 / 渲染 / toast / debug log
-       │
-       ▼
-radius-core.js (实现层)    10 个 driver 版函数：writeRadius / readLockState /
-                           writeLockState / reapplyLock / applyLayout /
-                           syncLayoutChildrenR / pickupFromSelection /
-                           applyPickedToSelection / applyLayoutPure / ...
-                           零 Office.js 调用 → 100% 单元测试
-       │
-       ▼
-ppt-driver.js (交互层)    16 个方法：load / sync / selectedShapes / activeSlide /
-                           slideShapes / shapeId / size / box / isRoundRect /
-                           adjFraction / loadAdjValue / setBox / setAdjFraction /
-                           addTag / deleteTag / readTag
-                           零业务逻辑 → 100% 单元测试
-       │
-       ▼
-Office.js + PowerPoint (Mac LTSC 16.111)
-```
-
-- **driver 不知道任何业务概念**（不认 `LOCK_TAG_KEY` / `LAYOUT_PARENT_TAG_KEY`，不知 strict 是什么）
-- **radius-core 不 import Office.js**（所有形状读/写/load/sync 走 driver）
-- **dialog.js 是搬运工**（`onClick → 开 driver → 调 feature → 渲染结果`）
-
-## 安装到 PowerPoint（开发模式）
-
-manifest 引用 `http://localhost:3000`，所以需要先把本地仓库跑起来。
-
-### 1. 启动本地 HTTP server
-
-```bash
-# 在项目根目录
-npm start
-# 输出示例：
-#   [serve] HTTP listening on http://127.0.0.1:3000
-```
-
-或者直接双击 `R 角调整.app`（它会自动启动 server + 注册加载项）。
-
-### 2. 注册 manifest 到 PowerPoint
-
-**Mac 上的官方加载方式**（[Microsoft 文档](https://learn.microsoft.com/office/dev/add-ins/testing/sideload-an-office-add-in-on-ipad-and-mac)）：
-
-```bash
-WEF="$HOME/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef"
-mkdir -p "$WEF"
-cp manifest.xml "$WEF/manifest.xml"
-```
-
-> `R 角调整.app` 启动时自动做这一步。
-
-### 3. 加载到 PowerPoint
-
-1. **完全退出 PowerPoint**（`Cmd + Q`，不要只关窗口）
-2. **重新打开** PowerPoint
-3. 顶部 **「主页」** tab → **「加载项」** 按钮
-4. 弹窗里选 **「R 角调整」**
-5. 顶部 ribbon 出现 **「R 角调整」** Tab
-
 ## 使用方法
 
-### 基础 R 角调整
+打包后是 macOS `.app`（约 405 KB），双击即可：
 
-1. **选中** 一个或多个圆角矩形（可多选，按住 ⌘ 多选）
-2. 顶部 **「R 角调整」** Tab → **「调整 R 角」** 按钮
-3. 弹出 Dialog：
-   - 顶部状态卡片：当前选区信息 + 当前 R 角（多选时显示最小~最大）
-   - 输入框填入厘米值，例如 `0.3` → 点 **「应用 R 角」** 或按回车
-   - 点 **「锁定 R 角」**：固定当前选区所有圆角矩形的 R 角绝对值；再点 → 全部解锁
-   - 「重新应用锁定（针对当前选区）」：在改完大小后，用这个按钮把存储的 R 角绝对值重新写入
+1. 双击 `R 角调整.app`
+2. 弹一个引导框 → 选「退出并重新打开 PowerPoint」
+3. 重新打开 PowerPoint → 顶部 ribbon 出现 **「R 角调整」** Tab
+4. 点 Tab 里的 **「调整 R 角」** 按钮 → 右侧弹出 **task pane**
+5. 选中圆角矩形 → task pane 里输入 `0.3` 厘米（或 `10` %）→ 应用 / 锁定 / 防误触
+6. **v1.2 布局模式**：选 1 父 + N 子 → 进组合 → 「建布局」 → 拖滑块实时分布
 
-### v1.2 布局模式
+> 之后每次使用只需双击 .app 即可（server 后台跑，manifest 已持久化）。
+> 注意：改了代码需要 `Cmd + Q` 完全退出 PowerPoint 再重开一次，task pane 才会拉新代码。
 
-1. **画好嵌套关系**：1 个大圆角矩形（父）+ N 个小圆角矩形（子），位置/尺寸随意
-2. **全选**（父 + 所有子）→ 顶部 **「R 角调整」** Tab → **「调整 R 角」**
-3. 选 1 个作为 **父**（在形状列表里点父那行，会出现"建布局"按钮）
-4. 填 **rows × cols**（如 `2 × 3`）→ 选 **子列表** → **「建布局」**
-5. 拖 **边距/间距** 滑块 → 子矩形实时均匀分布
-6. 切 **R 角联动**（off / same / subtract）：
-   - `off`：子 R 角不动
-   - `same`：子 R 角 = 父 R 角
-   - `subtract`（默认）：子 R 角 = `max(0, 父R − padding)`（按 padding 公式自然联动）
-7. 改父 R 角 → 所有子 R 角自动按公式更新
+### Windows 安装
 
-### 锁定语义
+GitHub Release 还提供一个 **Windows 版本**（`RadiusInPpt-win.zip`，约 95 KB）。**未在 Windows 实测**，有问题请提 issue。
 
-v1.1 把"锁定"拆成两个独立开关：
+1. 从 [GitHub Releases](https://github.com/Jerrrry666/radius_in_ppt/releases/tag/v1.3) 下载 `RadiusInPpt-win.zip`
+2. 解压到任意目录
+3. 确认已装 [Node.js 18+](https://nodejs.org/)（`.bat` 启动器会自动找）
+4. 双击 `RadiusInPpt.bat` → 弹框提示「完全退出 PowerPoint 后重启」
+5. 打开 PowerPoint → 完全退出（文件 → 退出）→ 重新打开
+6. 顶部 ribbon 出现 **「R 角调整」** Tab
 
-| 开关 | 行为 |
-| --- | --- |
-| **使用数值固定 R 角**（按钮） | 写 fixed value（cm）→ PPT 内拖尺寸反算回 fixed value；拖 R 角滑块视作主动改（更新 fixed value） |
-| **防误触**（toggle） | 拒绝 task pane 改值 + PPT 内拖 R 角滑块反算回当前值；开启时自动 lock（用当前 R 角），关闭时只删防误触标记、保留 fixed value |
-
-共同特点：
-- 改变形状大小 → `adjustments[0]` 比例自动按新短边重新计算
-- 切换选区时自动重应用（lock monitor 50ms 轮询检测拖动）
-- 锁定信息存到形状自己的 `shape.tags`（OOXML `<p:tagLst>`），跨设备/换机器都保留
-
-### 样式刷 strict 双向覆盖（v1.3）
-
-勾选「刷防误触状态」时，**源的 strict 状态会覆盖到目标（双向）**：
-- 源 strict=true → 所有目标加 strict tag（**写完 R 角之后**加，避免 writeRadius 拦截）
-- 源 strict=false → 所有目标删 strict tag（**写 R 角之前**删，让 writeRadius 不被 strict 拦截）
-
-不勾选时行为不变：选区里有任何目标启用了 strict → 整个样式刷拒绝（防误触铁律）。
-
-## 关键技术点
-
-### 单位换算
-
-PowerPoint 内部单位是 EMU（English Metric Units）：
-- `1 厘米 = 360000 EMU`
-- **OOXML 里** `adjustments[0] ∈ [0, 50000]`（对应 0%~50% 短边）
-- **Mac LTSC Office.js** `adjustments[0] ∈ [0, 1]`（OOXML 值 ÷ 50000，task pane / dialog 上下文都返回 0~1）
-
-设 `shortSide = min(width, height)`（EMU）：
-- **读**：`radiusCm = adjustments[0] × shortSide / 360000`
-- **写**：`adjustments[0] = clamp(radiusCm × 360000 / shortSide, 0, 0.5)`
-
-> ⚠️ **写时不要 `Math.round`**——`round(0.067) = 0`，所有非整数都会被截成 0。`adjustments.set(0, newVal)` 接受 0~1 小数。
-
-### 为什么用 HTTP 不是 HTTPS
-
-Office Add-in 对**生产环境**要求 HTTPS，但对 `localhost` / `127.0.0.1` 是例外，
-允许 HTTP 加载。所以我们用纯 HTTP 跑本地 server，**完全不需要证书**。
-
-### Mac LTSC Office.js 踩坑
-
-详细见 [`AGENTS.md`](./AGENTS.md) §4，重点几条：
-- `shape.adjustments.get(0).value` 返回 **0~1 小数**，不是 OOXML 0~50000
-- 必须 **collection-level load**（`sel.load('items/...')`），per-shape load 不 work
-- `set + sync` 后必须 **fresh get(0)** 才能读到新值（旧 proxy 是 snapshot 风格）
-- Mac LTSC task pane 里 `customProperties` / `customXmlParts` 不可用，**只能**用 `shape.tags` 持久化
-
-## 测试
-
-```bash
-cd /Users/ma/Documents/minimax/radius_in_ppt
-npm test                                            # 跑全部 4 个测试文件（210 个）
-node test/test-radius-core.js                       # 仅算法（115 个）
-node test/test-mock-harness.js                      # 仅 mock harness（70 个）
-node test/test-driver-integration.js                # 仅 driver 集成（109 个）
-node test/test-features.js                          # 仅 feature 行为（95 个）
-```
-
-**烟囱测试（PPT 内）**：任务窗格 → 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified。
-
-**未来 feature 走单测**：v1.3.0 起，所有新 feature 不再 PPT 实测，信任 `npm test` + 代码 review。
-
-## 兼容性
-
-- **PowerPoint for Mac** 2019 / 2021 / 2024（CustomTab 需要 Office.js 1.4+）
-- **PowerPoint for Windows** 2019+（用 `localhost:3000` 即可）
-- **PowerPoint for Web** — CustomTab 在 web 上不支持，会回退到任务窗格
+> 之后每次使用只需双击 `RadiusInPpt.bat` 即可。
+> 日志位置：`%TEMP%\radius_in_ppt.log`（出问题提 issue 时附上）。
 
 ## 常见问题
 
@@ -311,9 +120,6 @@ A: 关闭 Dialog 重新点开即可。
 **Q: 后台 server 怎么停**
 A: Terminal：`lsof -ti tcp:3000 | xargs kill`
 
-**Q: 改完代码后 build + 部署到 wef 怎么搞**
-A: `bash tools/build-and-deploy.sh <version> "<commit msg>"` 一键搞定（bump version + build + 部署 + commit + 可选 push）
-
 ## License
 
-MIT
+[MIT](./LICENSE)
