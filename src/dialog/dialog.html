@@ -229,6 +229,11 @@
 
     <footer class="footer" data-i18n="footerVersion">v1.3 · 布局模式 + 样式刷精修 + 全 driver 化</footer>
 
+    <!-- @build-strip-debug-log:start -->
+    <!--
+      调试日志 + driver 烟囱测试面板。开发时使用，release 构建时由 build-app.sh sed 删掉。
+      警告：不要往这里放用户面 UI，release 用户看不到。
+    -->
     <details id="debug-log" class="debug-log">
       <summary>
         <span data-i18n="debugTitle">🔧 调试日志（点击展开）</span>
@@ -238,6 +243,7 @@
       </summary>
       <div id="debug-log-body" class="debug-log-body"></div>
     </details>
+    <!-- @build-strip-debug-log:end -->
   </main>
   <div id="toast" class="toast"></div>
   <script>
