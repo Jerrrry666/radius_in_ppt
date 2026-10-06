@@ -14,6 +14,10 @@ If you also work on rounded rectangles in PowerPoint on Mac, feel free to try it
 
 ## 📌 Latest update
 
+**Local, awaiting host validation: v1.3.2** — fixes protection bypasses, host races, zero radius, geometry identification and launchers; 287 tests pass. PowerPoint validation is pending because the Mac locked during testing. See the [changelog](./changelogs/v1.3.md). Downloads below remain the published v1.3.1 release.
+
+Layout spacing uses the entered centimetre values. `same` retains the parent radius; `subtract` gives equal inset arc spacing for a 1×1 layout with parent R ≥ padding; child R is clamped to half its short side. `off` disables radius coupling while retaining geometry coupling.
+
 **v1.3.1** is the Group compatibility and layout-stability bugfix release for v1.3.
 
 **Group reading and layout fixes**:
@@ -21,7 +25,7 @@ If you also work on rounded rectangles in PowerPoint on Mac, feel free to try it
 - Fixed `Read failed: GeneralException` when selecting a single regular rounded rectangle
 - Layouts can be created and persisted inside a Group; repeated widening, shrinking, or height changes safely recompute children from the new parent box
 - Fixed-centimetre padding and gutter no longer scale proportionally with the Group
-- Switching Equal / Hierarchy R modes updates only R values and tags without corrupting child geometry
+- Switching `same` / `subtract` R modes updates only R values and tags without corrupting child geometry
 - The padding/gutter button always displays `🔗`; orange / white background indicates linked / unlinked
 - Tests increased to **251/0** (115 algorithm + 96 feature + 40 Group driver/integration)
 
@@ -38,9 +42,9 @@ If you also work on rounded rectangles in PowerPoint on Mac, feel free to try it
 - **Padding / gutter Photoshop-style chain link** — chain icon centered between two rows; when active, gutter = padding
 - **Gutter disabled when chained** — full greyed-out + non-interactive (eliminates the "gutter modified → chain reverts → shape not reverted" race)
 
-**Style brush strict bidirectional override**:
-- **"Apply strict-lock state" = bidirectional override** — source strict=true → target strict=true; source strict=false → target strict=false
-- Order matters: source=true → **write R first, then add strict** (avoids writeRadius being blocked); source=false → **delete strict first, then write R** (lets writeRadius through)
+**Style brush protection (corrected in v1.3.2)**:
+- "Apply strict-lock state" copies enabled protection to unprotected targets after writing the radius and saving its actual clamped fixed value.
+- Any protected target blocks the entire batch. Disable target protection manually first; the brush never removes it automatically.
 
 **Architecture cleanup**:
 - **dialog.js / radius-core fully driver-ified** — 8 driver-version functions replace scattered ctxShape operations
@@ -64,7 +68,7 @@ This add-in lets you:
 - ✅ Toggle **lock** — when locked, R stays in cm and re-scales proportionally when the shape resizes
 - ✅ Act on **multiple selected rounded rectangles** at once
 - ✅ v1.2 Layout Mode: 1 parent + N children → drag a slider → real-time even distribution + R-coupling
-- ✅ v1.3 Style brush: pick the R from one shape, paint to others; optional "apply strict-lock state" bidirectional override
+- ✅ v1.3 Style brush: pick R from one shape, paint to unprotected targets; optionally copy enabled strict-lock from the source
 - ✅ v1.3.1 Group compatibility: read / edit R / build layouts from a Group selection, then restore fixed padding and gutter after resize
 
 ## Features
@@ -80,13 +84,13 @@ This add-in lets you:
 | **v1.3** Row/column coupled slider | one slider, columns = children ÷ rows (rows × cols = N strictly) |
 | **v1.3** Row discrete factor list | valid row values = positive factors of N ([1, 2, 4] / [1, 2, 3, 6] / prime [1, N]), no empty slots |
 | **v1.3** Padding/gutter chain link | Photoshop-style chain icon; when active, gutter = padding; gutter fully disabled when chained (avoids race conditions) |
-| **v1.3** Style brush strict bidirectional | checkbox toggles bidirectional override: source strict=true → target strict=true; source strict=false → target strict=false |
+| **v1.3.2** Style brush protection | optionally copy enabled source protection; protected targets require manual disabling first |
 | **v1.3.1** Group reading and writing | recursively reads rounded rectangles from a Group selection; supports batch R edits, locks, style brush, and layout-role detection |
 | **v1.3.1** Stable Group layouts | after resize: safely ungroup, restore fixed padding/gutter from the new parent box, and regroup; R-mode switching does not rewrite geometry |
 | Fix R by value | button on/off; when on, resizing in PPT re-computes to fixed value |
 | Anti-misclick (strict) | independent toggle; when on, uses current R as fixed value; rejects task pane edits + reverses R-slider drags |
 | R preset library | 5 user-editable presets, name + value, one-click apply |
-| R style brush | pick from 1 roundRect's R, paint to other targets; optional "apply strict-lock state" bidirectional override |
+| R style brush | pick R from 1 roundRect, paint to unprotected targets; optionally copy enabled source protection |
 | Multi-select | acts on all selected rounded rectangles; non-roundRects are skipped with a notice |
 | Shape list | live display of each selected shape's current R (syncs with in-PPT edits) |
 | Auto-reapply on lock | setInterval polling, distinguishes "resize drag" from "R-slider drag" |

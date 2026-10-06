@@ -60,6 +60,35 @@
   // applyLayout 的 group 安全事务会触发 ungroup/regroup 选区事件；
   // 事务未完成前禁止事件处理器启动并发 refreshSelection。
   let layoutMutationDepth = 0;
+  let activeMutationDriver = null;
+  let selectionEpoch = 0;
+  let monitorGeneration = 0;
+  let monitorInFlight = false;
+  let selectionShapeKinds = new Map();
+  let selectionSlideId = null;
+  let ignoredRestoredSelection = null;
+  let selectionEventProbeInFlight = false;
+
+  async function runMutation(callback, epoch) {
+    epoch = epoch == null ? selectionEpoch : epoch;
+    stopLockMonitor();
+    const result = await window.PptDriver.run(async (ctx) => {
+      if (epoch !== selectionEpoch) return { ok: false, reason: 'stale-selection' };
+      const driver = window.PptDriver.createDriver(ctx);
+      activeMutationDriver = driver;
+      layoutMutationDepth++;
+      try { return await callback(driver, () => epoch === selectionEpoch); }
+      finally {
+        if (driver.structuralChanged) {
+          layoutSelectionIgnoreUntil = Date.now() + 300;
+          ignoredRestoredSelection = { slideId: selectionSlideId, shapeIds: driver.restoredSelectionIds };
+        }
+        layoutMutationDepth--;
+        activeMutationDriver = null;
+      }
+    }, () => epoch === selectionEpoch);
+    return result || { ok: false, reason: 'stale-selection' };
+  }
   // Mac LTSC 会把 regroup 后的 DocumentSelectionChanged 延迟到 PowerPoint.run
   // 返回之后再派发；给事务后的主动 refreshSelection 留一个很短的保护窗口，
   // 避免同一次内部选区恢复再启动第二个并发刷新。
@@ -89,12 +118,14 @@
     timer: null,
     lastWidth: {},     // shapeId -> 上次读到的 width（pt）
     lastHeight: {},    // shapeId -> 上次读到的 height（pt）
-    lastAdj: {},       // shapeId -> 上次读到的 adj
+    lastAdj: {},
+    candidateAdj: {},
+    groupLockUpdates: {},       // shapeId -> 上次读到的 adj
     stableCount: {},   // shapeId -> adj 连续稳定次数
     lastCm: {},        // shapeId -> 上次读到的 currentCm（cm）—— 仅 layout 父用
     lastSizeCm: {},    // shapeId -> 上次读到的 { widthCm, heightCm } —— 仅 layout 父用（v1.2.9 size 联动）
     parentRDirty: false,  // 是否有 layout 父 R 角或 size 变化需要联动（v1.2.9 合并）
-    parentRSyncGeometry: true,
+    parentRSyncGeometry: false,
     parentRSyncTimer: null,  // 节流 timer（避免 10ms tick 频繁触发新 run）
     groupLayoutSyncTimer: null, // group 拖拽停止后，安全解组重排布局
   };
@@ -106,7 +137,7 @@
   function getRefShapeMinSideCm() {
     // % 模式的 100% 参考：用第一个 roundRect 的 minSide
     for (const s of selectedShapes) {
-      if (s.minSideCm > 0) return s.minSideCm;
+      if (s.isRoundRect && s.minSideCm > 0) return s.minSideCm;
     }
     return 0;
   }
@@ -132,82 +163,52 @@
 
   // 同时返回 locks（id -> cm）和 strict（id -> true/false）
   // v1.2.2 driver + radius-core 迁移：lock/strict 走新分层
-  function loadLocksViaTags() {
-    return new Promise((resolve) => {
-      PowerPoint.run(async (ctx) => {
-        try {
-          const driver = window.PptDriver.createDriver(ctx);
-          const sel = driver.selectedShapes();
-          const selLeaves = await driver.loadShapeTree(sel, 'id, tags');
-          const locks = {};   // id -> cm（使用数值固定 R 角）
-          const strict = {};  // id -> true（防误触开关）
-          for (const sh of selLeaves) {
-            const state = await window.RadiusCore.readLockState(driver, sh);
-            const id = driver.shapeId(sh);
-            if (state.lockedCm != null) locks[id] = state.lockedCm;
-            if (state.isStrict) strict[id] = true;
-          }
-          resolve({ ok: true, locks, strict });
-        } catch (e) {
-          resolve({ ok: false, error: e });
+  async function loadLocksViaTags() {
+    try {
+      return await window.PptDriver.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
+        const leaves = await driver.loadShapeTree(driver.selectedShapes(), 'id, tags');
+        const tags = await driver.loadTagsBulk(leaves);
+        const locks = {}, strict = {};
+        for (const sh of leaves) {
+          const id = driver.shapeId(sh);
+          const state = window.RadiusCore.lockStateFromTags(tags[id]);
+          if (state.isLocked) locks[id] = state.lockedCm;
+          if (state.isStrict) strict[id] = true;
         }
+        return { ok: true, locks, strict };
       });
-    });
+    } catch (error) { return { ok: false, error }; }
   }
 
-  // strictMap: { id: true } 表示该 id 开启防误触；省略或 false 表示关闭
-  function saveLocksViaTags(locks, strictMap) {
-    return new Promise((resolve) => {
-      PowerPoint.run(async (ctx) => {
-        try {
-          const driver = window.PptDriver.createDriver(ctx);
-          const sel = driver.selectedShapes();
-          const selLeaves = await driver.loadShapeTree(sel, 'id');
-          for (const sh of selLeaves) {
+  async function saveLocksViaTags(locks, strictMap) {
+    try {
+      return await runMutation(async (driver, isCurrent) => {
+        const leaves = await driver.loadShapeTree(driver.selectedShapes(), 'id, tags');
+        if (!isCurrent()) return { ok: false, reason: 'stale-selection' };
+        const ids = leaves.map((sh) => driver.shapeId(sh)).filter((id) => id in locks || id in (strictMap || {}));
+        await window.RadiusCore.withWritableShapes(driver, ids, async (fresh) => {
+          if (!isCurrent()) return;
+          for (const sh of fresh) {
             const id = driver.shapeId(sh);
             const state = {};
-            if (id in locks) state.lockedCm = locks[id];  // number 写 / null 删 / undefined 跳过
+            if (id in locks) state.lockedCm = locks[id];
             if (id in (strictMap || {})) state.isStrict = !!strictMap[id];
             const r = await window.RadiusCore.writeLockState(driver, sh, state);
-            if (!r.ok) console.log('[saveLocks/driver] id=' + id + ' fail: ' + r.error);
+            if (!r.ok) throw new Error(r.error);
           }
           await driver.sync();
-          resolve({ ok: true });
-        } catch (e) {
-          resolve({ ok: false, error: e });
-        }
+        }, { isCurrent });
+        return { ok: true };
       });
-    });
+    } catch (error) { return { ok: false, error }; }
   }
 
-  // 单独更新某个 shape 的 lock tag（onApply 写完 PowerPoint 后调用）
-  // cm 语义：number = 写 / null = 删 / undefined = 不动
-  // isStrict 语义：true = 开 / false = 关 / null/undefined = 不动
-  // v1.2.2 driver + radius-core 迁移
-  function updateLockTagForShape(shapeId, cm, isStrict) {
-    return new Promise((resolve) => {
-      PowerPoint.run(async (ctx) => {
-        try {
-          const driver = window.PptDriver.createDriver(ctx);
-          const sel = driver.selectedShapes();
-          const selLeaves = await driver.loadShapeTree(sel, 'id');
-          for (const sh of selLeaves) {
-            if (driver.shapeId(sh) !== shapeId) continue;
-            const state = {};
-            if (cm !== undefined) state.lockedCm = cm;       // number 写 / null 删 / undefined 跳过
-            if (isStrict === true) state.isStrict = true;
-            else if (isStrict === false) state.isStrict = false;
-            const r = await window.RadiusCore.writeLockState(driver, sh, state);
-            if (!r.ok) console.log('[updateLockTag/driver] id=' + shapeId + ' fail: ' + r.error);
-            break;
-          }
-          await driver.sync();
-          resolve({ ok: true });
-        } catch (e) {
-          resolve({ ok: false, error: e });
-        }
-      });
-    });
+  async function updateLockTagForShape(shapeId, cm, isStrict) {
+    const locks = {}, strict = {};
+    if (cm !== undefined) locks[shapeId] = cm;
+    if (isStrict === true || isStrict === false) strict[shapeId] = isStrict;
+    return saveLocksViaTags(locks, strict);
   }
 
   // ---------------- v1.2: 统一写 R 角函数 ----------------
@@ -228,31 +229,7 @@
   //   positions 按 row-major 排：i*cols + j
   //   feasible = false 表示 padding/gutter 太大，子尺寸 ≤ 0
   function computeLayout(parent, rows, cols, paddingCm, gutterCm) {
-    const paddingPt = paddingCm * PT_PER_CM;
-    const gutterPt = gutterCm * PT_PER_CM;
-    const totalW = parent.width - 2 * paddingPt - (cols - 1) * gutterPt;
-    const totalH = parent.height - 2 * paddingPt - (rows - 1) * gutterPt;
-    if (totalW <= 0 || totalH <= 0) {
-      return {
-        subW: 0, subH: 0, positions: [], feasible: false,
-        reason: '边距/间距太大，挤不下 ' + cols + ' 列 × ' + rows + ' 行',
-      };
-    }
-    const subW = totalW / cols;
-    const subH = totalH / rows;
-    const positions = [];
-    for (let i = 0; i < rows; i++) {
-      for (let j = 0; j < cols; j++) {
-        positions.push({
-          left: parent.left + paddingPt + j * (subW + gutterPt),
-          top: parent.top + paddingPt + i * (subH + gutterPt),
-          w: subW,
-          h: subH,
-          idx: i * cols + j,
-        });
-      }
-    }
-    return { subW, subH, positions, feasible: true, reason: '' };
+    return window.RadiusCore.computeLayout(parent, rows, cols, paddingCm, gutterCm);
   }
 
   // 把当前 params 应用到子形状：写位置 + 尺寸 + R 角（如果 linkR）
@@ -268,6 +245,8 @@
   // PowerPoint.run 部分（写位置/尺寸/R 角/父 tag + 过滤 stale childIds）全部走 radius-core.applyLayout
   async function applyLayoutToChildren(parentId, params, childIds, opts) {
     opts = opts || {};
+    const epoch = opts.epoch == null ? selectionEpoch : opts.epoch;
+    if (epoch !== selectionEpoch) return { ok: false, reason: 'stale-selection', applied: 0, failed: 0 };
     const writeParentTag = opts.writeParentTag !== false;
     const syncR = opts.syncR !== false;
     const writeGeometry = opts.writeGeometry !== false;
@@ -286,28 +265,13 @@
       return { ok: false, applied: 0, failed: 0, warn, strictShapes: strictInSelection.length };
     }
 
-    // PowerPoint.run + 业务逻辑全部走 radius-core.applyLayout（driver 模式）
     try {
-      layoutMutationDepth++;
-      try {
-        const result = await PowerPoint.run(async (ctx) => {
-          const driver = window.PptDriver.createDriver(ctx);
-          return await window.RadiusCore.applyLayout(driver, parentId, params, childIds, {
-            writeParentTag,
-            syncR,
-            writeGeometry,
-          });
-        });
-        if (result && result.regrouped) {
-          layoutSelectionIgnoreUntil = Date.now() + 300;
-        }
-        return result;
-      } finally {
-        layoutMutationDepth = Math.max(0, layoutMutationDepth - 1);
-      }
+      return await runMutation((driver, isCurrent) => window.RadiusCore.applyLayout(
+        driver, parentId, { ...params }, childIds.slice(),
+        { writeParentTag, syncR, writeGeometry, isCurrent }
+      ), epoch);
     } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      return { ok: false, applied: 0, failed: 0, warn: '', error: msg };
+      return { ok: false, applied: 0, failed: 0, error: e.message || String(e) };
     }
   }
 
@@ -321,7 +285,7 @@
   // v1.3.2 迁移：PowerPoint.run 部分全部走 radius-core.syncLayoutChildrenR
   async function syncLayoutChildrenR(parentId, childIds, paddingCm, linkRMode, parentRcm) {
     try {
-      return await PowerPoint.run(async (ctx) => {
+      return await window.PptDriver.run(async (ctx) => {
         const driver = window.PptDriver.createDriver(ctx);
         return await window.RadiusCore.syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRMode, parentRcm);
       });
@@ -332,19 +296,21 @@
   }
 
   // 检测选区里是否有 layout 父 → 同步其子 R 角（onApply / applyPipette 末尾调用）
-  // v1.2.7：改成调 applyLayoutToChildren —— 父 R 角变化时**重算 layout 几何**（autoPadding 触发时子位置/尺寸也变）
+  // Geometry and R-only synchronization share the safe applyLayout path.
   // v1.3.6：v1.2 step 3 调试 log 清理
   async function syncLayoutChildrenRIfNeeded(opts) {
     if (selectedShapes.length === 0) return { geometry: true, results: [] };
     opts = opts || {};
+    const epoch = opts.epoch == null ? selectionEpoch : opts.epoch;
     const geometry = opts.geometry !== false;
     const results = [];
     for (const s of selectedShapes) {
+      if (epoch !== selectionEpoch) break;
       if (s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds) {
-        // v1.2.6：默认从 'subtract' 改成 'same'（等距公式 R_sub = R_父，v1.0/v1.2 的 subtract 公式 R_sub = R_父 - d 几何上**不等距**）
+        // 保留存量布局的 R 模式；关闭 R 联动仍允许几何联动。
         // 老 layout（tag 里存了 'subtract'）直接拿到旧值不受影响
         const linkRMode = s.layoutParams.linkRMode || 'same';
-        if (linkRMode === 'off') continue;
+        if (linkRMode === 'off' && !geometry) continue;
         const expected = s.layoutParams.rows * s.layoutParams.cols;
         const childIds = s.layoutChildIds.slice(0, expected);
         if (geometry) {
@@ -354,18 +320,12 @@
             s.id,
             params,
             childIds,
-            { writeParentTag: false, syncR: true }
+            { writeParentTag: false, syncR: true, epoch }
           ));
         } else {
-          // group 整体缩放：PowerPoint 已经原生缩放所有后代。
-          // Mac LTSC 此时逐个写 group 子的 box 会让部分子错位，只同步已验证稳定的 R 角。
-          results.push(await syncLayoutChildrenR(
-            s.id,
-            childIds,
-            s.layoutParams.padding,
-            linkRMode,
-            s.currentCm
-          ));
+          // R-only still uses the safe transaction when children are grouped.
+          results.push(await applyLayoutToChildren(s.id, { ...s.layoutParams }, childIds,
+            { writeParentTag: false, syncR: true, writeGeometry: false, epoch }));
         }
       }
     }
@@ -378,6 +338,7 @@
   let layoutApplyTimer = null;
   let layoutApplyPending = false;
   let layoutApplyPendingOpts = null;
+  let layoutRequestSerial = 0;
 
   // 方案 A：用户手动指定父/子。{ parentId, childIds[] }
   // 选区变化时自动重置（renderLayoutSetupList 检测 roundRect 列表变化）
@@ -385,6 +346,7 @@
   let layoutSetupListSignature = '';  // 上次渲染的列表签名（用 roundRect ids 拼接），变了就重置 choices
 
   function scheduleLayoutApply(opts) {
+    const request = ++layoutRequestSerial;
     const incoming = {
       writeParentTag: true,
       syncR: true,
@@ -414,21 +376,24 @@
         };
         layoutApplyPending = false;
         layoutApplyPendingOpts = null;
-        applyLayoutFromUI(pendingOpts);
+        applyLayoutFromUI(pendingOpts, request);
       }
     }, LAYOUT_LAYOUT_RT_DEBOUNCE_MS);
   }
 
   // 立刻 apply（用户改 rows/cols 触发，因为会改变 childIds 数量）
-  async function applyLayoutFromUI(opts) {
+  async function applyLayoutFromUI(opts, request) {
     if (!currentLayout) return;
+    request = request == null ? ++layoutRequestSerial : request;
+    const epoch = selectionEpoch;
     const parentId = currentLayout.parentId;
-    const params = currentLayout.params;
-    const childIds = currentLayout.childIds;
+    const params = { ...currentLayout.params };
+    const childIds = currentLayout.childIds.slice();
     stopLockMonitor();
     const r = await applyLayoutToChildren(parentId, params, childIds, opts || { writeParentTag: true, syncR: true });
+    if (epoch !== selectionEpoch || request !== layoutRequestSerial) return;
     if (!r.ok) {
-      showToast(i18n.t('toastLayoutFailedFmt', { error: r.error || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
+      showToast(i18n.t('toastLayoutFailedFmt', { error: r.error || r.warn || r.reason || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
     } else if (r.warn) {
       if (r.warn.indexOf('子形状不足') >= 0) {
         const actualRows = Math.max(1, Math.floor(childIds.length / params.cols));
@@ -440,9 +405,7 @@
       showToast(r.warn);
     } else {
       const rHint = params.linkRMode && params.linkRMode !== 'off' ? '（含 R 角联动）' : '';
-      const strictHint = r.strictOverridden > 0
-        ? `（${r.strictOverridden} 个原本是防误触的，已强制更新）`
-        : '';
+      const strictHint = '';
       showToast(i18n.t('toastLayoutAppliedFmt', { applied: r.applied, failed: r.failed ? i18n.t('failedStrFmt', { count: r.failed }) : '', rHint: rHint, strictHint: strictHint }));
     }
     await refreshSelection();
@@ -464,6 +427,7 @@
     // 没选 / 选区无 roundRect
     if (selectedShapes.length === 0) {
       hint.textContent = i18n.t('layoutHintEmpty');
+      renderLayoutSetupList([]);
       empty.style.display = 'flex';
       $('layout-setup-btn').disabled = true;
       return;
@@ -552,7 +516,7 @@
       }
       // pair 容器 data-linked → CSS 控制 gutter 变灰 + 不可用
       if (pgPair) pgPair.dataset.linked = linkPG ? 'true' : 'false';
-      // 选对应 R 角联动模式（v1.2.6 默认 'same' 等距，v1.0/v1.2 默认 'subtract' 不等距——见 radius-core 注释）
+      // 保留既有默认 same；subtract 是单层嵌套的等距缩进公式。
       const linkRMode = currentLayout.params.linkRMode || 'same';
       document.querySelectorAll('input[name="layout-link-r-mode"]').forEach((r) => {
         r.checked = r.value === linkRMode;
@@ -878,7 +842,7 @@
     }
     const parentId = layoutSetupChoices.parentId;
     const childIds = layoutSetupChoices.childIds.slice(0, need);
-    // v1.2.6：layout 新建时默认 linkRMode = 'same'（等距 R_sub = R_父）—— 之前 'subtract' 几何上不等距
+    // 新布局保持默认 same（相同 R），旧布局的模式不变。
     const params = { rows, cols, padding: 0.5, gutter: 0.3, linkRMode: 'same' };
     stopLockMonitor();
     const r = await applyLayoutToChildren(parentId, params, childIds, { writeParentTag: true, syncR: true });
@@ -901,7 +865,7 @@
     stopLockMonitor();
     const r = await deleteLayoutTags(parentId, childIds);
     if (!r.ok) {
-      showToast(i18n.t('toastDetachFailedFmt', { error: r.error || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
+      showToast(i18n.t('toastDetachFailedFmt', { error: r.error || r.warn || r.reason || (i18n.getLang() === 'zh' ? '未知错误' : 'unknown error') }));
     } else {
       showToast(i18n.t('toastDetached'));
     }
@@ -912,42 +876,29 @@
   // 子形状脱离（只删自己的 child tag + 从父的 childIds 移除）
   // 只在当前 slide 操作（不跨页）
   async function onLayoutChildDetach() {
-    const childShape = selectedShapes.find((s) => s.layoutRole === 'child');
-    if (!childShape) return;
-    const parentId = childShape.layoutParentId;
-    stopLockMonitor();
+    const child = selectedShapes.find((s) => s.layoutRole === 'child');
+    if (!child) return;
     try {
-      await PowerPoint.run(async (ctx) => {
-        const driver = window.PptDriver.createDriver(ctx);
-        const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-        const slideLeaves = await driver.loadShapeTree(activeSlide.shapes, 'id');
-        const idToShape = new Map();
-        for (const sh of slideLeaves) {
-          idToShape.set(sh.id, sh);
-        }
-        const csh = idToShape.get(childShape.id);
-        if (csh) {
-          try { csh.tags.delete(LAYOUT_CHILD_TAG_KEY); } catch (_) {}
-        }
-        const parentShape = idToShape.get(parentId);
-        if (parentShape) {
-          try {
-            const t = parentShape.tags.getItem(LAYOUT_PARENT_TAG_KEY);
-            t.load('value');
-            await ctx.sync();
-            const obj = JSON.parse(t.value);
-            obj.childIds = (obj.childIds || []).filter((x) => x !== childShape.id);
-            parentShape.tags.add(LAYOUT_PARENT_TAG_KEY, JSON.stringify(obj));
-          } catch (_) {}
-        }
-        await ctx.sync();
+      const result = await runMutation(async (driver, isCurrent) => {
+        const leaves = await driver.loadShapeTree(driver.slideShapes(driver.activeSlide()), 'id, tags');
+        const parent = leaves.find((sh) => driver.shapeId(sh) === child.layoutParentId);
+        const parsed = parent ? window.RadiusCore.parseLayoutParentTagValue(await driver.readTag(parent, LAYOUT_PARENT_TAG_KEY)) : null;
+        const ids = [child.id];
+        if (parent && parsed) ids.push(child.layoutParentId);
+        await window.RadiusCore.withWritableShapes(driver, ids, async (fresh) => {
+          for (const sh of fresh) {
+            if (driver.shapeId(sh) === child.id) driver.deleteTag(sh, LAYOUT_CHILD_TAG_KEY);
+            else driver.addTag(sh, LAYOUT_PARENT_TAG_KEY, JSON.stringify({ ...parsed,
+              childIds: parsed.childIds.filter((id) => id !== child.id) }));
+          }
+          await driver.sync();
+        }, { isCurrent });
+        return { ok: true };
       });
+      if (!result.ok) throw new Error(result.error || result.reason);
       showToast(i18n.t('toastDetachedThis'));
-    } catch (e) {
-      showToast(i18n.t('toastDetachFailedFmt', { error: e.message || e }));
-    }
+    } catch (error) { showToast(i18n.t('toastDetachFailedFmt', { error: error.message || error })); }
     await refreshSelection();
-    if (selectedShapes.length > 0) startLockMonitor();
   }
 
   // ---------------- v1.2: 调试日志面板（task pane 底部，默认折叠） ----------------
@@ -1024,254 +975,101 @@
   // 跑遍所有 15 个 driver 方法 + 在真实 PPT 里读/写一遍
   // 每个方法的输入/输出都打 log，复制整段发我就能看到每个模块状态
   // ============================================================
+  let driverSmokeInFlight = false;
   async function runDriverSmokeTest() {
-    console.log('[smoke] ===== Driver 烟囱测试开始 =====');
-    console.log('[smoke] 时间: ' + new Date().toLocaleString());
-    console.log('[smoke] driver 方法数: 16（' +
-      'load, sync, selectedShapes, activeSlide, slideShapes, ' +
-      'shapeId, size, box, isRoundRect, adjFraction, loadAdjValue, ' +
-      'setBox, setAdjFraction, addTag, deleteTag, readTag)');
+    // The test spans separate host runs for fresh readback and cleanup. A second
+    // click must not capture the first test's temporary values as its originals.
+    if (driverSmokeInFlight) return;
+    driverSmokeInFlight = true;
+    const button = $('smoke-test-btn');
+    if (button) button.disabled = true;
+    try { await runDriverSmokeTestOnce(); }
+    finally {
+      driverSmokeInFlight = false;
+      if (button) button.disabled = false;
+    }
+  }
+
+  async function runDriverSmokeTestOnce() {
+    const epoch = selectionEpoch;
+    stopLockMonitor();
+    const tests = [];
+    const record = (name, ok, detail) => {
+      tests.push({ name, ok });
+      console.log(`[smoke] ${ok ? '✅' : '❌'} ${name}: ${detail || ''}`);
+    };
+    let original = null;
     try {
-      await PowerPoint.run(async (ctx) => {
-        const driver = window.PptDriver.createDriver(ctx);
-        const results = { pass: 0, fail: 0, tests: [] };
-        function record(name, ok, detail) {
-          if (ok) results.pass++;
-          else results.fail++;
-          results.tests.push({ name, ok, detail });
-          console.log(`[smoke] ${ok ? '✅' : '❌'} ${name}: ${detail}`);
-        }
-
-        // 1. Collection accessors
-        console.log('[smoke] --- 1. Collection accessors ---');
-        let sel, slide, slideShapes;
-        try {
-          sel = driver.selectedShapes();
-          record('selectedShapes()', !!sel, 'returned proxy (no throw)');
-        } catch (e) {
-          record('selectedShapes()', false, 'threw: ' + e.message);
-          return;
-        }
-        try {
-          slide = driver.activeSlide();
-          record('activeSlide()', !!slide, 'returned proxy');
-        } catch (e) {
-          record('activeSlide()', false, 'threw: ' + e.message);
-          return;
-        }
-        try {
-          slideShapes = driver.slideShapes(slide);
-          record('slideShapes(slide)', !!slideShapes, 'returned proxy');
-        } catch (e) {
-          record('slideShapes(slide)', false, 'threw: ' + e.message);
-          return;
-        }
-
-        // 2. Load + sync
-        console.log('[smoke] --- 2. Load + sync ---');
-        try {
-          driver.load(sel, 'items/id, items/width, items/height, items/left, items/top, items/adjustments, items/tags');
-          record('load(sel, fields)', true, '7 fields queued');
-        } catch (e) {
-          record('load(sel, fields)', false, 'threw: ' + e.message);
-          return;
-        }
-        try {
-          await driver.sync();
-          record('sync()', true, 'no throw');
-        } catch (e) {
-          record('sync()', false, 'threw: ' + e.message);
-          return;
-        }
-
-        // v1.2.5：per-shape 显式 load adjustments value（Mac LTSC 必加）
-        let adjValueLoadCount = 0;
-        for (const sh of sel.items) {
-          if (driver.isRoundRect(sh)) {
-            driver.loadAdjValue(sh);
-            adjValueLoadCount++;
-          }
-        }
-        try {
-          await driver.sync();
-          if (adjValueLoadCount > 0) {
-            console.log('[smoke]   loadAdjValue called for ' + adjValueLoadCount + ' roundRect shapes');
-          }
-        } catch (e) {
-          console.log('[smoke] ⚠️ loadAdjValue + sync failed: ' + e.message);
-        }
-
-        // 3. Check selection
-        console.log('[smoke] --- 3. 选区检查 ---');
-        const itemCount = sel.items ? sel.items.length : 0;
-        if (itemCount === 0) {
-          console.log('[smoke] ⚠️ 选区为空 — 没法测后续方法。请先在 PPT 里选 1-2 个圆角矩形再点此按钮。');
-          return;
-        }
-        console.log('[smoke] 选区里有 ' + itemCount + ' 个 shape');
-
-        // 4. Read methods (per shape)
-        console.log('[smoke] --- 4. 读方法（per shape）---');
-        const shapes = [];
-        for (let i = 0; i < sel.items.length; i++) {
-          const sh = sel.items[i];
-          const shId = (() => { try { return driver.shapeId(sh); } catch (e) { return 'ERROR: ' + e.message; } })();
-          const isRR = (() => { try { return driver.isRoundRect(sh); } catch (e) { return 'ERROR: ' + e.message; } })();
-          const adjF = (() => { try { return driver.adjFraction(sh); } catch (e) { return 'ERROR: ' + e.message; } })();
-          const sz = (() => { try { return driver.size(sh); } catch (e) { return 'ERROR: ' + e.message; } })();
-          const bx = (() => { try { return driver.box(sh); } catch (e) { return 'ERROR: ' + e.message; } })();
-          console.log(`[smoke]   shape[${i}] id=${shId} isRoundRect=${isRR} adjFraction=${adjF} size=${JSON.stringify(sz)} box=${JSON.stringify(bx)}`);
-          shapes.push({ sh, shId, isRR, adjF, sz, bx });
-        }
-        record('shapeId()', shapes.every((s) => typeof s.shId === 'string'),
-          'all shapes returned string id (' + shapes.map((s) => s.shId).join(',') + ')');
-        record('isRoundRect()', shapes.every((s) => typeof s.isRR === 'boolean'),
-          'all shapes returned boolean');
-        record('adjFraction()', shapes.every((s) => typeof s.adjF === 'number'),
-          'all shapes returned number (0~1)');
-        record('size()', shapes.every((s) => s.sz && typeof s.sz.width === 'number'),
-          'all shapes returned {width, height}');
-        record('box()', shapes.every((s) => s.bx && typeof s.bx.left === 'number'),
-          'all shapes returned {left, top, width, height}');
-
-        // 5. Tag operations（找一个 roundRect shape 来测）
-        console.log('[smoke] --- 5. Tag 操作（addTag/readTag/deleteTag）---');
-        const testShape = shapes.find((s) => s.isRR && s.shId !== 'ERROR');
-        if (!testShape) {
-          console.log('[smoke] ⚠️ 选区里没有圆角矩形 — 跳过 tag 写测试');
-        } else {
-          const TEST_KEY = 'driver_smoke_test_v1';
-          const TEST_VAL = 'hello_' + Date.now();
-          try {
-            driver.addTag(testShape.sh, TEST_KEY, TEST_VAL);
-            await driver.sync();
-            const readBack = await driver.readTag(testShape.sh, TEST_KEY);
-            record('addTag + sync + readTag', readBack === TEST_VAL,
-              `wrote "${TEST_VAL}", read back "${readBack}"`);
-            driver.deleteTag(testShape.sh, TEST_KEY);
-            await driver.sync();
-            const afterDel = await driver.readTag(testShape.sh, TEST_KEY);
-            record('deleteTag + readTag', afterDel == null,
-              `after delete, readTag returned ${JSON.stringify(afterDel)}`);
-          } catch (e) {
-            record('tag operations', false, 'threw: ' + e.message);
-          }
-        }
-
-        // 6. setAdjFraction（找一个 roundRect shape 来测）
-        console.log('[smoke] --- 6. setAdjFraction（写 R 角再读回）---');
-        if (testShape) {
-          try {
-            const origAdj = testShape.adjF;
-            const testAdj = origAdj > 0.5 ? 0.05 : 0.5;  // flip between small and big
-            // v1.3.1 模式：set + sync → get(0) + read（v1.0 模式适配 set+read）
-            // （v1.2.9 的 `load + sync + get` 还是不 work——load 是给没 set 过的 shape 准备 value 用的，
-            //   set 之后 value 已经在 PPT 上了，只需要 fresh get(0) 把新值拉到 proxy 即可）
-            // 关键：get(0) 必须在 sync 之后（不存变量），因为 set 的 sync 会 invalidate 旧 proxy
-            let readBack = null;
-            let readException = null;
-            try {
-              driver.setAdjFraction(testShape.sh, testAdj);
-              await driver.sync();
-              readBack = testShape.sh.adjustments.get(0).value;  // ← fresh get(0) AFTER sync
-            } catch (e) {
-              readException = e.message || String(e);
-            }
-            if (readBack != null) {
-              record('setAdjFraction + sync + adjFraction', Math.abs(readBack - testAdj) < 0.001,
-                `wrote ${testAdj}, read back ${readBack.toFixed(4)} (orig was ${origAdj})`);
-            } else {
-              // 同 run 读失败，跨 run 兜底（v1.2.9 之前测的「同 run 不可靠」就靠这个）
-              console.log('[smoke] ⚠️ same-run read failed:', readException, '— trying cross-run read');
-              let crossRunRead = 0;
-              let crossRunErr = null;
-              try {
-                await PowerPoint.run(async (ctx) => {
-                  const d2 = window.PptDriver.createDriver(ctx);
-                  const sel2 = d2.selectedShapes();
-                  d2.load(sel2, 'items/id, items/adjustments');
-                  await d2.sync();
-                  for (const sh of sel2.items) {
-                    if (d2.shapeId(sh) === testShape.shId) {
-                      const adjResult = sh.adjustments.get(0);
-                      await d2.sync();
-                      crossRunRead = adjResult.value;
-                      break;
-                    }
-                  }
-                });
-                record('setAdjFraction + sync + adjFraction', Math.abs(crossRunRead - testAdj) < 0.001,
-                  `wrote ${testAdj}, cross-run read back ${crossRunRead.toFixed(4)} (orig was ${origAdj}) — same-run 不可靠，跨 run 兜底成功`);
-              } catch (e2) {
-                crossRunErr = e2.message || String(e2);
-                record('setAdjFraction + sync + adjFraction', false,
-                  `set ok 但读失败：same-run: ${readException} | cross-run: ${crossRunErr}`);
-              }
-            }
-            // Restore original
-            try {
-              driver.setAdjFraction(testShape.sh, origAdj);
-              await driver.sync();
-            } catch (_) {}
-            // 跨 run 读一下 orig 验证
-            let restoredVal = origAdj;
-            try {
-              await PowerPoint.run(async (ctx) => {
-                const d2 = window.PptDriver.createDriver(ctx);
-                const sel2 = d2.selectedShapes();
-                d2.load(sel2, 'items/id, items/adjustments');
-                await d2.sync();
-                for (const sh of sel2.items) {
-                  if (d2.shapeId(sh) === testShape.shId) {
-                    const adjResult = sh.adjustments.get(0);
-                    await d2.sync();
-                    restoredVal = adjResult.value;
-                    break;
-                  }
-                }
-              });
-            } catch (_) {}
-            console.log(`[smoke]   restored to orig adj=${restoredVal.toFixed(4)} (was ${origAdj})`);
-          } catch (e) {
-            console.log('[smoke] ❌ setAdjFraction outer fail:', e.message || e);
-            record('setAdjFraction', false, 'outer threw: ' + (e.message || e));
-          }
-        }
-
-        // 7. setBox（用一个 shape 来测：先读 box，偏移 +10pt，再读回验证）
-        console.log('[smoke] --- 7. setBox（写 left 偏移再读回）---');
-        if (testShape) {
-          try {
-            const origBox = testShape.bx;
-            const newBox = { left: origBox.left + 10, top: origBox.top, width: origBox.width, height: origBox.height };
-            driver.setBox(testShape.sh, newBox);
-            await driver.sync();
-            const readBack = driver.box(testShape.sh);
-            record('setBox + sync + box', Math.abs(readBack.left - newBox.left) < 0.5,
-              `wrote left=${newBox.left}, read back ${readBack.left} (orig ${origBox.left})`);
-            // Restore
-            driver.setBox(testShape.sh, origBox);
-            await driver.sync();
-            const restored = driver.box(testShape.sh);
-            console.log(`[smoke]   restored to orig left=${restored.left} (was ${origBox.left})`);
-          } catch (e) {
-            record('setBox', false, 'threw: ' + e.message);
-          }
-        }
-
-        // 总结
-        console.log('[smoke] ===== 总结 =====');
-        console.log(`[smoke] ✅ pass: ${results.pass}, ❌ fail: ${results.fail}`);
-        console.log('[smoke] 详细结果：');
-        for (const t of results.tests) {
-          console.log(`[smoke]   ${t.ok ? '✅' : '❌'} ${t.name}: ${t.detail}`);
-        }
-        console.log('[smoke] ===== Driver 烟囱测试结束 =====');
-        showToast(i18n.t('toastSmokeTestDoneFmt', { pass: results.pass, fail: results.fail }));
+      await window.PptDriver.run(async (ctx) => {
+        const d = window.PptDriver.createDriver(ctx);
+        const sel = d.selectedShapes();
+        record('selectedShapes', !!sel);
+        const slide = d.activeSlide();
+        d.load(slide, 'id');
+        record('activeSlide', !!slide);
+        record('slideShapes', !!d.slideShapes(slide));
+        const leaves = await d.loadShapeTree(sel, 'id, name, left, top, width, height, adjustments, tags');
+        record('loadShapeTree + sync', leaves.length > 0);
+        const shape = leaves.find((s) => d.isRoundRect(s));
+        if (!shape || d.hasTopLevelGroup(sel)) throw new Error('请选一个未组合的圆角矩形运行烟囱测试');
+        const tags = await d.loadTagsBulk([shape]);
+        const protection = window.RadiusCore.lockStateFromTags(tags[d.shapeId(shape)]);
+        if (protection.isStrict || protection.isLocked) throw new Error('请选一个未锁定的圆角矩形运行烟囱测试');
+        const value = await d.readAdjFraction(shape);
+        if (epoch !== selectionEpoch) throw new Error('测试选区已改变');
+        const tagKey = Object.keys(tags[d.shapeId(shape)]).find((key) => key.toUpperCase() === 'DRIVER_SMOKE_TEST_V1');
+        original = { id: d.shapeId(shape), slideId: slide.id, box: d.box(shape), adj: value,
+          tagKey: tagKey || 'driver_smoke_test_v1', tagValue: tagKey == null ? null : tags[d.shapeId(shape)][tagKey] };
+        record('shapeId', typeof original.id === 'string');
+        record('isRoundRect', d.isRoundRect(shape));
+        record('readAdjFraction', Number.isFinite(value));
+        record('size', d.size(shape).width > 0);
+        record('box', Number.isFinite(original.box.left));
+        const key = original.tagKey;
+        d.addTag(shape, key, 'test');
+        await d.sync();
+        record('addTag + readTag', await d.readTag(shape, key) === 'test');
+        d.deleteTag(shape, key);
+        await d.sync();
+        record('deleteTag + readTag', await d.readTag(shape, key) === null);
+        const bulk = await d.loadTagsBulk([shape]);
+        record('loadTagsBulk', !!bulk[original.id]);
+        if (epoch !== selectionEpoch) throw new Error('测试选区已改变');
+        d.setAdjFraction(shape, value > 0.25 ? 0.1 : 0.4);
+        d.setBox(shape, { ...original.box, left: original.box.left + 10 });
+        await d.sync();
       });
-    } catch (e) {
-      console.log('[smoke] FATAL: ' + (e.message || e));
-      showToast(i18n.t('toastSmokeTestFailedFmt', { error: e.message || e }));
+      await window.PptDriver.run(async (ctx) => {
+        if (epoch !== selectionEpoch) throw new Error('测试选区已改变');
+        const d = window.PptDriver.createDriver(ctx);
+        const identity = await d.loadSelectionIdentity();
+        if (identity.slideId !== original.slideId || !identity.shapeIds.includes(original.id)) throw new Error('测试选区已改变');
+        const leaves = await d.loadShapeTree(d.selectedShapes(), 'id, left, top, width, height, adjustments');
+        const shape = leaves.find((s) => d.shapeId(s) === original.id);
+        if (!shape) throw new Error('测试选区已改变');
+        record('setAdjFraction readback', Math.abs(await d.readAdjFraction(shape) - (original.adj > 0.25 ? 0.1 : 0.4)) < 0.001);
+        record('setBox readback', Math.abs(d.box(shape).left - original.box.left - 10) < 0.5);
+      });
+    } catch (error) {
+      record('host operation', false, error.message || String(error));
+    } finally {
+      if (original) {
+        try {
+          await window.PptDriver.run(async (ctx) => {
+            const d = window.PptDriver.createDriver(ctx);
+            const leaves = await d.loadShapeTree(d.slideShapes(d.slideById(original.slideId)), 'id');
+            const shape = leaves.find((s) => d.shapeId(s) === original.id);
+            if (!shape) throw new Error('无法找回测试形状');
+            d.setAdjFraction(shape, original.adj);
+            d.setBox(shape, original.box);
+            if (original.tagValue == null) d.deleteTag(shape, original.tagKey);
+            else d.addTag(shape, original.tagKey, original.tagValue);
+            await d.sync();
+          });
+        } catch (error) { record('restore', false, error.message || String(error)); }
+      }
+      console.log(`[smoke] ${tests.filter((t) => t.ok).length}/${tests.length} passed`);
+      await refreshSelection();
     }
   }
 
@@ -1286,70 +1084,42 @@
   //
   // v1.3.7 修 bug：stale 检测必须用整 slide 的 shape IDs（不只是选区）
   // 之前只传 sel：只选父时 4 个子不在选区 → 误判全部 stale → childIds 变空 → UI 显示"子 0 个"
-  function loadLayoutTagsViaTags() {
-    return new Promise((resolve) => {
-      PowerPoint.run(async (ctx) => {
-        try {
-          const driver = window.PptDriver.createDriver(ctx);
-          const sel = ctx.presentation.getSelectedShapes();
-          const selLeaves = await driver.loadShapeTree(sel, 'id');
-          // 拿整 slide 的 shapes —— 用于 stale 检测（v1.3.7 修复）
-          const slide = ctx.presentation.getSelectedSlides().getItemAt(0);
-          const slideLeaves = await driver.loadShapeTree(slide.shapes, 'id');
-          const r = await window.RadiusCore.loadLayoutTags(driver, selLeaves, slideLeaves);
-          resolve(r);
-        } catch (e) {
-          resolve({ ok: false, error: e });
-        }
+  async function loadLayoutTagsViaTags() {
+    try {
+      return await window.PptDriver.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx);
+        const leaves = await driver.loadShapeTree(driver.selectedShapes(), 'id, tags');
+        const all = await driver.loadShapeTree(driver.slideShapes(driver.activeSlide()), 'id');
+        return window.RadiusCore.loadLayoutTags(driver, leaves, all);
       });
-    });
+    } catch (error) { return { ok: false, error }; }
   }
 
-  // 把 layout 信息写到父 shape 的 tag（包含所有参数 + childIds）
-  // 也确保每个子都有 layoutChild_v1 tag 指向父
-  // 只在当前 slide 操作（不跨页）
-  // v1.3.6 迁移：PowerPoint.run 部分走 radius-core.saveLayoutTags
-  function saveLayoutTags(parentId, params, childIds) {
-    return new Promise((resolve) => {
-      PowerPoint.run(async (ctx) => {
-        try {
-          const driver = window.PptDriver.createDriver(ctx);
-          const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-          const r = await window.RadiusCore.saveLayoutTags(
-            driver, activeSlide, parentId, params, childIds || []
-          );
-          resolve(r);
-        } catch (e) {
-          resolve({ ok: false, error: e });
-        }
-      });
-    });
+  async function saveLayoutTags(parentId, params, childIds) {
+    try {
+      return await runMutation((driver, isCurrent) => window.RadiusCore.saveLayoutTags(
+        driver, driver.activeSlide(), parentId, { ...params }, (childIds || []).slice(), { isCurrent }
+      ));
+    } catch (error) { return { ok: false, error }; }
   }
 
-  // 删 layout 父子 tag（保留形状本身的位置/尺寸/R 角）
-  // 只在当前 slide 操作（不跨页）
-  function deleteLayoutTags(parentId, childIds) {
-    return new Promise((resolve) => {
-      PowerPoint.run(async (ctx) => {
-        try {
-          const driver = window.PptDriver.createDriver(ctx);
-          const activeSlide = ctx.presentation.getSelectedSlides().getItemAt(0);
-          const slideLeaves = await driver.loadShapeTree(activeSlide.shapes, 'id');
-          for (const sh of slideLeaves) {
-            if (sh.id === parentId) {
-              try { sh.tags.delete(LAYOUT_PARENT_TAG_KEY); } catch (_) {}
-            }
-            if (childIds && childIds.includes(sh.id)) {
-              try { sh.tags.delete(LAYOUT_CHILD_TAG_KEY); } catch (_) {}
-            }
+  async function deleteLayoutTags(parentId, childIds) {
+    try {
+      return await runMutation(async (driver, isCurrent) => {
+        const leaves = await driver.loadShapeTree(driver.slideShapes(driver.activeSlide()), 'id');
+        if (!isCurrent()) return { ok: false, reason: 'stale-selection' };
+        const ids = leaves.map((sh) => driver.shapeId(sh)).filter((id) => id === parentId || (childIds || []).includes(id));
+        await window.RadiusCore.withWritableShapes(driver, ids, async (fresh) => {
+          for (const sh of fresh) {
+            const id = driver.shapeId(sh);
+            if (id === parentId) driver.deleteTag(sh, LAYOUT_PARENT_TAG_KEY);
+            if ((childIds || []).includes(id)) driver.deleteTag(sh, LAYOUT_CHILD_TAG_KEY);
           }
           await driver.sync();
-          resolve({ ok: true });
-        } catch (e) {
-          resolve({ ok: false, error: e });
-        }
+        }, { isCurrent });
+        return { ok: true };
       });
-    });
+    } catch (error) { return { ok: false, error }; }
   }
 
   // ---------------- history（纯内存） ----------------
@@ -1406,193 +1176,100 @@
   // ---------------- 选区 + 读选中的 R 角 ----------------
 
   async function refreshSelection() {
-    // 选区变化时先终止旧 monitor + 清掉 pending layout timer。
-    // 否则旧选区排队的 200ms geometry apply 可能在新选区（group → 叶子/单父）
-    // 状态下继续执行，绕过 GROUP-SCALE 的零写入保护。
+    const epoch = ++selectionEpoch;
+    const isCurrent = () => epoch === selectionEpoch;
     stopLockMonitor();
-    if (layoutApplyTimer) {
-      clearTimeout(layoutApplyTimer);
-      layoutApplyTimer = null;
-    }
+    if (layoutApplyTimer) clearTimeout(layoutApplyTimer);
+    layoutApplyTimer = null;
     layoutApplyPending = false;
     layoutApplyPendingOpts = null;
     try {
-      await PowerPoint.run(async (ctx) => {
+      const snapshot = await window.PptDriver.run(async (ctx) => {
         const driver = window.PptDriver.createDriver(ctx);
-        const sel = ctx.presentation.getSelectedShapes();
-        // Mac LTSC：先读 type，再只展开真实 Group；普通 shape 不能加载 group path。
-        const selLeaves = await driver.loadShapeTree(
-          sel,
-          'id, name, width, height, adjustments'
-        );
-        // v1.3.1：打印选区 type 分布（debug 留作 hook，实际排查时用 debug panel 看）
-        try {
-          const typeSummary = (sel.items || []).map((s) => {
-            let t = '?'; try { t = JSON.stringify(s.type); } catch (_) {}
-            // 只在 type 已确认是 Group 后访问 group.shapes。
-            // Mac LTSC 普通 GeometricShape 上读取 s.group 会污染下一次 ctx.sync，
-            // 表现为这里 log "/?"，随后 adjustment sync 抛 GeneralException。
-            let g = '-leaf';
-            if (driver.isGroup(s)) {
-              try { g = `+shapes[${driver.groupShapes(s).length}]`; } catch (_) { g = '+group-read-failed'; }
-            }
-            return `${t}/${g}`;
-          }).join(' | ');
-          console.log('[refreshSelection] sel.items count=', (sel.items || []).length, 'types:', typeSummary);
-        } catch (e) {
-          console.log('[refreshSelection] type summary fail:', e.message || e);
-        }
-        console.log('[refreshSelection] selLeaves count=', selLeaves.length);
+        const identity = await driver.loadSelectionIdentity();
+        const leaves = await driver.loadShapeTree(driver.selectedShapes(), 'id, name, width, height, adjustments, tags');
+        if (!isCurrent()) return null;
+        const tags = await driver.loadTagsBulk(leaves);
         const shapes = [];
-        for (const sh of selLeaves) {
-          let readStage = 'size';
-          let shapeIdForLog = '?';
-          let adjCount = 0;
-          let value = null;
-          let minSideCm = 0;
-          try {
-            shapeIdForLog = sh.id;
-            minSideCm = Math.min(sh.width, sh.height) / PT_PER_CM;
-            readStage = 'adjustments.count';
-            adjCount = sh.adjustments.count;
-            // 非圆角形状 count=0，不能调用 get(0)，否则无效 ClientResult 会在 sync 才报错。
-            if ((typeof adjCount === 'number' ? adjCount : 0) > 0) {
-              readStage = 'adjustments.get(0)';
-              const adjResult = sh.adjustments.get(0);
-              readStage = 'adjustment ctx.sync';
-              await ctx.sync();
-              readStage = 'adjustment value';
-              try {
-                value = adjResult.value;
-              } catch (valueError) {
-                console.log(
-                  `[refreshSelection] shape id=${shapeIdForLog} adjustment value unavailable:`,
-                  valueError && valueError.message ? valueError.message : String(valueError)
-                );
-              }
-            }
-          } catch (e) {
-            console.log(
-              `[refreshSelection] shape id=${shapeIdForLog} readStage=${readStage} EXCEPTION:`,
-              e && e.message ? e.message : String(e)
-            );
-            throw e;
-          }
-          const isRoundRect = (typeof adjCount === 'number' ? adjCount : 0) > 0;
-          let cm = null;
-          if (isRoundRect && Number.isFinite(value) && value > 0) {
-            cm = value * minSideCm;
-          }
-          shapes.push({
-            id: sh.id,
-            name: sh.name,
-            width: sh.width,
-            height: sh.height,
-            minSideCm,
-            currentCm: cm,
-            isRoundRect,
-            locked: false,
-            lockedCm: null,
-            strictLocked: false,
-            // v1.2 layout 字段
-            layoutRole: null,        // 'parent' | 'child' | null
-            layoutParentId: null,    // 自己作为子时，指向父 id
-            layoutParams: null,      // 自己作为父时，{rows, cols, padding, gutter, linkRMode}
-            layoutChildIds: null,    // 自己作为父时，[childId...]
-          });
+        for (const sh of leaves) {
+          if (!isCurrent()) return null;
+          const size = driver.size(sh);
+          const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
+          const isRoundRect = driver.isRoundRect(sh);
+          const value = isRoundRect ? await driver.readAdjFraction(sh) : null;
+          const id = driver.shapeId(sh);
+          const lock = window.RadiusCore.lockStateFromTags(tags[id]);
+          const currentCm = isRoundRect && Number.isFinite(value) && value >= 0 ? value * minSideCm : null;
+          shapes.push({ id, name: driver.shapeName(sh), width: size.width, height: size.height,
+            minSideCm, currentCm, isRoundRect,
+            locked: lock.isLocked || lock.isStrict && isRoundRect && currentCm != null,
+            lockedCm: lock.isLocked ? lock.lockedCm : lock.isStrict ? currentCm : null,
+            legacyStrictNeedsRepair: lock.isStrict && !lock.isLocked && isRoundRect && currentCm != null,
+            strictLocked: lock.isStrict,
+            layoutRole: null, layoutParentId: null, layoutParams: null, layoutChildIds: null });
         }
-        selectedShapes = shapes;
-      });
-      // 读 lock + strict 后端（shape.tags）
-      const tagResult = await loadLocksViaTags();
-      if (tagResult.ok) {
-        for (const s of selectedShapes) {
-          if (tagResult.locks[s.id] != null) {
-            s.locked = true;
-            s.lockedCm = tagResult.locks[s.id];
-          }
-          if (tagResult.strict[s.id]) {
-            s.strictLocked = true;
-          }
+        if (!isCurrent()) return null;
+        const all = await driver.loadShapeTree(driver.slideShapes(driver.activeSlide()), 'id');
+        const layout = await window.RadiusCore.loadLayoutTags(driver, leaves, all);
+        if (!layout.ok) throw new Error(layout.error);
+        const kinds = leaves.length ? await driver.loadShapeKinds() : new Map();
+        return { shapes, layout, kinds, identity };
+      }, isCurrent);
+      if (!isCurrent() || !snapshot) return;
+      selectedShapes = snapshot.shapes;
+      selectionShapeKinds = snapshot.kinds;
+      selectionSlideId = snapshot.identity.slideId;
+      const layoutResult = snapshot.layout;
+      for (const shape of selectedShapes) {
+        const parent = layoutResult.parents[shape.id];
+        if (parent) {
+          shape.layoutRole = 'parent';
+          shape.layoutParams = { rows: parent.rows, cols: parent.cols, padding: parent.padding,
+            gutter: parent.gutter, linkRMode: parent.linkRMode };
+          shape.layoutChildIds = parent.childIds;
+        } else if (layoutResult.childOf[shape.id]) {
+          shape.layoutRole = 'child';
+          shape.layoutParentId = layoutResult.childOf[shape.id];
         }
       }
-      // 读 layout tag
-      const layoutResult = await loadLayoutTagsViaTags();
-      if (layoutResult.ok) {
-        // v1.3.6：检测到 stale childIds 时给用户提示（不自动写回，等下次调 saveLayoutTags 时自然清理）
-        if (layoutResult.staleParents && Object.keys(layoutResult.staleParents).length > 0) {
-          const totalStale = Object.values(layoutResult.staleParents).reduce((s, arr) => s + arr.length, 0);
-          if (totalStale > 0) {
-            showToast(i18n.t('toastStaleLayoutsFmt', { count: totalStale }));
-          }
-        }
-        for (const s of selectedShapes) {
-          if (layoutResult.parents[s.id]) {
-            s.layoutRole = 'parent';
-            const p = layoutResult.parents[s.id];
-            s.layoutParams = { rows: p.rows, cols: p.cols, padding: p.padding, gutter: p.gutter, linkRMode: p.linkRMode };
-            s.layoutChildIds = p.childIds;
-          } else if (layoutResult.childOf[s.id]) {
-            s.layoutRole = 'child';
-            s.layoutParentId = layoutResult.childOf[s.id];
-          }
-        }
-        // 推导 currentLayout：选区里有 layout 父就激活（取第一个）
-        const parentShape = selectedShapes.find((s) => s.layoutRole === 'parent');
-        if (parentShape) {
-          currentLayout = {
-            parentId: parentShape.id,
-            parentName: parentShape.name || '(未命名)',
-            childIds: parentShape.layoutChildIds.slice(),
-            params: { ...parentShape.layoutParams },
-          };
-          const childRSnapshot = currentLayout.childIds.map((id) => {
-            const child = selectedShapes.find((s) => s.id === id);
-            return child && Number.isFinite(child.currentCm)
-              ? `${id}:${child.currentCm.toFixed(3)}`
-              : `${id}:—`;
-          });
-          console.log(
-            `[refreshSelection] layout snapshot parent=${parentShape.id}` +
-            ` mode=${currentLayout.params.linkRMode || 'same'}` +
-            ` parentR=${Number.isFinite(parentShape.currentCm) ? parentShape.currentCm.toFixed(3) : '—'}` +
-            ` childR=[${childRSnapshot.join(', ')}]`
-          );
-        } else {
-          currentLayout = null;
-        }
-      }
+      const parent = selectedShapes.find((shape) => shape.layoutRole === 'parent');
+      currentLayout = parent ? { parentId: parent.id, parentName: parent.name || '(未命名)',
+        childIds: parent.layoutChildIds.slice(), params: { ...parent.layoutParams } } : null;
+      const staleCount = Object.values(layoutResult.staleParents || {}).reduce((n, ids) => n + ids.length, 0);
+      if (staleCount) showToast(i18n.t('toastStaleLayoutsFmt', { count: staleCount }));
       renderUI();
-      // monitor：选区非空就启动（实时读 adj + 更新状态卡；locked 的额外反算）
-      // 选区空由 monitor 内部 `selectedShapes.length === 0` 自动 stop
-      if (selectedShapes.length > 0) {
-        startLockMonitor();
-      } else {
-        stopLockMonitor();
-      }
-    } catch (err) {
-      // v1.3.1 debug：log 详细异常，方便排查
-      console.log('[refreshSelection] EXCEPTION:', err && err.message ? err.message : String(err), '| stack:', err && err.stack ? err.stack.split('\n').slice(0, 3).join(' / ') : 'n/a');
-      setStatus('选区', '读失败：' + (err.message || err), 'status-warn');
-      showToast(i18n.t('toastReadFailedFmt', { error: err.message || err }));
+      if (selectedShapes.length) startLockMonitor();
+      if (selectedShapes.some((shape) => shape.legacyStrictNeedsRepair)) scheduleGroupLayoutSync({ geometry: false });
+      return epoch;
+    } catch (error) {
+      if (!isCurrent()) return;
+      selectedShapes = [];
+      currentLayout = null;
+      selectionShapeKinds = new Map();
+      renderUI();
+      console.log('[refreshSelection] EXCEPTION:', error.message || error);
+      setStatus('选区', '读失败：' + (error.message || error), 'status-warn');
+      showToast(i18n.t('toastReadFailedFmt', { error: error.message || error }));
     }
   }
 
   // ---------------- lock monitor：检测拖完松手后自动重应用 ----------------
 
   function startLockMonitor() {
-    if (lockMonitor.timer) return;
+    if (lockMonitor.timer || layoutMutationDepth > 0 || window.PptDriver.isBusy()) return;
     if (selectedShapes.length === 0) return;
     // 选区里有 locked shape 用 10ms 实时反算；只有未锁定的用 50ms 减负
     const interval = selectedShapes.some((s) => s.locked) ? LOCK_POLL_MS : IDLE_POLL_MS;
     lockMonitor.lastWidth = {};
     lockMonitor.lastHeight = {};
     lockMonitor.lastAdj = {};
+    lockMonitor.candidateAdj = {};
+    lockMonitor.groupLockUpdates = {};
     lockMonitor.stableCount = {};
     lockMonitor.lastCm = {};
     lockMonitor.lastSizeCm = {};  // v1.2.9
     lockMonitor.parentRDirty = false;
-    lockMonitor.parentRSyncGeometry = true;
+    lockMonitor.parentRSyncGeometry = false;
     if (lockMonitor.parentRSyncTimer) {
       clearTimeout(lockMonitor.parentRSyncTimer);
       lockMonitor.parentRSyncTimer = null;
@@ -1605,6 +1282,7 @@
   }
 
   function stopLockMonitor() {
+    monitorGeneration++;
     if (lockMonitor.timer) {
       clearInterval(lockMonitor.timer);
       lockMonitor.timer = null;
@@ -1612,11 +1290,13 @@
     lockMonitor.lastWidth = {};
     lockMonitor.lastHeight = {};
     lockMonitor.lastAdj = {};
+    lockMonitor.candidateAdj = {};
+    lockMonitor.groupLockUpdates = {};
     lockMonitor.stableCount = {};
     lockMonitor.lastCm = {};
     lockMonitor.lastSizeCm = {};  // v1.2.9
     lockMonitor.parentRDirty = false;
-    lockMonitor.parentRSyncGeometry = true;
+    lockMonitor.parentRSyncGeometry = false;
     if (lockMonitor.parentRSyncTimer) {
       clearTimeout(lockMonitor.parentRSyncTimer);
       lockMonitor.parentRSyncTimer = null;
@@ -1634,212 +1314,146 @@
   }
 
   async function monitorTick() {
-    // group 安全事务期间不允许 monitor 插入新的 PowerPoint.run。
-    if (layoutMutationDepth > 0) return;
-    if (selectedShapes.length === 0) {
-      stopLockMonitor();
-      return;
-    }
-    let needRefreshUI = false;  // 是否有 shape 的 currentCm 变了，需要重画 UI
-    let recomputedIds = [];     // 拖尺寸被反算的
-    let updatedLockIds = [];    // 拖 R 角滑块被"更新固定值"的
-    let layoutParentChanges = [];  // v1.3.6：layout 父 R 角变化（→ 同步子）
-    let selectionRootHasGroup = false; // 整体 group 缩放时禁止逐个重写后代 box
+    if (monitorInFlight || layoutMutationDepth > 0 || window.PptDriver.isBusy()) return;
+    if (!selectedShapes.length) { stopLockMonitor(); return; }
+    const generation = monitorGeneration;
+    const epoch = selectionEpoch;
+    const isCurrent = () => generation === monitorGeneration && epoch === selectionEpoch && layoutMutationDepth === 0;
+    monitorInFlight = true;
+    let needRefreshUI = false;
+    let needRefreshProtectionUI = false;
+    let selectionRootHasGroup = false;
+    let groupedChange = false;
     try {
-      await PowerPoint.run(async (ctx) => {
-        // v1.2.2 driver + radius-core：lock monitor 走新分层
-        const driver = window.PptDriver.createDriver(ctx);
-        // v1.3.7 修 #2 真 bug：monitorTick 改回 v1.0 模式（per-shape get(0) + per-shape sync）
-        // 原因：v1.3.6 改成 collection-level load 'items/adjustments/items/value' + 1 sync + new get(0)，
-        //       但 Mac LTSC proxy 是 snapshot 风格，sync 后 new get(0) 返回新 proxy 没 value。
-        //       用户实测 v1.2.4：拖父 R 角时 4 个子没联动，根因就是 monitorTick 读不到 currentAdj → continue → ss.currentCm 不更新。
-        //       refreshSelection 用的就是 v1.0 模式（1210-1213 行），实测 work。monitorTick 改回同样模式。
-        // bug #3（per-shape sync 累积）→ catch 兜底（实测 v1.2 时期只偶发，无影响）
+      await window.PptDriver.run(async (ctx) => {
+        const driver = window.PptDriver.createDriver(ctx, { shapeKinds: selectionShapeKinds });
         const sel = driver.selectedShapes();
-        const selLeaves = await driver.loadShapeTree(
-          sel,
-          'id, width, height, adjustments, tags'
-        );
+        const leaves = await driver.loadShapeTree(sel, 'id, width, height, level, adjustments, tags');
+        if (!isCurrent()) return;
         selectionRootHasGroup = driver.hasTopLevelGroup(sel);
-        for (const sh of selLeaves) {
-          const shId = driver.shapeId(sh);
-          try {
-            if (!driver.isRoundRect(sh)) continue; // 不是 roundRect
-            // v1.0 模式：先 get(0) 存变量 → per-shape sync → 读 value
-            const adjResult = sh.adjustments.get(0);
-            await driver.sync();
-            let currentAdj = null;
-            try { currentAdj = adjResult.value; } catch (_) { continue; }
-            if (currentAdj == null) continue;
-            const size = driver.size(sh);
-            const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
-            if (minSideCm <= 0) continue;
-            const currentCm = currentAdj * minSideCm;
-
-            // 找对应 selectedShape
-            const ss = selectedShapes.find((x) => x.id === shId);
-            if (!ss) continue;
-            // 1) 所有 roundRect 都更新内存 currentCm（实时显示 R 角）
-            //    任何变化都标 dirty（浮点抖动 < 0.01 cm 的显示精度，看不出来）
-            const oldCm = ss.currentCm;
-            ss.currentCm = currentCm;
-            ss.width = size.width;
-            ss.height = size.height;
-            if (oldCm == null || currentCm !== oldCm) {
-              needRefreshUI = true;
+        let verifiedTags = null;
+        for (const sh of leaves) {
+          if (!isCurrent()) return;
+          if (!driver.isRoundRect(sh)) continue;
+          const id = driver.shapeId(sh);
+          const currentAdj = await driver.readAdjFraction(sh);
+          if (!isCurrent()) return;
+          const size = driver.size(sh);
+          const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
+          if (!(minSideCm > 0)) continue;
+          const shape = selectedShapes.find((s) => s.id === id);
+          if (!shape) continue;
+          const previous = { width: lockMonitor.lastWidth[id], height: lockMonitor.lastHeight[id],
+            adj: lockMonitor.lastAdj[id], candidateAdj: lockMonitor.candidateAdj[id], stableCount: lockMonitor.stableCount[id] };
+          const currentCm = currentAdj * minSideCm;
+          if (shape.currentCm !== currentCm) needRefreshUI = true;
+          Object.assign(shape, { currentCm, width: size.width, height: size.height, minSideCm });
+          const sample = { width: size.width, height: size.height, adj: currentAdj };
+          let next;
+          if (selectionRootHasGroup || driver.shapeLevel(sh) > 0) {
+            // Native group transforms must complete without any descendant
+            // adjustment, geometry or tag write, including fixed/strict shapes.
+            const sizeChanged = previous.adj != null &&
+              (Math.abs(size.width - previous.width) > SIZE_EPSILON || Math.abs(size.height - previous.height) > SIZE_EPSILON);
+            const adjChanged = previous.adj != null && Math.abs(currentAdj - previous.adj) > ADJ_EPSILON;
+            if (sizeChanged || adjChanged) groupedChange = true;
+            if (!selectionRootHasGroup && shape.locked && !shape.strictLocked && adjChanged && !sizeChanged) {
+              lockMonitor.groupLockUpdates[id] = currentCm;
             }
-            // 2) 只对 locked shape 做反算/更新固定值
-            if (!ss.locked) continue;
-
-            const targetCm = Math.min(ss.lockedCm, minSideCm / 2);
-            const targetAdj = (targetCm / minSideCm) * ADJ_SCALE;
-            const lastW = lockMonitor.lastWidth[shId];
-            const lastH = lockMonitor.lastHeight[shId];
-            const lastA = lockMonitor.lastAdj[shId];
-            // 第一轮（lastA = null）：只记录初始状态，不做反算
-            // （否则会触发"idle 兜底"，把用户第一次拖 R 角的值当异常反算回去）
-            if (lastA == null) {
-              lockMonitor.lastWidth[shId] = size.width;
-              lockMonitor.lastHeight[shId] = size.height;
-              lockMonitor.lastAdj[shId] = currentAdj;
-              lockMonitor.stableCount[shId] = 0;
-              continue;
-            }
-            const wChanged = Math.abs(size.width - lastW) > SIZE_EPSILON;
-            const hChanged = Math.abs(size.height - lastH) > SIZE_EPSILON;
-            const aChanged = Math.abs(currentAdj - lastA) > ADJ_EPSILON;
-            const sizeChanged = wChanged || hChanged;  // 任意一边变了都算"调尺寸"
-
-            if (sizeChanged) {
-              // 拖尺寸手柄（任意边 / 角）：立刻反算回固定值
-              if (Math.abs(currentAdj - targetAdj) > ADJ_EPSILON) {
-                driver.setAdjFraction(sh, targetAdj);
-                recomputedIds.push(shId);
-              }
-              lockMonitor.lastAdj[shId] = targetAdj;
-              lockMonitor.stableCount[shId] = 0;
-            } else if (aChanged) {
-              // 拖 R 角黄色滑块：等稳定后视作主动改值
-              lockMonitor.stableCount[shId] = (lockMonitor.stableCount[shId] || 0) + 1;
-              if (lockMonitor.stableCount[shId] >= LOCK_STABLE_THRESHOLD) {
-                if (ss.strictLocked) {
-                  // 防误触：反算回去
-                  driver.setAdjFraction(sh, targetAdj);
-                  lockMonitor.lastAdj[shId] = targetAdj;
-                  recomputedIds.push(shId);
-                } else {
-                  // 仅使用数值固定 R 角：把当前 adj 提升为新的固定值
-                  const newCm = currentAdj * minSideCm;
-                  await window.RadiusCore.writeLockState(driver, sh, { lockedCm: newCm });
-                  ss.lockedCm = newCm;
-                  lockMonitor.lastAdj[shId] = currentAdj;
-                  updatedLockIds.push(shId);
-                }
-                lockMonitor.stableCount[shId] = 0;
-              }
-            } else {
-              // 都没变：idle，检查兜底（adj 跟 target 不一致但 size 和 adj 都没"主动变化"）
-              if (Math.abs(currentAdj - targetAdj) > ADJ_EPSILON) {
-                // 极端 race 兜底：写回
-                driver.setAdjFraction(sh, targetAdj);
-                lockMonitor.lastAdj[shId] = targetAdj;
-                recomputedIds.push(shId);
-              }
-              lockMonitor.stableCount[shId] = 0;
-            }
-            lockMonitor.lastWidth[shId] = size.width;
-            lockMonitor.lastHeight[shId] = size.height;
-          } catch (eShape) {
-            // 单个 shape 出错（防御性兜底）—— 不影响其他 shape，也不影响整个 tick
-            // 跳过这个 shape，下个 tick 再看
-            continue;
-          }
-        }
-        await driver.sync();
-      });
-      // 轻量更新 UI（只改文本节点，不重建 DOM）
-      if (needRefreshUI) renderCurrentRadius();
-      if (recomputedIds.length > 0) {
-        showToast(i18n.t('toastLockRecomputedFmt', { count: recomputedIds.length }));
-      } else if (updatedLockIds.length > 0) {
-        showToast(i18n.t('toastLockFollowedFmt', { count: updatedLockIds.length }));
-      }
-
-      // v1.3.6 修 #2：layout 父 R 角变化 → 同步子 R 角
-      // v1.2.9：同时检测父 size 变化（width/height）→ 同步子位置/尺寸 + R 角
-      // 场景：用户在 PPT 里直接拖父的 R 角黄色滑块 / 拖父的边缘 / 角控制柄（不走 task pane 的 onApply），
-      //       monitorTick 检测到 currentCm 或 width/height 变化，detectLayoutParentChanges / detectLayoutParentSizeChanges 返回变化的父，
-      //       调 syncLayoutChildrenRIfNeeded → applyLayoutToChildren → 重算 layout 几何 + R 角
-      // 首次见到（lastCm / lastSizeCm = null）只记录不触发 sync（避免启动时无意义重写子 R 角）
-      try {
-        let hasRealChange = false;
-        let hasSizeChange = false;
-        // 1) R 角变化
-        const rChanges = window.RadiusCore.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
-        for (const c of rChanges) {
-          if (c.lastCm == null) {
-            // 首次见到：只记 lastCm，不触发 sync
-            lockMonitor.lastCm[c.parentId] = c.newCm;
-            console.log(`[layout-link] first-see parentId=${c.parentId} newCm=${c.newCm.toFixed(3)} (记 lastCm 不 fire)`);
-            continue;
-          }
-          // 真正变了：更新 lastCm + 标 dirty
-          lockMonitor.lastCm[c.parentId] = c.newCm;
-          hasRealChange = true;
-          console.log(`[layout-link] R-fire parentId=${c.parentId} lastCm=${c.lastCm.toFixed(3)} newCm=${c.newCm.toFixed(3)} (→ 200ms 后联动)`);
-        }
-        // 2) v1.2.9：size 变化（widthCm / heightCm）
-        const sChanges = window.RadiusCore.detectLayoutParentSizeChanges(lockMonitor.lastSizeCm, selectedShapes);
-        for (const c of sChanges) {
-          if (c.lastSize == null) {
-            // 首次见到：只记 lastSizeCm，不触发 sync
-            lockMonitor.lastSizeCm[c.parentId] = c.newSize;
-            console.log(`[layout-link] first-see parentId=${c.parentId} newSize=${JSON.stringify({ w: c.newSize.widthCm.toFixed(2), h: c.newSize.heightCm.toFixed(2) })} (记 lastSize 不 fire)`);
-            continue;
-          }
-          // 真正变了：更新 lastSize + 标 dirty
-          lockMonitor.lastSizeCm[c.parentId] = c.newSize;
-          hasRealChange = true;
-          hasSizeChange = true;
-          console.log(`[layout-link] SIZE-fire parentId=${c.parentId} lastSize=${JSON.stringify({ w: c.lastSize.widthCm.toFixed(2), h: c.lastSize.heightCm.toFixed(2) })} newSize=${JSON.stringify({ w: c.newSize.widthCm.toFixed(2), h: c.newSize.heightCm.toFixed(2) })} (→ 200ms 后联动)`);
-        }
-        if (hasRealChange) {
-          if (selectionRootHasGroup) {
-            // 拖拽期间绝不直接写 group 后代；每次尺寸变化都重置 debounce。
-            // 用户松手且尺寸稳定后，再临时 ungroup，用新父 box 完整重算 padding /
-            // gutter / child box / R，最后 regroup。
-            console.log('[layout-link] GROUP-SCALE: drag native-only，等待稳定后安全重排');
-            if (hasSizeChange) scheduleGroupLayoutSync();
+            next = { ...sample, candidateAdj: currentAdj, stableCount: 0 };
           } else {
-            lockMonitor.parentRSyncGeometry = true;
-            lockMonitor.parentRDirty = true;
-            scheduleParentRSync();
+            let decision = window.RadiusCore.decideLockMonitorUpdate(shape, sample, previous);
+            if (decision.action !== 'none') {
+              // Reconfirm subtype and protection tags only when a write is
+              // needed. Normal polling does not repeatedly export the slide.
+              if (!verifiedTags) {
+                selectionShapeKinds = await driver.loadShapeKinds(true);
+                verifiedTags = await driver.loadTagsBulk(leaves);
+              }
+              if (!isCurrent()) return;
+              if (!driver.isRoundRect(sh)) { shape.isRoundRect = false; continue; }
+              const lock = window.RadiusCore.lockStateFromTags(verifiedTags[id]);
+              if (lock.isStrict && !lock.isLocked && shape.legacyStrictNeedsRepair) {
+                lock.isLocked = true;
+                lock.lockedCm = shape.lockedCm;
+              }
+              shape.locked = lock.isLocked;
+              shape.lockedCm = lock.lockedCm;
+              shape.strictLocked = lock.isStrict;
+              decision = window.RadiusCore.decideLockMonitorUpdate(shape, sample, previous);
+              if (decision.action === 'restore') {
+                const result = await window.RadiusCore.reapplyLock(driver, sh, shape.lockedCm);
+                if (!result.ok) throw new Error(result.error || result.reason);
+                shape.currentCm = result.newCm;
+                needRefreshUI = true;
+              } else if (decision.action === 'updateLock') {
+                const result = await window.RadiusCore.writeLockState(driver, sh, { lockedCm: decision.lockedCm });
+                if (!result.ok) throw new Error(result.error);
+                shape.lockedCm = decision.lockedCm;
+                needRefreshProtectionUI = true;
+              }
+            }
+            next = decision.next;
           }
+          lockMonitor.lastWidth[id] = next.width;
+          lockMonitor.lastHeight[id] = next.height;
+          lockMonitor.lastAdj[id] = next.adj;
+          lockMonitor.candidateAdj[id] = next.candidateAdj;
+          lockMonitor.stableCount[id] = next.stableCount;
         }
-      } catch (e) {
-        // 不影响主流程，silent skip
+        if (isCurrent()) await driver.sync();
+      }, isCurrent);
+      if (!isCurrent()) return;
+      if (needRefreshUI) renderCurrentRadius();
+      if (needRefreshProtectionUI) renderShapeList();
+      const rChanges = window.RadiusCore.detectLayoutParentChanges(lockMonitor.lastCm, selectedShapes);
+      const sizeChanges = window.RadiusCore.detectLayoutParentSizeChanges(lockMonitor.lastSizeCm, selectedShapes);
+      let changed = false, geometry = false;
+      for (const change of rChanges) {
+        if (change.lastCm != null) changed = true;
+        lockMonitor.lastCm[change.parentId] = change.newCm;
       }
-    } catch (e) {
-      // 整个 tick 失败：silent skip（不弹窗，不影响 PPT）
-    }
+      for (const change of sizeChanges) {
+        if (change.lastSize != null) { changed = true; geometry = true; }
+        lockMonitor.lastSizeCm[change.parentId] = change.newSize;
+      }
+      if (groupedChange || selectionRootHasGroup && changed) scheduleGroupLayoutSync();
+      else if (changed) {
+        lockMonitor.parentRDirty = true;
+        lockMonitor.parentRSyncGeometry = lockMonitor.parentRSyncGeometry || geometry;
+        scheduleParentRSync();
+      }
+    } catch (error) {
+      console.log('[monitorTick] EXCEPTION:', error.message || String(error));
+    } finally { monitorInFlight = false; }
   }
 
   // v1.3.6 修 #6：节流调 syncLayoutChildrenRIfNeeded（避免 10ms tick 频繁开新 PowerPoint.run）
   // 200ms 窗口：用户在拖父 R 角滑块时（≈ 60fps）一次拖完最多触发 5 次，但节流后实际只跑 1 次
   function scheduleParentRSync() {
     if (lockMonitor.parentRSyncTimer) return;  // 已经有 pending 的 timer
+    const epoch = selectionEpoch, generation = monitorGeneration;
     lockMonitor.parentRSyncTimer = setTimeout(async () => {
       lockMonitor.parentRSyncTimer = null;
+      if (epoch !== selectionEpoch || generation !== monitorGeneration) return;
       if (!lockMonitor.parentRDirty) return;
       lockMonitor.parentRDirty = false;
       const geometry = lockMonitor.parentRSyncGeometry !== false;
-      lockMonitor.parentRSyncGeometry = true;
+      lockMonitor.parentRSyncGeometry = false;
+      const request = layoutRequestSerial;
       try {
         const before = selectedShapes.filter((s) => s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds).length;
-        const r = await syncLayoutChildrenRIfNeeded({ geometry });
+        const r = await syncLayoutChildrenRIfNeeded({ geometry, epoch });
         if (before > 0) console.log(`[layout-link] syncLayoutChildrenRIfNeeded done: parents=${before} geometry=${geometry} result=${JSON.stringify(r)}`);
+        const failed = r.results.find((result) => !result.ok);
+        if (epoch === selectionEpoch && failed) showToast(failed.warn || failed.error || failed.reason);
       } catch (e) {
         console.log('[layout-link] syncLayoutChildrenRIfNeeded error:', e && e.message ? e.message : e);
+      } finally {
+        if (epoch === selectionEpoch) {
+          if (request === layoutRequestSerial) await refreshSelection();
+          else startLockMonitor();
+        }
       }
     }, PARENT_R_SYNC_DEBOUNCE_MS);
   }
@@ -1848,31 +1462,34 @@
   // 因而与画面不再一致。不能直接修改 group.shapes 后代（Mac LTSC 会再次套用
   // transform 导致错位），必须等用户松手后走安全事务：
   // ungroup → 读取新父 box → 完整 applyLayout → regroup。
-  function scheduleGroupLayoutSync() {
-    if (lockMonitor.groupLayoutSyncTimer) {
-      clearTimeout(lockMonitor.groupLayoutSyncTimer);
-    }
+  function scheduleGroupLayoutSync(opts) {
+    if (lockMonitor.groupLayoutSyncTimer) clearTimeout(lockMonitor.groupLayoutSyncTimer);
+    const epoch = selectionEpoch, generation = monitorGeneration;
     lockMonitor.groupLayoutSyncTimer = setTimeout(async () => {
       lockMonitor.groupLayoutSyncTimer = null;
-      if (layoutMutationDepth > 0) {
-        scheduleGroupLayoutSync();
-        return;
-      }
-      const before = selectedShapes.filter((s) =>
-        s.layoutRole === 'parent' && s.layoutParams && s.layoutChildIds
-      ).length;
-      if (before === 0) return;
-
-      console.log(`[layout-link] GROUP-SCALE stable: safe full layout parents=${before}`);
+      if (epoch !== selectionEpoch || generation !== monitorGeneration || layoutMutationDepth > 0) return;
+      const lockedIds = selectedShapes.filter((s) => s.isRoundRect && s.locked).map((s) => s.id);
+      const updates = { ...lockMonitor.groupLockUpdates };
+      const legacy = Object.fromEntries(selectedShapes.filter((shape) => shape.legacyStrictNeedsRepair)
+        .map((shape) => [shape.id, shape.lockedCm]));
+      const parents = selectedShapes.filter((s) => s.layoutRole === 'parent');
+      const request = layoutRequestSerial;
       stopLockMonitor();
       try {
-        const r = await syncLayoutChildrenRIfNeeded({ geometry: true });
-        console.log(`[layout-link] GROUP-SCALE safe layout done: result=${JSON.stringify(r)}`);
-      } catch (e) {
-        console.log('[layout-link] GROUP-SCALE safe layout error:', e && e.message ? e.message : e);
+        if (lockedIds.length) await runMutation((driver, isCurrent) => window.RadiusCore.reapplySelectionLocks(driver, lockedIds, updates, legacy, { isCurrent }), epoch);
+        if (epoch !== selectionEpoch) return;
+        if (parents.length && !(opts && opts.geometry === false)) {
+          const result = await syncLayoutChildrenRIfNeeded({ geometry: true, epoch });
+          const failed = result.results.find((r) => !r.ok);
+          if (failed) showToast(failed.warn || failed.error || failed.reason);
+        }
+      } catch (error) {
+        console.log('[group settle] EXCEPTION:', error.message || String(error));
       } finally {
-        // applyLayout 的 regroup 会生成新 group id；必须主动刷新选区和 monitor。
-        await refreshSelection();
+        if (epoch === selectionEpoch) {
+          if (request === layoutRequestSerial) await refreshSelection();
+          else startLockMonitor();
+        }
       }
     }, GROUP_LAYOUT_SYNC_DEBOUNCE_MS);
   }
@@ -1902,7 +1519,7 @@
   function renderUI() {
     // 状态卡
     if (selectedShapes.length === 0) {
-      setStatus(i18n.t('statusLabelSelection'), i18n.t('statusReading'), 'status-warn');
+      setStatus(i18n.t('statusLabelSelection'), i18n.t('statusShapeCountFmt', { count: 0 }), 'status-warn');
       $('current-radius').textContent = '—';
       $('locked-count').textContent = '—';
     } else {
@@ -1932,7 +1549,7 @@
     renderShapeList();
     // 输入框：单位标签 + 输入限制 + apply 按钮可用性
     $('unit-label').textContent = i18n.t(currentUnit === 'cm' ? 'unitCm' : 'unitPercent');
-    const hasRound = selectedShapes.length > 0 && selectedShapes.every((s) => s.isRoundRect);
+    const hasRound = selectedShapes.some((s) => s.isRoundRect);
     const inputVal = parseFloat($('radius-input').value);
     $('apply-btn').disabled = !(hasRound && Number.isFinite(inputVal) && inputVal >= 0);
     $('reapply-btn').disabled = !selectedShapes.some((s) => s.locked);
@@ -1963,7 +1580,19 @@
         tag = '<span class="shape-warn">' + i18n.t('nonRoundRect') + '</span>';
       }
       const rText = s.currentCm != null ? `${s.currentCm.toFixed(2)}cm` : '—';
-      row.innerHTML = `<span class="shape-name">${s.name || i18n.t('unnamed')}</span><span class="shape-r">${rText}</span>${tag}`;
+      const name = document.createElement('span');
+      name.className = 'shape-name';
+      name.textContent = s.name || i18n.t('unnamed');
+      const radius = document.createElement('span');
+      radius.className = 'shape-r';
+      radius.textContent = rText;
+      row.appendChild(name);
+      row.appendChild(radius);
+      if (tag) {
+        const badge = document.createElement('span');
+        badge.innerHTML = tag;
+        row.appendChild(badge);
+      }
       list.appendChild(row);
     }
   }
@@ -1995,7 +1624,7 @@
       btn.disabled = true;
       $('lock-icon').textContent = '🔒';
       $('lock-label').textContent = i18n.t('lockRadius');
-      $('lock-hint').textContent = i18n.t('statusReading');
+      $('lock-hint').textContent = i18n.t('emptyShapes');
       updateStrictToggle();
       return;
     }
@@ -2062,29 +1691,19 @@
     let updated = 0;
     let failed = 0;
     let lockedSynced = 0; // 计数：locked 子被同步 fixed value 的数量
-    // 写之前停 monitor（避免 race）
+    const epoch = selectionEpoch;
+    let resumeEpoch = epoch;
     stopLockMonitor();
     try {
-      await PowerPoint.run(async (ctx) => {
-        // === v1.2.2 driver + radius-core 集成：onApply 走新分层 ===
-        const driver = window.PptDriver.createDriver(ctx);
-        const sel = driver.selectedShapes();
-        const selLeaves = await driver.loadShapeTree(
-          sel,
-          'id, width, height, adjustments, tags'
-        );
-        for (const sh of selLeaves) {
-          // 走新分层：业务逻辑在 radius-core.writeRadius，driver 只负责 PPT 读写
-          const r = await window.RadiusCore.writeRadius(driver, sh, cm, {});
-          if (!r.ok) {
-            failed++;
-            continue;
-          }
-          updated++;
-          if (r.wasLocked) lockedSynced++;
-        }
-        await driver.sync();
-      });
+      const result = await runMutation(async (driver, isCurrent) => {
+        const leaves = await driver.loadShapeTree(driver.selectedShapes(), 'id, width, height, adjustments, tags');
+        return window.RadiusCore.applyRadiusToSelection(driver, leaves, cm, { isCurrent });
+      }, epoch);
+      if (epoch !== selectionEpoch || result.reason === 'stale-selection') return;
+      if (!result.ok) throw new Error(result.error || result.reason);
+      updated = result.applied;
+      failed = result.failed;
+      lockedSynced = result.lockedSynced;
       if (failed === 0) {
         const displayVal = currentUnit === '%'
           ? `${raw.toFixed(1)}%`
@@ -2101,14 +1720,18 @@
       } else {
         showToast(i18n.t('toastPartialSuccessFmt', { updated: updated, failed: failed }));
       }
-      await refreshSelection();
+      resumeEpoch = await refreshSelection();
+      if (resumeEpoch !== selectionEpoch) return;
       // v1.2: 选区里有 layout 父 → 同步子 R 角（联动）
-      await syncLayoutChildrenRIfNeeded();
+      await syncLayoutChildrenRIfNeeded({ geometry: false, epoch: resumeEpoch });
     } catch (err) {
-      showToast(i18n.t('toastApplyFailedFmt', { error: err.message || err }));
+      if (resumeEpoch === selectionEpoch) {
+        showToast(i18n.t('toastApplyFailedFmt', { error: err.message || err }));
+        resumeEpoch = await refreshSelection();
+      }
     } finally {
       // 写完恢复 monitor（stopLockMonitor 已清空 last 状态，startLockMonitor 从干净开始）
-      if (selectedShapes.length > 0) startLockMonitor();
+      if (resumeEpoch === selectionEpoch && selectedShapes.length > 0) startLockMonitor();
     }
   }
 
@@ -2136,10 +1759,10 @@
         strict[s.id] = false;
       } else {
         // 开启使用数值固定 R 角：优先用输入框值，否则用当前 R 角
-        const inputCm = Number.isFinite(inputVal) && inputVal > 0
+        const inputCm = Number.isFinite(inputVal) && inputVal >= 0
           ? valueToCm(inputVal, currentUnit)
           : s.currentCm;
-        if (inputCm > 0) locks[s.id] = inputCm;
+        if (Number.isFinite(inputCm) && inputCm >= 0) locks[s.id] = inputCm;
         // 之前已经开启过 strict（防误触），再次"开启使用数值固定 R 角"时保留 strict 状态
         if (s.strictLocked) strict[s.id] = true;
       }
@@ -2147,7 +1770,8 @@
     }
     const r = await saveLocksViaTags(locks, strict);
     if (!r.ok) {
-      showToast(i18n.t('toastApplyFailedFmt', { error: r.error?.message || r.error }));
+      showToast(i18n.t('toastApplyFailedFmt', { error: r.error?.message || r.error || r.reason }));
+      await refreshSelection();
       return;
     }
     showToast(allLocked
@@ -2175,14 +1799,14 @@
       // 开启：自动用当前 R 角作 fixed value（如果还没 lock）
       const locks = {}; // id -> cm
       for (const s of roundShapes) {
-        if (s.locked && s.lockedCm > 0) {
+        if (s.locked && s.lockedCm >= 0) {
           // 已 lock：保留原 fixed value
           locks[s.id] = s.lockedCm;
-        } else if (s.currentCm != null && s.currentCm > 0) {
+        } else if (s.currentCm != null && s.currentCm >= 0) {
           // 没 lock：用当前 R 角作 fixed value
           locks[s.id] = s.currentCm;
         } else {
-          // R 角 = 0 / 未知：没法设 fixed value
+          // 未知 R 角不能设 fixed value；0 是有效值
           showToast(i18n.t('toastStrictCannotEnableFmt', { name: s.name || i18n.t('unnamed') }));
           return;
         }
@@ -2191,14 +1815,18 @@
       for (const s of roundShapes) strict[s.id] = true;
       const r = await saveLocksViaTags(locks, strict);
       if (!r.ok) {
-        showToast(i18n.t('toastApplyFailedFmt', { error: r.error?.message || r.error }));
+        showToast(i18n.t('toastApplyFailedFmt', { error: r.error?.message || r.error || r.reason }));
+        await refreshSelection();
         return;
       }
       showToast(i18n.t('toastStrictEnabledFmt', { count: roundShapes.length }));
     } else {
       // 关闭：只删 strict tag（不动 lock tag）
-      for (const s of roundShapes) {
-        await updateLockTagForShape(s.id, undefined, false);
+      const result = await saveLocksViaTags({}, Object.fromEntries(roundShapes.map((s) => [s.id, false])));
+      if (!result.ok) {
+        showToast(i18n.t('toastApplyFailedFmt', { error: result.error || result.reason }));
+        await refreshSelection();
+        return;
       }
       showToast(i18n.t('toastStrictDisabledFmt', { count: roundShapes.length, keepHint: roundShapes.some((s) => s.locked) ? i18n.t('keepLockHint') : '' }));
     }
@@ -2214,29 +1842,21 @@
     }
     let applied = 0;
     let failed = 0;
+    const epoch = selectionEpoch;
     try {
-      await PowerPoint.run(async (ctx) => {
-        // v1.2.2 driver + radius-core：走 reapplyLock（自动处理 clamp）
-        const driver = window.PptDriver.createDriver(ctx);
-        const sel = driver.selectedShapes();
-        const selLeaves = await driver.loadShapeTree(
-          sel,
-          'id, width, height, adjustments'
-        );
-        for (const sh of selLeaves) {
-          const id = driver.shapeId(sh);
-          const target = locked.find((x) => x.id === id);
-          if (!target) continue;
-          const r = await window.RadiusCore.reapplyLock(driver, sh, target.lockedCm);
-          if (r.ok) applied++;
-          else failed++;
-        }
-        await driver.sync();
-      });
+      const result = await runMutation((driver, isCurrent) => window.RadiusCore.reapplySelectionLocks(
+        driver, locked.map((shape) => shape.id), null, null, { isCurrent }
+      ), epoch);
+      if (epoch !== selectionEpoch || result.reason === 'stale-selection') return;
+      applied = result.applied;
+      failed = result.failed;
       showToast(i18n.t('toastReappliedFmt', { count: applied, failed: failed > 0 ? i18n.t('failedStrFmt', { count: failed }) : '' }));
       await refreshSelection();
     } catch (err) {
-      showToast(i18n.t('toastApplyFailedFmt', { error: err.message || err }));
+      if (epoch === selectionEpoch) {
+        showToast(i18n.t('toastApplyFailedFmt', { error: err.message || err }));
+        await refreshSelection();
+      }
     }
   }
 
@@ -2400,7 +2020,7 @@
       return;
     }
     // 优先用当前选中的圆角矩形的 R 角；没有就退回输入框
-    const roundShapes = selectedShapes.filter((s) => s.isRoundRect && s.currentCm != null && s.currentCm > 0);
+    const roundShapes = selectedShapes.filter((s) => s.isRoundRect && s.currentCm != null && s.currentCm >= 0);
     let raw, unit;
     if (roundShapes.length > 0) {
       const src = roundShapes[0];
@@ -2537,11 +2157,12 @@
   // （不能 load 之后再新调 get(0).value，那时 value 还没填上，会报"尚未加载"）
   // v1.3.6 迁移：PowerPoint.run 部分走 radius-core.pickupFromSelection
   async function pickupFromSelection() {
+    const epoch = selectionEpoch;
     let picked = null;
     try {
-      await PowerPoint.run(async (ctx) => {
+      await window.PptDriver.run(async (ctx) => {
         const driver = window.PptDriver.createDriver(ctx);
-        const sel = ctx.presentation.getSelectedShapes();
+        const sel = driver.selectedShapes();
         const selLeaves = await driver.loadShapeTree(
           sel,
           'id, name, width, height, adjustments, tags'
@@ -2555,6 +2176,7 @@
       showToast(i18n.t('toastPickupFailedFmt', { error: e.message || e }));
       return;
     }
+    if (epoch !== selectionEpoch) return;
     if (!picked) {
       showToast(i18n.t('toastNoRoundRectInSelection'));
       return;
@@ -2573,16 +2195,13 @@
     const strictHint = pipetteSyncStrict && picked.sourceStrict ? '（含防误触）' : '';
     showToast(i18n.t('toastPickedFmt', { name: pipetteSource.sourceShapeName, value: formatPresetValue(value, currentUnit), strictHint: strictHint }));
     // 顺便把 selectedShapes 内存刷新一下（让状态卡同步显示源形状）
-    refreshSelection();
+    await refreshSelection();
   }
 
   // 把 pipetteSource 应用到选区里所有 roundRect
   //
   // v1.3.6 迁移：所有步骤走 radius-core.applyPickedToSelection（单 PowerPoint.run 完成）
-  // v1.2.15 改：勾选【刷防误触状态】= 双向覆盖（source strict → target strict；source 不 strict → target 也不 strict）
-  //   - syncStrict=false：步骤 0 拦截（任一目标 strict → 全拒）→ 写 R 角（targets now not strict）→ 不动 strict
-  //   - syncStrict=true 且 source.strict=false：跳过拦截 → 先删所有 target 的 strict → 写 R 角
-  //   - syncStrict=true 且 source.strict=true：跳过拦截 → 写 R 角（不 strict 的会成功）→ 后加 strict
+  // 已保护目标总是拦截；同步选项只复制源的开启状态，不自动解除目标保护。
   //
   // 关键：radius-core.applyPickedToSelection 内部用 driver.readTagsBulk 一次拿全部 tag，
   //       避开 per-call readTag + sync 在 for 循环内累积（v1.2.6 + v1.3.6 Mac LTSC 坑，
@@ -2593,25 +2212,24 @@
       setPipetteState('idle');
       return;
     }
-    stopLockMonitor();
-    let result = null;
+    if (selectedShapes.some((shape) => shape.isRoundRect && shape.strictLocked)) {
+      showToast(i18n.t('toastBrushBlocked'));
+      return;
+    }
+    const epoch = selectionEpoch;
+    const source = { cm: pipetteSource.cm, sourceStrict: pipetteSource.sourceStrict };
+    const syncStrict = pipetteSyncStrict;
+    let result;
     try {
-      await PowerPoint.run(async (ctx) => {
-        const driver = window.PptDriver.createDriver(ctx);
-        const sel = ctx.presentation.getSelectedShapes();
-        const selLeaves = await driver.loadShapeTree(
-          sel,
-          'id, width, height, adjustments, tags'
-        );
-        result = await window.RadiusCore.applyPickedToSelection(
-          driver, selLeaves,
-          { cm: pipetteSource.cm, sourceStrict: pipetteSource.sourceStrict },
-          { syncStrict: pipetteSyncStrict }
-        );
-      });
-    } catch (err) {
-      showToast(i18n.t('toastBrushFailedFmt', { error: err.message || err }));
-      if (selectedShapes.length > 0) startLockMonitor();
+      result = await runMutation(async (driver, isCurrent) => {
+        const leaves = await driver.loadShapeTree(driver.selectedShapes(), 'id, width, height, adjustments, tags');
+        if (!isCurrent()) return { ok: false, reason: 'stale-selection' };
+        return window.RadiusCore.applyPickedToSelection(driver, leaves, source, { syncStrict, isCurrent });
+      }, epoch);
+      if (epoch !== selectionEpoch || result.reason === 'stale-selection') return;
+    } catch (error) {
+      showToast(i18n.t('toastBrushFailedFmt', { error: error.message || error }));
+      if (epoch === selectionEpoch) await refreshSelection();
       return;
     }
 
@@ -2629,28 +2247,25 @@
 
     // toast
     const lockHint = '';  // radius-core.applyPickedToSelection 已经处理 lock 同步
-    // v1.2.15：strict 同步提示分"开启"和"解除"（双向覆盖后用户更要知道发生了什么）
-    let strictHint = '';
-    if (result.strictAdded > 0 && result.strictRemoved > 0) {
-      strictHint = `，${result.strictAdded} 个开启防误触，${result.strictRemoved} 个解除`;
-    } else if (result.strictAdded > 0) {
-      strictHint = `，${result.strictAdded} 个开启防误触`;
-    } else if (result.strictRemoved > 0) {
-      strictHint = `，${result.strictRemoved} 个解除防误触`;
-    }
+    const strictHint = result.strictAdded > 0 ? `，${result.strictAdded} 个开启防误触` : '';
     showToast(i18n.t('toastBrushAppliedFmt', { count: result.applied, failed: result.failed > 0 ? i18n.t('failedStrFmt', { count: result.failed }) : '', lockHint: lockHint, strictHint: strictHint }));
-    await refreshSelection();
+    const refreshedEpoch = await refreshSelection();
+    if (refreshedEpoch !== selectionEpoch) return;
     // v1.2: layout 父被刷 R 角 → 同步子 R 角
-    await syncLayoutChildrenRIfNeeded();
-    if (selectedShapes.length > 0) startLockMonitor();
+    await syncLayoutChildrenRIfNeeded({ geometry: false, epoch: refreshedEpoch });
+    if (refreshedEpoch === selectionEpoch && selectedShapes.length > 0) startLockMonitor();
   }
 
   // DocumentSelectionChanged 分发：idle → refreshSelection；sourcing → pickup；brushing → apply
-  function onSelectionChangedForPipette() {
+  async function onSelectionChangedForPipette() {
     if (pipetteState === 'sourcing') {
-      pickupFromSelection();
+      await pickupFromSelection();
     } else if (pipetteState === 'brushing') {
-      applyPipetteToSelection();
+      // Protection in memory must describe the new target, not the source or
+      // previous target. The live tag preflight remains the second defense.
+      const refreshedEpoch = await refreshSelection();
+      if (refreshedEpoch !== selectionEpoch || pipetteState !== 'brushing') return;
+      await applyPipetteToSelection();
     }
     // idle 状态由原 refreshSelection 处理
   }
@@ -2766,9 +2381,35 @@
     });
   }
 
+  async function handleSelectionChanged() {
+    if (layoutMutationDepth > 0 && activeMutationDriver && activeMutationDriver.structuralChanged) return;
+    if (Date.now() < layoutSelectionIgnoreUntil && ignoredRestoredSelection) {
+      // Distinguish a delayed internal regroup event from a real user switch.
+      // Stop the old monitor immediately while this serialized read is pending.
+      stopLockMonitor();
+      if (selectionEventProbeInFlight) return;
+      selectionEventProbeInFlight = true;
+      try {
+        const identity = await window.PptDriver.run((ctx) => window.PptDriver.createDriver(ctx).loadSelectionIdentity());
+        const expected = ignoredRestoredSelection;
+        if (expected && identity.slideId === expected.slideId &&
+            identity.shapeIds.length === expected.shapeIds.length &&
+            identity.shapeIds.every((id) => expected.shapeIds.includes(id))) {
+          startLockMonitor();
+          return;
+        }
+      } catch (error) { console.log('[selection identity] EXCEPTION:', error.message || error); }
+      finally { selectionEventProbeInFlight = false; }
+    }
+    selectionEpoch++;
+    stopLockMonitor();
+    if (pipetteState === 'idle') await refreshSelection();
+    else await onSelectionChangedForPipette();
+  }
+
   // ---------------- 初始化 ----------------
 
-  Office.onReady(() => {
+  window.PptDriver.onReady(() => {
     // Apply i18n to any [data-i18n] / [data-i18n-*] attributes (HTML inline script
     // already did this on DOMContentLoaded, but call again in case Office is slow
     // and dynamic textContent / placeholder updates need to be re-translated).
@@ -2777,29 +2418,6 @@
     renderPresets(userPresets); // 渲染空预设库
     refreshSelection();
     // 选区变化：分发到 pipette（sourcing → pickup；brushing → apply）或 refreshSelection（idle）
-    Office.context.document.addHandlerAsync(
-      Office.EventType.DocumentSelectionChanged,
-      () => {
-        if (layoutMutationDepth > 0) {
-          console.log('[selection] ignored during layout group transaction');
-          return;
-        }
-        if (Date.now() < layoutSelectionIgnoreUntil) {
-          console.log('[selection] ignored delayed regroup selection event');
-          return;
-        }
-        if (pipetteState === 'idle') {
-          refreshSelection();
-        } else {
-          onSelectionChangedForPipette();
-          // pipette 路径也更新一下内存里的 selectedShapes（pickup/apply 完内存可能需要刷新）
-          // 注意：sourcing 路径只读不写，brushing 路径写完会调 refreshSelection
-          if (pipetteState === 'sourcing') {
-            // 吸取成功可能进入 brushing 状态，brushing 路径自己处理刷新
-            // sourcing 状态下 pickupFromSelection 不动 selectedShapes 数值
-          }
-        }
-      }
-    );
+    window.PptDriver.onSelectionChanged(handleSelectionChanged);
   });
 })();

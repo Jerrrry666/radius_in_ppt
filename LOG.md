@@ -7,10 +7,10 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 当前里程碑 | v1.3.1 GroupShape 读取、group 内布局与缩放后安全重排 |
-| 单元测试 | **251 / 0**（算法 115 + 功能 96 + group driver / 集成 40）|
-| Driver 烟囱测试 | **14 / 14**（不在 npm test 里，真实 PPT 跑）|
-| End-to-end PPT 验证 | Group 单选/整组选区、连续拉宽、缩小、拉高、R 模式切换及联动按钮均已实机验证 |
+| 当前里程碑 | v1.3.2 Review修复（本地待PowerPoint验收，未发布） |
+| 单元测试 | **287 / 0**（算法115＋功能96＋group40＋回归36）|
+| Driver 烟囱测试 | v1.3.2待实测；v1.3.1历史成绩14/14|
+| End-to-end PPT 验证 | v1.3.2待验收（Mac锁屏）；v1.3.1历史实测保留在changelog |
 | 未来 feature 测试策略 | 走 `npm test`（纯算法 + 功能）+ 代码 review，**不再 PPT 实测**（Mac LTSC 真实跑跟 mock 不一致时必须补 PPT 实测）|
 
 ---
@@ -24,22 +24,17 @@
 | **v1.2** | 布局模式（rows × cols 网格 + padding/gutter 滑块 + R 角联动）+ 三层架构（dialog.js / radius-core / ppt-driver）+ 交互层 verified |
 | **v1.3.0** | 测试框架分层（driver 单独验证 + fixtures + harness 模拟功能反馈）+ dialog.js / radius-core 全 driver 化 + Step 3-5 完整收尾 + 修 #1 #2 #3 #4 bug |
 | **v1.3.1** | Group 兼容 bugfix：组合内形状读取/布局、缩放后固定边距/间距重排、R-only 联动与链条按钮修复 |
+| **v1.3.2（本地）** | 防误触完整预检、保护tag错误处理、0值、真实几何识别、宿主串行与过期选区、组合安全事务及打包/服务修复 |
 
 **核心架构**（v1.2 落地）：
 ```
 dialog.js (UI 层)            事件绑定 / 渲染 / toast / debug log
         │
         ▼
-radius-core.js (实现层)      8 个 driver 版函数（writeRadius / readLockState /
-                             writeLockState / reapplyLock / applyLayout /
-                             syncLayoutChildrenR / writeRadiusToShapePure /
-                             applyLayoutPure）
+radius-core.js (实现层)      算法、保护规则、组合安全事务及布局/R角业务
         │
         ▼
-ppt-driver.js (交互层)       16 个方法（load / sync / selectedShapes / activeSlide /
-                             slideShapes / shapeId / size / box / isRoundRect /
-                             adjFraction / loadAdjValue / setBox / setAdjFraction /
-                             addTag / deleteTag / readTag）
+ppt-driver.js (交互层)       形状树、几何识别、属性/tag读写、组合API及宿主队列
         │
         ▼
 Office.js + PowerPoint (Mac LTSC 16.111)

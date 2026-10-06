@@ -34,14 +34,219 @@ function getBulkTagValue(tags, key) {
   return null;
 }
 
+function lockStateFromTags(tags) {
+  if (!tags || typeof tags !== 'object') throw new Error('Protection tags were not loaded');
+  const raw = getBulkTagValue(tags, LOCK_TAG_KEY);
+  const cm = raw == null || String(raw).trim() === '' ? NaN : Number(raw);
+  const isLocked = Number.isFinite(cm) && cm >= 0;
+  return { isLocked, lockedCm: isLocked ? cm : null,
+    isStrict: getBulkTagValue(tags, LOCK_STRICT_TAG_KEY) === '1' };
+}
+
+function decideLockMonitorUpdate(shape, sample, previous) {
+  const epsilon = 0.0001;
+  const next = { width: sample.width, height: sample.height, adj: sample.adj,
+    candidateAdj: sample.adj, stableCount: 0 };
+  if (!shape.locked || !previous || previous.adj == null) return { action: 'none', next };
+  const minSideCm = Math.min(sample.width, sample.height) / PT_PER_CM;
+  const targetAdj = Math.min(shape.lockedCm, minSideCm / 2) / minSideCm;
+  const sizeChanged = Math.abs(sample.width - previous.width) > 0.001 || Math.abs(sample.height - previous.height) > 0.001;
+  if (sizeChanged) {
+    next.adj = targetAdj;
+    return { action: Math.abs(sample.adj - targetAdj) > epsilon ? 'restore' : 'none', targetAdj, next };
+  }
+  if (Math.abs(sample.adj - previous.adj) > epsilon) {
+    next.adj = previous.adj;
+    next.stableCount = Math.abs(sample.adj - previous.candidateAdj) <= epsilon ? (previous.stableCount || 0) + 1 : 1;
+    if (next.stableCount < 4) return { action: 'none', next };
+    next.stableCount = 0;
+    next.adj = shape.strictLocked ? targetAdj : sample.adj;
+    return { action: shape.strictLocked ? 'restore' : 'updateLock', targetAdj,
+      lockedCm: sample.adj * minSideCm, next };
+  }
+  if (Math.abs(sample.adj - targetAdj) > epsilon) {
+    next.adj = targetAdj;
+    return { action: 'restore', targetAdj, next };
+  }
+  return { action: 'none', next };
+}
+
+async function reapplySelectionLocks(driver, ids, updates, legacyDefaults, opts) {
+  let applied = 0;
+  return withWritableShapes(driver, ids, async (shapes) => {
+    const tags = await driver.loadTagsBulk(shapes);
+    if (opts && opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
+    for (const sh of shapes) {
+      const id = driver.shapeId(sh);
+      const state = lockStateFromTags(tags[id]);
+      // Older brushes could leave strict without a fixed-radius tag. Capture
+      // the radius observed when selected, then persist it through the same
+      // safe transaction used to restore protected native edits.
+      const legacy = legacyDefaults && legacyDefaults[id];
+      if (state.isStrict && !state.isLocked && Number.isFinite(legacy) && legacy >= 0) {
+        const r = await writeLockState(driver, sh, { lockedCm: legacy });
+        if (!r.ok) throw new Error(r.error);
+        state.isLocked = true;
+        state.lockedCm = legacy;
+      }
+      if (!state.isLocked) continue;
+      const newValue = updates && updates[id];
+      if (!state.isStrict && Number.isFinite(newValue) && newValue >= 0) {
+        const r = await writeLockState(driver, sh, { lockedCm: newValue });
+        if (!r.ok) throw new Error(r.error);
+        state.lockedCm = newValue;
+      }
+      const r = await reapplyLock(driver, sh, state.lockedCm);
+      if (r.ok) applied++;
+      else if (r.reason !== 'not-roundRect') throw new Error(r.error || r.reason);
+    }
+    await driver.sync();
+    return { ok: true, applied, failed: 0 };
+  }, opts);
+}
+
+// Ordinary radius/brush operations also use fresh top-level proxies whenever
+// targets belong to a group. Never write into a transformed group descendant.
+async function withWritableShapes(driver, ids, action, opts) {
+  const checkCurrent = () => {
+    if (opts && opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
+  };
+  if (ids.length === 0) return action([]);
+  const slide = driver.activeSlide();
+  const collection = driver.slideShapes(slide);
+  let leaves = await driver.loadShapeTree(collection, 'id, name, width, height, adjustments, tags');
+  let byId = new Map(leaves.map((sh) => [driver.shapeId(sh), sh]));
+  const targets = ids.map((id) => byId.get(id));
+  checkCurrent();
+  if (targets.some((sh) => !sh)) throw new Error('目标形状在当前幻灯片找不到');
+  const ordinaryIds = targets.filter((sh) => !driver.parentGroupOf(sh)).map((sh) => driver.shapeId(sh));
+  const groups = new Map();
+  for (const sh of targets) {
+    let group = driver.parentGroupOf(sh);
+    const seen = new Set();
+    while (group) {
+      const id = driver.shapeId(group);
+      if (seen.has(id)) throw new Error('组合层级存在循环');
+      seen.add(id);
+      groups.set(id, group);
+      group = driver.parentGroupOf(group);
+    }
+  }
+  if (groups.size === 0) return action(targets);
+  const snapshots = [];
+  // Finish all metadata reads before the first structural mutation.
+  const tags = await driver.loadTagsBulk(Array.from(groups.values()));
+  for (const [id, group] of groups) {
+    const parent = driver.parentGroupOf(group);
+    let depth = 0, ancestor = parent;
+    while (ancestor) { depth++; ancestor = driver.parentGroupOf(ancestor); }
+    snapshots.push({ id, group, members: driver.groupShapes(group).map((s) => driver.shapeId(s)),
+      parentId: parent ? driver.shapeId(parent) : null, depth,
+      name: driver.shapeName(group), tags: tags[id], ungrouped: false });
+  }
+  snapshots.sort((a, b) => a.depth - b.depth);
+  const findNode = (items, id) => {
+    for (const node of items) {
+      if (driver.shapeId(node) === id) return node;
+      if (driver.isGroup(node)) {
+        const found = findNode(driver.groupShapes(node), id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  let result, operationError;
+  try {
+    checkCurrent();
+    for (const snapshot of snapshots) {
+      await driver.loadShapeTree(collection, 'id, name, width, height, adjustments, tags');
+      const freshGroup = findNode(collection.items, snapshot.id);
+      if (!freshGroup) throw new Error('无法找回组合');
+      checkCurrent();
+      driver.ungroupShapeGroup(freshGroup);
+      snapshot.ungrouped = true;
+      await driver.sync();
+    }
+    leaves = await driver.loadShapeTree(collection, 'id, name, width, height, adjustments, tags');
+    byId = new Map(leaves.map((sh) => [driver.shapeId(sh), sh]));
+    const fresh = ids.map((id) => byId.get(id));
+    if (fresh.some((sh) => !sh)) throw new Error('解除组合后无法找回目标形状');
+    checkCurrent();
+    result = await action(fresh);
+  } catch (e) { operationError = e; }
+  const restoredIds = [];
+  const replacements = new Map();
+  const restoreErrors = [];
+  for (const snapshot of snapshots.slice().reverse()) {
+    if (!snapshot.ungrouped) continue;
+    try {
+      const group = driver.addGroup(collection, snapshot.members.map((id) => replacements.get(id) || id));
+      driver.load(group, 'id');
+      await driver.sync();
+      const id = driver.shapeId(group);
+      replacements.set(snapshot.id, id);
+      if (snapshot.parentId == null) restoredIds.push(id);
+      // Commit the structure before restoring metadata. A name/tag failure
+      // must not leave the outer group referring to a removed inner group ID.
+      if (snapshot.name) {
+        try { driver.setShapeName(group, snapshot.name); }
+        catch (e) { restoreErrors.push(e.message || String(e)); }
+      }
+      for (const [key, value] of Object.entries(snapshot.tags || {})) {
+        try { driver.addTag(group, key, value); }
+        catch (e) { restoreErrors.push(e.message || String(e)); }
+      }
+      await driver.sync();
+    } catch (e) { restoreErrors.push(e.message || String(e)); }
+  }
+  if (restoredIds.length) {
+    try {
+      driver.selectShapes(slide, restoredIds.concat(ordinaryIds));
+      await driver.sync();
+    } catch (e) { restoreErrors.push(e.message || String(e)); }
+  }
+  if (restoreErrors.length) {
+    throw new Error((operationError ? (operationError.message || String(operationError)) + '；' : '') +
+      '组合恢复失败：' + restoreErrors.join('; '));
+  }
+  if (operationError) throw operationError;
+  return result;
+}
+
+async function applyRadiusToSelection(driver, shapes, cm, opts) {
+  opts = opts || {};
+  let applied = 0, failed = 0, lockedSynced = 0;
+  try {
+    if (!Number.isFinite(cm) || cm < 0) throw new Error('Invalid radius');
+    const targets = shapes.filter((sh) => driver.isRoundRect(sh));
+    const tags = await driver.loadTagsBulk(targets);
+    if (targets.some((sh) => lockStateFromTags(tags[driver.shapeId(sh)]).isStrict)) {
+      return { ok: false, applied, failed, lockedSynced, reason: 'strict', error: '选区中有形状启用了防误触' };
+    }
+    if (opts.isCurrent && !opts.isCurrent()) return { ok: false, reason: 'stale-selection', applied, failed, lockedSynced };
+    await withWritableShapes(driver, targets.map((sh) => driver.shapeId(sh)), async (fresh) => {
+      if (opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
+      for (const sh of fresh) {
+        const r = await writeRadius(driver, sh, cm, { knownLockState: lockStateFromTags(tags[driver.shapeId(sh)]) });
+        if (r.ok) { applied++; if (r.wasLocked) lockedSynced++; }
+        else failed++;
+      }
+      await driver.sync();
+    }, opts);
+    return { ok: true, applied, failed, lockedSynced };
+  } catch (e) {
+    const error = e.message || String(e);
+    console.log('[applyRadiusToSelection] EXCEPTION:', error);
+    return { ok: false, applied, failed, lockedSynced, error };
+  }
+}
+
 // ---------------- 布局 math ----------------
 
 /**
- * v1.2.7：自适应 padding 纯函数
- *
- * 问题：same 模式（R_sub = R_父）下，当 R_父 过大时子 R 角会被 clamp 到子短边一半，
- *       几何上不等宽了（破等宽）。
- * 修法：当 R_父 > min(W, H) / 2 - d_init 时，**自动减小 padding** 让子短边 >= 2*R_父。
+ * Legacy single-inset padding bound, retained for existing pure callers.
+ * It applies only to 1×1 with no gutter. applyLayout no longer uses it:
+ * user centimetre spacing is preserved in every mode, and radius is clamped.
  *
  * @param {number} parentWidthCm - 父宽 (cm)
  * @param {number} parentHeightCm - 父高 (cm)
@@ -540,7 +745,7 @@ async function writeRadius(driver, shape, targetCm, opts) {
       const lockVal = await driver.readTag(shape, LOCK_TAG_KEY);
       if (lockVal) {
         const cm = parseFloat(lockVal);
-        if (Number.isFinite(cm) && cm > 0) {
+        if (Number.isFinite(cm) && cm >= 0) {
           isLocked = true;
           lockedCm = cm;
         }
@@ -586,7 +791,7 @@ async function writeRadius(driver, shape, targetCm, opts) {
 
     // 5. 写子 tag
     if (layoutParentId) {
-      try { driver.addTag(shape, LAYOUT_CHILD_TAG_KEY, layoutParentId); } catch (_) {}
+      driver.addTag(shape, LAYOUT_CHILD_TAG_KEY, layoutParentId);
     }
 
     return { ok: true, newCm, wasLocked: isLocked, wasStrict: false, lockedCm };
@@ -619,7 +824,7 @@ async function readLockState(driver, shape) {
   const lockVal = await driver.readTag(shape, LOCK_TAG_KEY);
   if (lockVal != null) {
     const cm = parseFloat(lockVal);
-    if (Number.isFinite(cm) && cm > 0) lockedCm = cm;
+    if (Number.isFinite(cm) && cm >= 0) lockedCm = cm;
   }
   const strictVal = await driver.readTag(shape, LOCK_STRICT_TAG_KEY);
   if (strictVal === '1') isStrict = true;
@@ -643,19 +848,21 @@ async function writeLockState(driver, shape, state) {
   try {
     if (state.lockedCm !== undefined) {
       if (state.lockedCm == null) {
-        try { driver.deleteTag(shape, LOCK_TAG_KEY); } catch (_) {}
+        driver.deleteTag(shape, LOCK_TAG_KEY);
       } else {
-        try { driver.addTag(shape, LOCK_TAG_KEY, String(state.lockedCm)); } catch (_) {}
+        if (!Number.isFinite(state.lockedCm) || state.lockedCm < 0) throw new Error('Invalid fixed radius');
+        driver.addTag(shape, LOCK_TAG_KEY, String(state.lockedCm));
       }
     }
     if (state.isStrict === true) {
-      try { driver.addTag(shape, LOCK_STRICT_TAG_KEY, '1'); } catch (_) {}
+      driver.addTag(shape, LOCK_STRICT_TAG_KEY, '1');
     } else if (state.isStrict === false) {
-      try { driver.deleteTag(shape, LOCK_STRICT_TAG_KEY); } catch (_) {}
+      driver.deleteTag(shape, LOCK_STRICT_TAG_KEY);
     }
     return { ok: true };
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
+    console.log('[writeLockState] EXCEPTION:', msg);
     return { ok: false, error: msg };
   }
 }
@@ -672,6 +879,7 @@ async function writeLockState(driver, shape, state) {
  */
 async function reapplyLock(driver, shape, lockedCm) {
   try {
+    if (!Number.isFinite(lockedCm) || lockedCm < 0) return { ok: false, reason: 'invalid-target' };
     if (!driver.isRoundRect(shape)) return { ok: false, reason: 'not-roundRect' };
     const size = driver.size(shape);
     const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
@@ -714,15 +922,20 @@ async function reapplyLock(driver, shape, lockedCm) {
  */
 async function applyLayout(driver, parentId, params, childIds, opts) {
   opts = opts || {};
+  if (!params || !Number.isInteger(params.rows) || params.rows < 1 || params.rows > 5 ||
+      !Number.isInteger(params.cols) || params.cols < 1 || params.cols > 5 ||
+      !Number.isFinite(params.padding) || params.padding < 0 ||
+      !Number.isFinite(params.gutter) || params.gutter < 0 || !Array.isArray(childIds) ||
+      new Set(childIds).size !== childIds.length || childIds.includes(parentId)) {
+    return { ok: false, applied: 0, failed: 0, error: '布局参数不合法' };
+  }
   const writeParentTag = opts.writeParentTag !== false;
   const syncR = opts.syncR !== false;
   // 切换 linkRMode 只应改变子 R 和持久化 tag；不能顺带把已由用户缩放的
   // group 子位置/尺寸重新按 layout 公式“反算”一遍。
   const writeGeometry = opts.writeGeometry !== false;
-  // v1.2.6：默认 linkRMode 从 'subtract' 改成 'same'
-  // 原因：subtract 公式 R_sub = R_父 - d 几何上**不等距**（45° 方向距离 = d - 0.414d ≈ 0.586d），
-  //       user 报"子 R 角看着不美观，角部比边窄"。same 公式 R_sub = R_父 是真正的等距。
-  //       老 layout（linkRMode 已存 'subtract'）不受影响（直接读 tag 拿到 'subtract'）
+  // Preserve the existing default and stored mode names. For a single inset
+  // rectangle, subtract gives concentric arcs when parentR >= padding.
   const linkRMode = params.linkRMode || 'same';
   const expectedCount = params.rows * params.cols;
 
@@ -740,15 +953,20 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
     if (!regroupState || regroupState.restored || regroupState.restoreAttempted) return null;
     regroupState.restoreAttempted = true;
     const newGroup = driver.addGroup(regroupState.shapeCollection, regroupState.memberIds);
-    if (regroupState.name) {
-      try { driver.setShapeName(newGroup, regroupState.name); } catch (_) {}
-    }
-    for (const [key, value] of Object.entries(regroupState.tags || {})) {
-      try { driver.addTag(newGroup, key, value); } catch (_) {}
-    }
-    try { driver.load(newGroup, 'id'); } catch (_) {}
+    driver.load(newGroup, 'id');
     await driver.sync();
     regroupState.restored = true;
+    const restoreErrors = [];
+    if (regroupState.name) {
+      try { driver.setShapeName(newGroup, regroupState.name); }
+      catch (e) { restoreErrors.push(e.message || String(e)); }
+    }
+    for (const [key, value] of Object.entries(regroupState.tags || {})) {
+      try { driver.addTag(newGroup, key, value); }
+      catch (e) { restoreErrors.push(e.message || String(e)); }
+    }
+    try { await driver.sync(); }
+    catch (e) { restoreErrors.push(e.message || String(e)); }
     console.log('[applyLayout/driver] GROUP-TXN regroup done members=', regroupState.memberIds.length);
     // addGroup 不保证保留原选区。主动选中新 group，避免布局面板在事务后消失。
     try {
@@ -757,11 +975,9 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
       await driver.sync();
       console.log('[applyLayout/driver] GROUP-TXN selection restored groupId=', newGroupId);
     } catch (selectionError) {
-      console.log(
-        '[applyLayout/driver] GROUP-TXN selection restore skipped:',
-        selectionError && selectionError.message ? selectionError.message : String(selectionError)
-      );
+      restoreErrors.push(selectionError.message || String(selectionError));
     }
+    if (restoreErrors.length) throw new Error('组合名称、tag或选区恢复失败：' + restoreErrors.join('; '));
     return newGroup;
   };
 
@@ -814,6 +1030,14 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
       return { ok: false, applied, failed, warn };
     }
 
+    // All actual targets, including children outside the selection, must be
+    // checked before ungrouping, geometry writes, radius writes, or tag writes.
+    let tagsById = await driver.loadTagsBulk(childShapes);
+    if (childShapes.some((sh) => lockStateFromTags(tagsById[driver.shapeId(sh)]).isStrict)) {
+      return { ok: false, applied, failed, reason: 'strict', warn: '布局子形状启用了防误触，请先关闭防误触' };
+    }
+    if (opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
+
     // 5. group 安全事务：
     //    已缩放 group 内直接改后代，哪怕逐子 sync 也会让 group transform 损坏。
     //    仅支持父 + 全部 layout 子是同一个「顶层 group 的直接成员」：
@@ -847,9 +1071,9 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
         return { ok: false, applied, failed, warn };
       }
 
-      let groupName = '';
-      try { groupName = driver.shapeName(commonGroup) || ''; } catch (_) {}
+      const groupName = driver.shapeName(commonGroup) || '';
       const groupTagsById = await driver.loadTagsBulk([commonGroup]);
+      if (opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
       regroupState = {
         slide,
         shapeCollection: slideShapeCollection,
@@ -880,13 +1104,10 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
 
     // 6. 父 R 角（v1.0 per-shape get(0) + sync + 读）
     let parentRcm = 0;
-    try {
-      if (driver.isRoundRect(parentSh)) {
-        const adjResult = parentSh.adjustments.get(0);
-        await driver.sync();
-        try { parentRcm = adjResult.value * Math.min(driver.size(parentSh).width, driver.size(parentSh).height) / PT_PER_CM; } catch (_) {}
-      }
-    } catch (_) { /* 父不是 roundRect 时算 0 */ }
+    if (syncR && linkRMode !== 'off' && driver.isRoundRect(parentSh)) {
+      parentRcm = await driver.readAdjFraction(parentSh) *
+        Math.min(driver.size(parentSh).width, driver.size(parentSh).height) / PT_PER_CM;
+    }
 
     // 7. 只有几何参数变化时才读父 box、算 layout。
     // linkRMode 切换走 R-only，不碰任何子 box。
@@ -895,16 +1116,9 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
       const parentBox = driver.box(parentSh);
       console.log('[applyLayout/driver] parent box:', JSON.stringify(parentBox), 'Rcm=', parentRcm);
 
-      // v1.2.7：autoPadding — 父 R 角过大时自动减小 padding，保证 same 模式子 R 角不 clamp
-      const parentWcm = parentBox.width / PT_PER_CM;
-      const parentHcm = parentBox.height / PT_PER_CM;
-      const ap = computeAutoPadding(parentWcm, parentHcm, parentRcm, params.padding);
-      const effectivePadding = ap.effectivePaddingCm;
-      if (ap.clamped) {
-        console.log(`[applyLayout/driver] autoPadding: R=${parentRcm.toFixed(3)}cm > d_max=${ap.dMaxCm.toFixed(3)}cm, d ${params.padding}→${effectivePadding.toFixed(3)}cm`);
-      }
-
-      layout = computeLayout(parentBox, params.rows, params.cols, effectivePadding, params.gutter);
+      // Centimetre spacing is explicit. Only radius is clamped to the short
+      // side; never silently change the requested padding to fit a radius.
+      layout = computeLayout(parentBox, params.rows, params.cols, params.padding, params.gutter);
       if (!layout.feasible) {
         warn = layout.reason;
         await restoreGroupIfNeeded();
@@ -916,7 +1130,11 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
 
     // 8. 写每个子的位置 + 尺寸 + R 角 + child tag
     // 一次 loadTagsBulk 加载全部 TagCollection key/value，避免 per-call readTag + sync。
-    const tagsById = await driver.loadTagsBulk(slideLeaves);
+    tagsById = await driver.loadTagsBulk(childShapes);
+    if (opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
+    if (childShapes.some((sh) => lockStateFromTags(tagsById[driver.shapeId(sh)]).isStrict)) {
+      throw new Error('布局子形状启用了防误触，请先关闭防误触');
+    }
     for (let k = 0; k < childShapes.length; k++) {
       const csh = childShapes[k];
       if (writeGeometry) {
@@ -936,21 +1154,9 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
         const subRcm = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - params.padding);
         console.log(`[applyLayout/driver] R link #${k}: parentRcm=${parentRcm}, mode=${linkRMode}, padding=${params.padding}, target subRcm=${subRcm}`);
         // 从 readTagsBulk 拿的 tag 构造 knownLockState，传给 writeRadius（跳过 per-call readTag + sync）
-        const cTags = tagsById[driver.shapeId(csh)] || {};
-        const lockRaw = getBulkTagValue(cTags, LOCK_TAG_KEY);
-        let isLocked = false;
-        let lockedCm = 0;
-        if (lockRaw != null) {
-          const cm = parseFloat(lockRaw);
-          if (Number.isFinite(cm) && cm > 0) {
-            isLocked = true;
-            lockedCm = cm;
-          }
-        }
-        const isStrict = getBulkTagValue(cTags, LOCK_STRICT_TAG_KEY) === '1';
         const r = await writeRadius(driver, csh, subRcm, {
           layoutParentId: parentId,
-          knownLockState: { isLocked, lockedCm, isStrict },
+          knownLockState: lockStateFromTags(tagsById[driver.shapeId(csh)]),
         });
         if (r.ok) {
           console.log(`[applyLayout/driver] R link #${k}: written subRcm=${r.newCm}, wasLocked=${r.wasLocked}`);
@@ -958,13 +1164,13 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
             lockedCount++;
             lockedChildCm.push({ id: driver.shapeId(csh), newCm: r.newCm });
           }
-          if (r.wasStrict) strictOverridden++;
         } else {
           console.log(`[applyLayout/driver] R link #${k}: skipped, reason=${r.reason}${r.error ? ' error=' + r.error : ''}`);
+          if (r.reason !== 'not-roundRect') throw new Error(r.error || r.reason);
         }
       }
       // 写 child tag
-      try { driver.addTag(csh, LAYOUT_CHILD_TAG_KEY, parentId); } catch (_) {}
+      driver.addTag(csh, LAYOUT_CHILD_TAG_KEY, parentId);
       applied++;
     }
     console.log('[applyLayout/driver] applied=', applied, 'failed=', failed);
@@ -983,6 +1189,7 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
         driver.addTag(parentSh, LAYOUT_PARENT_TAG_KEY, payload);
       } catch (e) {
         console.log('[applyLayout/driver] write parent tag fail:', e.message || e);
+        throw e;
       }
     }
     await driver.sync();
@@ -1042,7 +1249,8 @@ async function applyLayout(driver, parentId, params, childIds, opts) {
  * @returns {Promise<{ok, applied, failed, error?}>}
  */
 async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRMode, parentRcm) {
-  if (linkRMode === 'off' || !parentRcm) return { ok: true, applied: 0, failed: 0 };
+  if (linkRMode === 'off') return { ok: true, applied: 0, failed: 0 };
+  if (!Number.isFinite(parentRcm) || parentRcm < 0) return { ok: false, applied: 0, failed: 0, error: 'Invalid parent radius' };
   let applied = 0;
   let failed = 0;
   try {
@@ -1063,39 +1271,19 @@ async function syncLayoutChildrenR(driver, parentId, childIds, paddingCm, linkRM
     }
     // 一次 load + sync 拿全部 TagCollection key/value，避免 per-call sync 累积。
     const tagsById = await driver.loadTagsBulk(slideShapes);
-    for (const childId of childIds) {
-      const csh = idToShape.get(childId);
-      if (!csh) {
-        console.log(`[syncLayoutChildrenR/driver] skip missing child id=${childId} (stale)`);
-        continue;  // skip stale（不在当前 slide / 已删）
+    const targets = childIds.map((id) => idToShape.get(id)).filter(Boolean);
+    await withWritableShapes(driver, targets.map((sh) => driver.shapeId(sh)), async (fresh) => {
+      for (const child of fresh) {
+        const id = driver.shapeId(child);
+        const target = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - paddingCm);
+        const r = await writeRadius(driver, child, target, {
+          knownLockState: lockStateFromTags(tagsById[id]),
+        });
+        if (r.ok) applied++;
+        else if (!['strict', 'not-roundRect', 'no-size'].includes(r.reason)) failed++;
       }
-      const subRcm = linkRMode === 'same' ? parentRcm : Math.max(0, parentRcm - paddingCm);
-      console.log(`[syncLayoutChildrenR/driver] R link child=${childId} parentRcm=${parentRcm} mode=${linkRMode} padding=${paddingCm} target subRcm=${subRcm}`);
-      // 从 readTagsBulk 拿的 tag 构造 knownLockState，传给 writeRadius（跳过 per-call readTag + sync）
-      const childTags = tagsById[childId] || {};
-      const lockRaw = getBulkTagValue(childTags, LOCK_TAG_KEY);
-      let isLocked = false;
-      let lockedCm = 0;
-      if (lockRaw != null) {
-        const cm = parseFloat(lockRaw);
-        if (Number.isFinite(cm) && cm > 0) {
-          isLocked = true;
-          lockedCm = cm;
-        }
-      }
-      const isStrict = getBulkTagValue(childTags, LOCK_STRICT_TAG_KEY) === '1';
-      const r = await writeRadius(driver, csh, subRcm, {
-        knownLockState: { isLocked, lockedCm, isStrict },
-      });
-      if (r.ok) {
-        applied++;
-      } else if (r.reason === 'strict') {
-        console.log('[syncLayoutChildrenR/driver] skip strict child', childId);
-      } else if (r.reason !== 'not-roundRect' && r.reason !== 'no-size') {
-        failed++;
-      }
-    }
-    await driver.sync();
+      await driver.sync();
+    });
     console.log(`[syncLayoutChildrenR/driver] done: applied=${applied} failed=${failed} childIds=${JSON.stringify(childIds)}`);
     return { ok: true, applied, failed };
   } catch (e) {
@@ -1117,7 +1305,10 @@ function parseLayoutParentTagValue(tagValue) {
   if (typeof tagValue !== 'string' || tagValue.length === 0) return null;
   try {
     const obj = JSON.parse(tagValue);
-    if (!obj || !Number.isFinite(obj.rows) || !Number.isFinite(obj.cols) || !Array.isArray(obj.childIds)) {
+    if (!obj || !Number.isInteger(obj.rows) || obj.rows < 1 || obj.rows > 5 ||
+        !Number.isInteger(obj.cols) || obj.cols < 1 || obj.cols > 5 || !Array.isArray(obj.childIds) ||
+        (Number.isFinite(obj.padding) && obj.padding < 0) ||
+        (Number.isFinite(obj.gutter) && obj.gutter < 0)) {
       return null;
     }
     return {
@@ -1222,12 +1413,13 @@ async function loadLayoutTags(driver, selectedShapes, allSlideShapes) {
       }
     }
 
+    const tagsById = await driver.loadTagsBulk(shapesList);
     // 读每个 shape 的 layout tag
     for (const sh of shapesList) {
       const sid = sh.id;
       if (sid == null) continue;
       // 父 tag
-      const parentVal = await driver.readTag(sh, LAYOUT_PARENT_TAG_KEY);
+      const parentVal = getBulkTagValue(tagsById[sid], LAYOUT_PARENT_TAG_KEY);
       if (parentVal) {
         const parsed = parseLayoutParentTagValue(parentVal);
         if (parsed) {
@@ -1242,7 +1434,7 @@ async function loadLayoutTags(driver, selectedShapes, allSlideShapes) {
         }
       }
       // 子 tag
-      const childVal = await driver.readTag(sh, LAYOUT_CHILD_TAG_KEY);
+      const childVal = getBulkTagValue(tagsById[sid], LAYOUT_CHILD_TAG_KEY);
       if (typeof childVal === 'string' && childVal.length > 0) {
         childOf[sid] = childVal;
       }
@@ -1272,7 +1464,7 @@ async function loadLayoutTags(driver, selectedShapes, allSlideShapes) {
  * @param {Array} childIds
  * @returns {Promise<{ok, error?, writtenChildIds?, staleChildIds?}>}
  */
-async function saveLayoutTags(driver, slide, parentId, params, childIds) {
+async function saveLayoutTags(driver, slide, parentId, params, childIds, opts) {
   try {
     // 集合层递归 load slide shape tree（id only）
     const slideShapesArr = await driver.loadShapeTree(driver.slideShapes(slide), 'id');
@@ -1306,14 +1498,14 @@ async function saveLayoutTags(driver, slide, parentId, params, childIds) {
       linkRMode: ['subtract', 'same', 'off'].includes(params.linkRMode) ? params.linkRMode : 'same',
       childIds: validChildIds,
     });
-    driver.addTag(parentSh, LAYOUT_PARENT_TAG_KEY, payload);
-
-    // 写子 tag（只写 valid 的）
-    for (const cid of validChildIds) {
-      const csh = idToShape.get(cid);
-      try { driver.addTag(csh, LAYOUT_CHILD_TAG_KEY, parentId); } catch (_) {}
-    }
-    await driver.sync();
+    await withWritableShapes(driver, [parentId, ...validChildIds], async (fresh) => {
+      for (const shape of fresh) {
+        const id = driver.shapeId(shape);
+        if (id === parentId) driver.addTag(shape, LAYOUT_PARENT_TAG_KEY, payload);
+        else driver.addTag(shape, LAYOUT_CHILD_TAG_KEY, parentId);
+      }
+      await driver.sync();
+    }, opts);
 
     return { ok: true, writtenChildIds: validChildIds, staleChildIds };
   } catch (e) {
@@ -1331,7 +1523,7 @@ async function saveLayoutTags(driver, slide, parentId, params, childIds) {
  *
  * 行为：
  *   1. 遍历 selectedShapes
- *   2. 找第一个 adjustments.count > 0 的形状
+ *   2. 找第一个几何类型已确认为roundRect的形状
  *   3. get(0) 存变量 → sync → 读 value → 算 cm = value * minSideCm
  *   4. 读 strict tag（如果有）
  *   5. 返回 { id, name, cm, sourceStrict }，没找到圆角矩形返回 null
@@ -1355,29 +1547,22 @@ async function pickupFromSelection(driver, selectedShapes) {
       try {
         if (!driver.isRoundRect(sh)) continue;
         // Mac LTSC 模式：get(0) 存变量 → sync → 读 value
-        const adjResult = sh.adjustments.get(0);
-        await driver.sync();
-        let v = null;
-        try { v = adjResult.value; } catch (_) { continue; }
+        const v = await driver.readAdjFraction(sh);
         if (!Number.isFinite(v)) continue;
         const size = driver.size(sh);
         const minSideCm = Math.min(size.width, size.height) / PT_PER_CM;
         const cm = v * minSideCm;
         // 读 strict
-        let sourceStrict = false;
-        try {
-          const strictVal = await driver.readTag(sh, LOCK_STRICT_TAG_KEY);
-          if (strictVal === '1') sourceStrict = true;
-        } catch (_) {}
+        const sourceStrict = (await driver.readTag(sh, LOCK_STRICT_TAG_KEY)) === '1';
         return {
           id: driver.shapeId(sh),
-          name: sh.name || '(未命名)',
+          name: driver.shapeName(sh) || '(未命名)',
           cm,
           sourceStrict,
         };
-      } catch (_) {
-        // 单 shape 失败不 throw 整个（user 报 #1 期间可能 race）
-        continue;
+      } catch (e) {
+        console.log('[pickupFromSelection] shape read failed:', e.message || e);
+        throw e;
       }
     }
     return null;
@@ -1395,31 +1580,19 @@ async function pickupFromSelection(driver, selectedShapes) {
  * 修 #1 bug：之前 dialog.js 调的是旧版 writeRadiusToShape（直接用 ctxShape API，不走 driver），
  *            在 Mac LTSC 某些场景会刷不进去。改用 radius-core.writeRadius（driver 版 + 走 setAdjFraction 路径）后稳定。
  *
- * v1.2.15 改：syncStrict 行为升级为「双向覆盖」+ 拦截逻辑条件化
- *   - 之前：syncStrict=true 只支持 source.strict=true → target.strict=true（单向）
- *           source.strict=false → 啥也不做（目标的 strict tag 保持原样）
- *           且 step 0 拦截不管 syncStrict 是什么都拦
- *   - 现在：syncStrict=true 时**双向覆盖**：
- *           - source.strict=true  → 给所有目标加 strict tag（在写 R 角**之后**加，避免 writeRadius 拦截）
- *           - source.strict=false → 给所有目标删 strict tag（在写 R 角**之前**删，让 writeRadius 不被拦截）
- *           step 0 拦截**只在 syncStrict=false 时**生效（syncStrict=true 让 override 逻辑处理）
- *   - syncStrict=false 时行为不变（step 0 拦截 + 不刷 strict）
- *
- * 顺序关键：
- *   - source=true：写 R 角（target 不是 strict，writeRadius 成功）→ 加 strict tag（覆盖）
- *     如果 target 原本就是 strict：writeRadius 会被拦截（applied=0），加 tag 是 no-op
- *   - source=false：删 strict tag（让 target 不再 strict）→ 写 R 角（writeRadius 成功）
+ * 已开启防误触的目标始终阻断整个操作，必须用户先手动关闭。
+ * syncStrict 只允许在写入成功后，把源的开启状态应用到未保护目标；
+ * 源未开启防误触时，不删除目标保护tag，不通过改tag绕过writeRadius。
  *
  * 行为：
- *   1. syncStrict=false 时拦截：选区里有 strict 形状 → 全部拒绝
- *   2. syncStrict=true 且 source.strict=false → 先删所有目标的 strict tag
- *   3. 写 R 角：对每个 roundRect 调 writeRadius（自动处理 clamp + lock 同步）
- *   4. syncStrict=true 且 source.strict=true  → 后加所有目标的 strict tag
+ *   1. 选区里有 strict 形状 → 全部拒绝
+ *   2. 对未保护roundRect调writeRadius（自动处理clamp及lock同步）
+ *   3. syncStrict=true且source.strict=true → 保存实际固定值并开启防误触
  *
  * @param {Object} driver
  * @param {Array} selectedShapes - shape proxy 列表（已 load 'items/id, items/width, items/height, items/adjustments, items/tags'）
  * @param {Object} source - { cm, sourceStrict } —— pickupFromSelection 的结果
- * @param {Object} [opts] - { syncStrict: boolean }  是否双向覆盖 strict 状态
+ * @param {Object} [opts] - { syncStrict: boolean } 是否复制源的防误触开启状态
  * @returns {Promise<{ok, applied, failed, strictSynced, strictAdded, strictRemoved, error?, rejectReason?}>}
  *   - strictAdded: 加 strict tag 的目标数
  *   - strictRemoved: 删 strict tag 的目标数
@@ -1428,111 +1601,42 @@ async function pickupFromSelection(driver, selectedShapes) {
 async function applyPickedToSelection(driver, selectedShapes, source, opts) {
   opts = opts || {};
   const syncStrict = !!opts.syncStrict;
-  let applied = 0;
-  let failed = 0;
-  let strictAdded = 0;
-  let strictRemoved = 0;
+  let applied = 0, failed = 0, strictAdded = 0, strictRemoved = 0;
   try {
-    if (!source || !Number.isFinite(source.cm)) {
-      return { ok: false, applied, failed, strictAdded, strictRemoved, strictSynced: 0, error: 'source.cm 不合法' };
+    if (!source || !Number.isFinite(source.cm) || source.cm < 0) throw new Error('source.cm 不合法');
+    const shapes = Array.isArray(selectedShapes) ? selectedShapes : selectedShapes && selectedShapes.items;
+    if (!Array.isArray(shapes)) throw new Error('selectedShapes 格式不合法');
+    const targets = shapes.filter((sh) => driver.isRoundRect(sh));
+    const tagsById = await driver.loadTagsBulk(targets);
+    if (targets.some((sh) => lockStateFromTags(tagsById[driver.shapeId(sh)]).isStrict)) {
+      return { ok: false, applied, failed, strictAdded, strictRemoved, strictSynced: 0,
+        rejectReason: 'strict', error: '选区里有形状启用了防误触，样式刷不生效' };
     }
-    const shapesList = [];
-    if (selectedShapes && typeof selectedShapes.items !== 'undefined') {
-      for (const sh of selectedShapes.items) shapesList.push(sh);
-    } else if (Array.isArray(selectedShapes)) {
-      for (const sh of selectedShapes) shapesList.push(sh);
-    } else {
-      return { ok: false, applied, failed, strictAdded, strictRemoved, strictSynced: 0, error: 'selectedShapes 格式不合法' };
-    }
-
-    // 步骤 0：拦截（仅 syncStrict=false 时，syncStrict=true 时让 override 逻辑处理）
-    if (!syncStrict) {
-      for (const sh of shapesList) {
-        try {
-          if (!driver.isRoundRect(sh)) continue;
-          const strictVal = await driver.readTag(sh, LOCK_STRICT_TAG_KEY);
-          if (strictVal === '1') {
-            return {
-              ok: false,
-              applied,
-              failed,
-              strictAdded,
-              strictRemoved,
-              strictSynced: 0,
-              rejectReason: 'strict',
-              error: '选区里有形状启用了防误触，样式刷不生效',
-            };
-          }
-        } catch (_) { /* 读 strict 失败不拦截（defensive） */ }
-      }
-    }
-
-    // 步骤 1a：syncStrict=true 且 source.strict=false → 先删所有目标的 strict tag
-    // 顺序：删在写之前（让 writeRadius 不被 strict 拦截）
-    if (syncStrict && !source.sourceStrict) {
-      for (const sh of shapesList) {
-        try {
-          if (!driver.isRoundRect(sh)) continue;
-          try { driver.deleteTag(sh, LOCK_STRICT_TAG_KEY); } catch (_) {}
-          strictRemoved++;
-        } catch (_) {}
-      }
-    }
-
-    // 步骤 1b：写 R 角
-    for (const sh of shapesList) {
-      try {
-        if (!driver.isRoundRect(sh)) continue;
-        const r = await writeRadius(driver, sh, source.cm, {});
-        if (r.ok) {
-          applied++;
-        } else if (r.reason === 'strict') {
-          // writeRadius 是第二道防线：syncStrict=true 时如果目标原本就是 strict
-          // 且 source 也是 strict，没进 1a 删 tag 路径 → writeRadius 会拒
-          failed++;
-        } else if (r.reason === 'not-roundRect' || r.reason === 'no-size') {
-          // 不是 roundRect / 0 尺寸 → 跳过（不计入 failed）
-        } else {
-          failed++;
+    await withWritableShapes(driver, targets.map((sh) => driver.shapeId(sh)), async (freshTargets) => {
+      if (opts.isCurrent && !opts.isCurrent()) throw new Error('stale-selection');
+      for (const sh of freshTargets) {
+        const state = lockStateFromTags(tagsById[driver.shapeId(sh)]);
+        const r = await writeRadius(driver, sh, source.cm, { knownLockState: state });
+        if (!r.ok) {
+          if (r.reason !== 'not-roundRect' && r.reason !== 'no-size') failed++;
+          continue;
         }
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        console.log('[applyPickedToSelection] shape fail:', msg);
-        failed++;
-      }
-    }
-
-    // 步骤 1c：syncStrict=true 且 source.strict=true → 写完 R 角后加 strict tag
-    // 顺序：写在加之前（避免 writeRadius 被 strict 拦截）
-    if (syncStrict && source.sourceStrict) {
-      for (const sh of shapesList) {
-        try {
-          if (!driver.isRoundRect(sh)) continue;
-          try { driver.addTag(sh, LOCK_STRICT_TAG_KEY, '1'); } catch (_) {}
+        applied++;
+        if (syncStrict && source.sourceStrict) {
+          // The target may be smaller than the source. Fix the clamped, actual
+          // radius, including zero, before enabling protection.
+          const fixed = await writeLockState(driver, sh, { lockedCm: r.newCm, isStrict: true });
+          if (!fixed.ok) throw new Error(fixed.error);
           strictAdded++;
-        } catch (_) {}
+        }
       }
-    }
-    await driver.sync();
-    return {
-      ok: true,
-      applied,
-      failed,
-      strictAdded,
-      strictRemoved,
-      strictSynced: strictAdded + strictRemoved,
-    };
+      await driver.sync();
+    }, opts);
+    return { ok: true, applied, failed, strictAdded, strictRemoved, strictSynced: strictAdded + strictRemoved };
   } catch (e) {
-    const msg = e && e.message ? e.message : String(e);
-    return {
-      ok: false,
-      applied,
-      failed,
-      strictAdded,
-      strictRemoved,
-      strictSynced: strictAdded + strictRemoved,
-      error: msg,
-    };
+    const error = e && e.message ? e.message : String(e);
+    console.log('[applyPickedToSelection] EXCEPTION:', error);
+    return { ok: false, applied, failed, strictAdded, strictRemoved, strictSynced: strictAdded + strictRemoved, error };
   }
 }
 //     全部由 driver 集成测试覆盖。）
@@ -1564,6 +1668,11 @@ if (typeof module !== 'undefined' && module.exports) {
     shouldRejectLayoutApply,
     syncFixedValueIfLocked,
     writeRadius,
+    lockStateFromTags,
+    decideLockMonitorUpdate,
+    reapplySelectionLocks,
+    applyRadiusToSelection,
+    withWritableShapes,
     readLockState,
     writeLockState,
     reapplyLock,
@@ -1606,6 +1715,11 @@ if (typeof window !== 'undefined') {
     shouldRejectLayoutApply,
     syncFixedValueIfLocked,
     writeRadius,
+    lockStateFromTags,
+    decideLockMonitorUpdate,
+    reapplySelectionLocks,
+    applyRadiusToSelection,
+    withWritableShapes,
     readLockState,
     writeLockState,
     reapplyLock,

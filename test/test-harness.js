@@ -95,18 +95,22 @@ function createHarness(opts) {
   // 覆盖 addTag / deleteTag / readTag：mock tag 集合
   driver.addTag = (s, key, value) => {
     recordCall('addTag', [s.id, key, value]);
-    s._tags[key] = String(value);
+    const actualKey = Object.keys(s._tags).find((name) => name.toUpperCase() === key.toUpperCase()) || key;
+    s._tags[actualKey] = String(value);
   };
   driver.deleteTag = (s, key) => {
     recordCall('deleteTag', [s.id, key]);
-    delete s._tags[key];
+    for (const name of Object.keys(s._tags)) {
+      if (name.toUpperCase() === key.toUpperCase()) delete s._tags[name];
+    }
   };
   // readTag 模拟真实 driver：会调 ctx.sync() 一次
   // （mock 里 sync 立刻 resolve，行为一致）
   driver.readTag = async (s, key) => {
     recordCall('readTag', [s.id, key]);
     await ctx.sync();
-    return s._tags[key] != null ? s._tags[key] : null;
+    const actualKey = Object.keys(s._tags).find((name) => name.toUpperCase() === key.toUpperCase());
+    return actualKey == null ? null : s._tags[actualKey];
   };
 
   // 批量读取 tags：真实 driver 会先让每个 TagCollection load('key, value')，
@@ -209,7 +213,17 @@ function createHarness(opts) {
   // 覆盖 isRoundRect：记录读
   driver.isRoundRect = (s) => {
     recordCall('isRoundRect', [s.id]);
-    return s.adjustments.count > 0;
+    return s._presetGeometry === "roundRect" && s.adjustments.count > 0;
+  };
+
+  driver.loadShapeKinds = async () => {
+    const kinds = new Map();
+    const walk = (shape) => {
+      if (shape._isGroup) (shape._groupShapes || []).forEach(walk);
+      else kinds.set(String(shape.id), shape._presetGeometry);
+    };
+    slide.shapes.items.forEach(walk);
+    return kinds;
   };
 
   // 覆盖 adjFraction：记录读

@@ -46,6 +46,8 @@ function makeFixtureShape(init) {
   const tags = Object.assign({}, init.tags || {});
   const shape = {
     id: init.id,
+    _presetGeometry: init.presetGeometry || (isRR ? "roundRect" : "rect"),
+    name: init.name || init.id,
     width: cm(init.widthCm != null ? init.widthCm : 4),
     height: cm(init.heightCm != null ? init.heightCm : 2),
     left: cm(init.leftCm != null ? init.leftCm : 0),
@@ -55,7 +57,8 @@ function makeFixtureShape(init) {
   };
   // adjustments 协议（跟 ppt-driver 兼容）
   shape.adjustments = {
-    count: isRR ? 1 : 0,
+    count: init.adjustmentCount != null ? init.adjustmentCount : (isRR ? 1 : 0),
+    load() {},
     get() { return { value: shape._adjFraction }; },
     set(_, v) { shape._adjFraction = v; },
   };

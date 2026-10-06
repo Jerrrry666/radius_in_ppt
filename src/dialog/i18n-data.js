@@ -45,7 +45,7 @@ window.I18N_DATA = {
     styleBrush: 'R 角样式刷',
     hintPipette: '点击吸取一个圆角矩形的 R 角，再点其他形状应用',
     pipettePickR: '吸取 R 角',
-    pipetteSyncTitle: '勾选后样式刷会把源形状的「防误触」状态**覆盖**到目标（双向：源开启则目标开启；源未开启则目标也解除）',
+    pipetteSyncTitle: '勾选后，源形状已开启的防误触会复制到未保护目标；已保护目标必须先手动关闭防误触才能刷入',
     pipetteSyncLabel: '刷防误触状态',
     pipetteStateIdle: '空闲',
 
@@ -72,8 +72,8 @@ window.I18N_DATA = {
     layoutHintCanBuild: '✅ 可以建 {rows}×{cols} 布局',
     layoutChildrenCount: '{count} 个（{rows}×{cols}）',
     layoutChildInfo: '当前形状属于一个布局（父：{parent}）。修改父或脱离布局后可独立调整。',
-    layoutRlinkSame: '等距（r = 父 R，45° 方向和边方向都等于 padding）',
-    layoutRlinkSubtract: '层级感（r = 父 R − padding，子 R 角小一圈；45° 方向比 padding 窄约 40%）',
+    layoutRlinkSame: '相同 R（r = 父 R，过大时按子短边限幅）',
+    layoutRlinkSubtract: '等距缩进（r = max(0, 父 R − 边距)，1×1 且父 R ≥ 边距时圆弧等距）',
     layoutRlinkOff: '不联动（手动）',
     layoutWarnTooTight: '⚠️ 边距/间距太大，挤不下',
     layoutWarnNotEnough: '⚠️ 子形状不足（需要 {expected}，找到 {childCount}）',
@@ -112,7 +112,7 @@ window.I18N_DATA = {
     reapplyLock: '重新应用锁定（针对当前选区）',
 
     // --- Footer ---
-    footerVersion: 'v1.3.1 · Group 布局与缩放稳定性修复',
+    footerVersion: 'v1.3.2 · 防误触与异步写入修复',
 
     // --- Debug log ---
     debugTitle: '🔧 调试日志（点击展开）',
@@ -169,7 +169,7 @@ window.I18N_DATA = {
     toastPartialSuccessFmt: '⚠️ {updated} 个成功，{failed} 个失败（可能不是圆角矩形）',
     toastApplyFailedFmt: '应用失败：{error}',
     toastNotRoundRect: '选中的形状都不是圆角矩形',
-    toastStrictCannotEnableFmt: '无法开启防误触：{name} 当前 R 角未知或为 0',
+    toastStrictCannotEnableFmt: '无法开启防误触：{name} 当前 R 角未知',
     toastStrictEnabledFmt: '🔒 防误触已开启（{count} 个）— 已自动用当前 R 角作固定值',
     toastStrictDisabledFmt: '防误触已关闭（{count} 个）— 允许主动调整 R 角{keepHint}',
     toastNoLockedRects: '当前选区没有锁定的圆角矩形',
@@ -252,7 +252,7 @@ window.I18N_DATA = {
     styleBrush: 'R style brush',
     hintPipette: 'Click to pick the R from a rounded rectangle, then click other shapes to apply',
     pipettePickR: 'Pick R',
-    pipetteSyncTitle: 'When checked, the brush **overrides** the source shape\'s "anti-misclick" (strict) state on the targets (bidirectional: source on -> target on; source off -> target off).',
+    pipetteSyncTitle: 'Copies enabled strict-lock from the source to unprotected targets. Disable a protected target manually before applying the brush.',
     pipetteSyncLabel: 'Sync strict-lock state',
     pipetteStateIdle: 'Idle',
 
@@ -296,8 +296,8 @@ window.I18N_DATA = {
     layoutHintCanBuild: '✅ Can build {rows}×{cols} layout',
     layoutChildrenCount: '{count} ({rows}×{cols})',
     layoutChildInfo: 'Current shape belongs to a layout (parent: {parent}). Modify the parent or detach to edit independently.',
-    layoutRlinkSame: 'Equal (r = parent R, 45° and side directions both equal padding)',
-    layoutRlinkSubtract: 'Hierarchical (r = parent R − padding, child R one notch smaller; 45° direction ~40% narrower than padding)',
+    layoutRlinkSame: 'Same R (r = parent R, clamped to half the child short side)',
+    layoutRlinkSubtract: 'Inset radius (r = max(0, parent R − padding); equal arc spacing for 1×1 with parent R ≥ padding)',
     layoutRlinkOff: 'No coupling (manual)',
     layoutWarnTooTight: '⚠️ Padding/gutter too large, no fit',
     layoutWarnNotEnough: '⚠️ Not enough children (need {expected}, found {childCount})',
@@ -319,7 +319,7 @@ window.I18N_DATA = {
     reapplyLock: 'Re-apply lock (current selection)',
 
     // --- Footer ---
-    footerVersion: 'v1.3.1 · Group layout and resize stability fixes',
+    footerVersion: 'v1.3.2 · Protection and host coordination fixes',
 
     // --- Debug log ---
     debugTitle: '🔧 Debug log (click to expand)',
@@ -376,7 +376,7 @@ window.I18N_DATA = {
     toastPartialSuccessFmt: '⚠️ {updated} succeeded, {failed} failed (may not be rounded rectangles)',
     toastApplyFailedFmt: 'Apply failed: {error}',
     toastNotRoundRect: 'None of the selected shapes are rounded rectangles',
-    toastStrictCannotEnableFmt: 'Cannot enable strict-lock: {name} has unknown or 0 R',
+    toastStrictCannotEnableFmt: 'Cannot enable strict-lock: {name} has unknown R',
     toastStrictEnabledFmt: '🔒 Strict-lock enabled on {count} shape(s) — current R auto-used as fixed value',
     toastStrictDisabledFmt: 'Strict-lock disabled on {count} shape(s) — manual R edits allowed{keepHint}',
     toastNoLockedRects: 'No locked rounded rectangles in the current selection',

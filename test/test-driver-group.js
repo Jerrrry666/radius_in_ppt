@@ -212,7 +212,7 @@ t.test('groupShapes: 没 group 字段（普通 shape）→ []', () => {
 t.test('loadTagsBulk: 所有 TagCollection 排队后只 sync 一次，并保留宿主大写 key', async () => {
   const loads = [];
   let syncCount = 0;
-  const d = createDriver({ sync: async () => { syncCount++; } });
+  const d = createDriver({ sync: async () => { syncCount++; } }, { shapeKinds: new Map() });
   const shapes = [
     {
       id: 's1',
@@ -385,7 +385,7 @@ t.test('loadShapeTree: 单选普通 shape 不加载 group path（GeneralExceptio
     get() { throw new Error('普通 shape 不应访问 group'); },
   });
   const collection = makeLoadableCollection([leaf], loads);
-  const d = createDriver({ sync: async () => { syncCount++; } });
+  const d = createDriver({ sync: async () => { syncCount++; } }, { shapeKinds: new Map() });
 
   const out = await d.loadShapeTree(collection, 'id, name, width, height, adjustments');
 
@@ -406,7 +406,7 @@ t.test('loadShapeTree: 只展开真实 Group 的子 collection', async () => {
   c2.type = 'GeometricShape';
   const group = makeOfficeGroup('g1', [c1, c2], childLoads);
   const collection = makeLoadableCollection([group], topLoads);
-  const d = createDriver({ sync: async () => { syncCount++; } });
+  const d = createDriver({ sync: async () => { syncCount++; } }, { shapeKinds: new Map() });
 
   const out = await d.loadShapeTree(collection, 'id, width, height, adjustments, tags');
 
@@ -430,7 +430,7 @@ t.test('loadShapeTree: 嵌套 Group 按层加载并递归展平', async () => {
   const inner = makeOfficeGroup('g2', [c2], innerLoads);
   const outer = makeOfficeGroup('g1', [c1, inner], outerLoads);
   const collection = makeLoadableCollection([outer], topLoads);
-  const d = createDriver({ sync: async () => { syncCount++; } });
+  const d = createDriver({ sync: async () => { syncCount++; } }, { shapeKinds: new Map() });
 
   const out = await d.loadShapeTree(collection, 'id, type, width');
 
@@ -625,7 +625,8 @@ t.test('集成: group 切换 R 联动模式只写 R/tag，不反算任何子 box
     );
     const minSideCm = Math.min(child.width, child.height) / PT_PER_CM;
     assert.ok(Math.abs(child._adjFraction - (0.5 / minSideCm)) < 1e-9);
-    assert.ok(Math.abs(Number(child._tags.radiusLock_v1) - 0.5) < 1e-9);
+    assert.ok(Math.abs(Number(child._tags.RADIUSLOCK_V1) - 0.5) < 1e-9);
+    assert.strictEqual(Object.keys(child._tags).filter((key) => key.toUpperCase() === 'RADIUSLOCK_V1').length, 1);
   });
   const parentTag = JSON.parse(parent._tags.layoutParent_v1);
   assert.strictEqual(parentTag.linkRMode, 'subtract');

@@ -17,7 +17,7 @@ ROOT="$(pwd)"
 APP_NAME="RadiusInPpt"
 DISPLAY_NAME="R 角调整"
 BUNDLE_ID="com.jerrrry666.radiusinppt"
-VERSION="1.0.0"
+VERSION="$(node -p 'require("./package.json").version')"
 
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
@@ -78,7 +78,7 @@ cp -R "$ROOT/assets" "$RES_DIR/"
 cp "$ROOT/manifest.xml" "$RES_DIR/"
 mkdir -p "$RES_DIR/tools"
 cp "$ROOT/tools/serve.js" "$RES_DIR/tools/"
-# 注意：纯 task pane + Office.js 路线，无第三方依赖
+# 注意：纯 task pane + Office.js 路线；PPTX decoder 随 src/lib/vendor 打包
 
 # 4.5 Release 构建：剥离调试日志块（dev 用，release 用户不需要）
 # 范围：dialog.html 里 @build-strip-debug-log:start 和 :end 之间的整块

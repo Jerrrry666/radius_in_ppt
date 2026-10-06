@@ -14,13 +14,22 @@ REM ============================================================
 setlocal
 
 REM --- 1. Paths --------------------------------------------------------
-set "APP_DIR=%~dp0..\.."
-set "RES_DIR=%APP_DIR%\Resources"
+set "APP_DIR=%~dp0"
+set "RES_DIR=%APP_DIR%"
 set "MANIFEST=%RES_DIR%\manifest.xml"
 set "SERVER_JS=%RES_DIR%\tools\serve.js"
 set "LOG_FILE=%TEMP%\radius_in_ppt.log"
 set "PID_FILE=%TEMP%\radius_in_ppt.pid"
 set "WEF_DIR=%LOCALAPPDATA%\Microsoft\Office\16.0\Wef"
+
+if not exist "%MANIFEST%" (
+    echo Missing manifest.xml beside the launcher.
+    exit /b 1
+)
+if not exist "%SERVER_JS%" (
+    echo Missing tools\serve.js beside the launcher.
+    exit /b 1
+)
 
 REM --- 2. Find node ----------------------------------------------------
 set "NODE_BIN="
@@ -49,7 +58,7 @@ if %ERRORLEVEL% == 0 (
 )
 
 cd /d "%RES_DIR%"
-start "RadiusInPpt Server" /b "" "%NODE_BIN%" "%SERVER_JS%" > "%LOG_FILE%" 2>&1
+start "RadiusInPpt Server" /b "%NODE_BIN%" "%SERVER_JS%" > "%LOG_FILE%" 2>&1
 REM Capture the spawned PID via start /WAIT would block, so we just sleep + verify port
 ping -n 3 127.0.0.1 >nul
 netstat -ano | findstr ":3000" | findstr "LISTENING" >nul

@@ -24,7 +24,38 @@
  *   直接喂给 radius-core.writeRadius(driver, shape, cm, opts)
  */
 
-function createDriver(ctx) {
+function createDriver(ctx, options) {
+  options = options || {};
+  let shapeKinds = options.shapeKinds || null;
+  let structuralChanged = false;
+  let restoredSelectionIds = [];
+  const adjustmentValues = new WeakMap();
+  // PowerPointApi 1.8: export just the active slide, retaining its OOXML IDs.
+  // No shape subtype property is exposed in 1.1–1.10. Do not guess from count.
+  const loadShapeKinds = async (force) => {
+    if (shapeKinds && !force) return shapeKinds;
+    const slide = ctx.presentation.getSelectedSlides().getItemAt(0);
+    const exported = slide.exportAsBase64();
+    await ctx.sync();
+    const parser = typeof module !== 'undefined' && module.exports
+      ? require('./pptx-geometry.js') : window.PptxGeometry;
+    shapeKinds = parser.readSlideGeometry(exported.value);
+    return shapeKinds;
+  };
+
+  const readAdjFraction = async (s) => {
+    if (s.adjustments.count === 0) return 0;
+    // Mac LTSC task panes require an explicit per-shape value load. Keep
+    // this sequential: batching these loads across shapes is unsafe there.
+    s.adjustments.load('items/value');
+    await ctx.sync();
+    const result = s.adjustments.get(0);
+    await ctx.sync();
+    const value = result.value;
+    if (!Number.isFinite(value)) throw new Error('Invalid adjustment value');
+    adjustmentValues.set(s, value);
+    return value;
+  };
   // ── GroupShape 处理（v1.3.1）───────────────────────────
   // Office.js 1.8+ 暴露 PowerPoint.ShapeGroup（getSelectedShapes 选组合时返回 group proxy，
   // 不会自动展平），业务层需要把 group 递归展平成叶子 shape 才能正常读写 R 角。
@@ -54,7 +85,8 @@ function createDriver(ctx) {
     try {
       const t = s.type;
       // 兼容：'Group' 字符串 / PowerPoint.ShapeType.group 枚举 / msoGroup=6 数字
-      if (t === 'Group' || t === 'GroupShape' || t === PowerPoint.ShapeType.group) return true;
+      if (t === 'Group' || t === 'GroupShape' ||
+          (typeof PowerPoint !== 'undefined' && t === PowerPoint.ShapeType.group)) return true;
       if (t === 6) return true;
       return false;
     } catch (_) {
@@ -232,7 +264,9 @@ function createDriver(ctx) {
       }
     }
 
-    return flattenSelected(shapeCollection);
+    const leaves = flattenSelected(shapeCollection);
+    if (requested.includes('adjustments') && leaves.length > 0) await loadShapeKinds();
+    return leaves;
   };
 
   // 读取已经 load + sync 完成的 TagCollection。
@@ -243,20 +277,16 @@ function createDriver(ctx) {
     if (!shapesArr) return result;
     const list = Array.isArray(shapesArr) ? shapesArr : (shapesArr.items || []);
     for (const s of list) {
-      if (!s || !s.tags) continue;
+      if (!s || !s.tags) throw new Error('Shape tags unavailable');
       let id = null;
       try { id = s.id; } catch (_) {}
       if (id == null) continue;
       result[id] = {};
-      try {
-        if (s.tags.items) {
-          for (const t of s.tags.items) {
-            if (t && t.key != null) {
-              result[id][t.key] = t.value;
-            }
-          }
+      for (const t of s.tags.items) {
+        if (t && t.key != null) {
+          result[id][t.key] = t.value;
         }
-      } catch (_) {}
+      }
     }
     return result;
   };
@@ -273,7 +303,8 @@ function createDriver(ctx) {
       : (shapesArr && shapesArr.items) || [];
     let queued = false;
     for (const s of list) {
-      if (!s || !s.tags || typeof s.tags.load !== 'function') continue;
+      if (!s || !s.tags) throw new Error('Shape tags unavailable');
+      if (typeof s.tags.load !== 'function') continue;
       s.tags.load('key, value');
       queued = true;
     }
@@ -282,6 +313,16 @@ function createDriver(ctx) {
   };
 
   return {
+    get structuralChanged() { return structuralChanged; },
+    get restoredSelectionIds() { return restoredSelectionIds.slice(); },
+    async loadSelectionIdentity() {
+      const selected = ctx.presentation.getSelectedShapes();
+      const slide = ctx.presentation.getSelectedSlides().getItemAt(0);
+      selected.load('items/id');
+      slide.load('id');
+      await ctx.sync();
+      return { slideId: slide.id, shapeIds: selected.items.map((shape) => shape.id) };
+    },
     // ── 加载 + 同步 ─────────────────────────────────────
     // 把 fields（'items/id, items/adjustments'）加到 proxy 的加载队列
     // 必须在 await sync() 之后读 proxy 字段
@@ -290,6 +331,8 @@ function createDriver(ctx) {
     },
     loadShapeTree,
     loadTagsBulk,
+    loadShapeKinds,
+    readAdjFraction,
     // 触发 sync，必需 await
     sync() {
       return ctx.sync();
@@ -303,6 +346,10 @@ function createDriver(ctx) {
     // 当前激活的 slide
     activeSlide() {
       return ctx.presentation.getSelectedSlides().getItemAt(0);
+    },
+    // PowerPointApi 1.2: resolve the saved slide in a fresh request context.
+    slideById(id) {
+      return ctx.presentation.slides.getItem(id);
     },
     // 给定 slide 上的所有 shapes 集合
     slideShapes(slide) {
@@ -334,19 +381,15 @@ function createDriver(ctx) {
       return { left: s.left, top: s.top, width: s.width, height: s.height };
     },
     isRoundRect(s) {
-      return s.adjustments.count > 0;
+      return !!shapeKinds && shapeKinds.get(String(s.id)) === 'roundRect' && s.adjustments.count > 0;
     },
     // 返回 0~1 分数（Mac LTSC），不是 0~50000
     // 注意：caller 必须显式 load 'items/adjustments/items/value' + sync（v1.2.5 实测坑），
-    // 否则 s.adjustments.get(0).value 会抛"尚未加载结果对象的值"——这里 try/catch 兜底返回 0
+    // Prefer readAdjFraction: it queues get(0), syncs, and reads the snapshot.
     adjFraction(s) {
       if (s.adjustments.count === 0) return 0;
-      try {
-        return s.adjustments.get(0).value;
-      } catch (_) {
-        // value 没 load，老老实实返回 0 而不是 throw（driver API 不 throw 契约）
-        return 0;
-      }
+      if (adjustmentValues.has(s)) return adjustmentValues.get(s);
+      return s.adjustments.get(0).value;
     },
 
     // ── 写（假定已 load）──────────────────────────────
@@ -368,14 +411,17 @@ function createDriver(ctx) {
     },
     // 解除一个已确认的 group（PowerPointApi 1.8+）
     ungroupShapeGroup(s) {
+      structuralChanged = true;
       s.group.ungroup();
     },
     // 把 shape id / proxy 数组重新组合（PowerPointApi 1.8+）
     addGroup(shapeCollection, values) {
+      structuralChanged = true;
       return shapeCollection.addGroup(values);
     },
     selectShapes(slide, shapeIds) {
       slide.setSelectedShapes(shapeIds);
+      restoredSelectionIds = shapeIds.slice();
     },
     shapeName(s) {
       return s.name;
@@ -392,17 +438,13 @@ function createDriver(ctx) {
     deleteTag(s, key) {
       s.tags.delete(key);
     },
-    // 读 tag：async，因为要 load('value') + sync
-    // 不存在时返回 null（不会 throw）
+    // Confirm absence from the loaded collection. Host/read failures propagate;
+    // callers must never mistake a failed protection-tag read for absence.
     readTag: async (s, key) => {
-      try {
-        const t = s.tags.getItem(key);
-        t.load('value');
-        await ctx.sync();
-        return t.value;
-      } catch (_) {
-        return null;
-      }
+      const tagsById = await loadTagsBulk([s]);
+      const tags = tagsById[s.id];
+      const actualKey = Object.keys(tags).find((name) => name.toUpperCase() === String(key).toUpperCase());
+      return actualKey == null ? null : tags[actualKey];
     },
     // 同步读取已加载的 tags；多数业务应优先用 loadTagsBulk。
     readTagsBulk,
@@ -414,5 +456,10 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { createDriver };
 }
 if (typeof window !== 'undefined') {
-  window.PptDriver = { createDriver };
+  const queue = window.HostQueue.createHostQueue((callback) => PowerPoint.run(callback));
+  window.PptDriver = {
+    createDriver, run: queue.run, isBusy: () => queue.busy,
+    onReady: (callback) => Office.onReady(callback),
+    onSelectionChanged: (callback) => Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, callback),
+  };
 }

@@ -9,17 +9,23 @@ npm test
 只跑一个：
 
 ```bash
-node test/test-radius-core.js         # 46 个 — 纯算法
-node test/test-features.js            # 49 个 — 功能（业务函数）
+node test/test-radius-core.js         # 115项 — 纯算法
+node test/test-features.js            # 96项 — 功能（业务函数）
+node test/test-driver-group.js        # 40项 — 分层树加载/组合事务
+node test/test-regressions.js         # 32项 — 实际UI wiring、OOXML、错误/并发/HTTP回归
 ```
+
+共287项；mock通过不等于Mac LTSC宿主API已验证，driver更新还需要真实PPT的14/14烟囱测试。
 
 ## 测试分层
 
 | 层 | 文件 | 测什么 | 跑不跑 |
 |---|---|---|---|
-| **driver 层** | `ppt-driver.js` 16 个方法 | Mac LTSC Office.js 兼容性 | **不在 npm test 里**——在真实 PPT 跑"Driver 烟囱测试" |
+| **宿主验收** | `ppt-driver.js` + UI烟囱测试 | Mac LTSC Office.js 兼容性 | **不在 npm test 里**——在真实 PPT 跑"Driver 烟囱测试" |
 | **纯算法** | `test-radius-core.js` | `computeLayout` / `valueToCm` / 业务规则（`shouldReject*` / `syncFixedValueIfLocked`） | npm test |
 | **功能** | `test-features.js` | 业务函数（`writeRadius` / `applyLayout` / `syncLayoutChildrenR` / `readLockState` / `writeLockState` / `reapplyLock`）—— "模拟交互反馈" | npm test |
+| **组合** | `test-driver-group.js` | 分层加载、展平、布局解组/重组及异常恢复 | npm test |
+| **回归** | `test-regressions.js` | 实际dialog.js异步wiring、driver几何/tag读取、组结构恢复及HTTP错误 | npm test |
 
 **v1.3 重整后**：功能测试用 `assertShape` 验最终状态，**不关心 driver 内部调了哪些方法**。
 

@@ -564,65 +564,31 @@ t.test('applyLayout writeParentTag=false：父 tag 不写', async () => {
   h.assertShape(f.parent, { tags: { layoutParent_v1: undefined } });
 });
 
-t.test('v1.2.7：autoPadding 让大 padding 变成 feasible（不再 infeasible）', async () => {
-  // v1.2.6 之前：父 5x5 padding 10 → infeasible（拒绝）
-  // v1.2.7：autoPadding 把 padding 减到 min(5,5)/2 - 父R = 2.5 - 1.5 = 1cm → feasible
-  // 父 5x5，R = 0.3 * 5 = 1.5cm（fixture 默认 adj）
-  // d_init = 10cm, d_max = 1cm → effective = 1cm
-  // 子尺寸 = (5-2)/2 = 1.5cm × 1.5cm ✓
+t.test('布局空间不足：拒绝，不隐式改小用户边距', async () => {
   const f = makeStandardFixture();
   f.parent.width = cm(5);
   f.parent.height = cm(5);
-  // 父 adjFraction = 0.3 默认 → R = 1.5cm
   const h = createHarness({ shapes: f.allShapes });
-  const r = await RC.applyLayout(
-    h.driver, 'parent_p1',
+  const before = h.snapshot();
+  const r = await RC.applyLayout(h.driver, 'parent_p1',
     { rows: 2, cols: 2, padding: 10, gutter: 0, linkRMode: 'subtract' },
-    ['lc1', 'lc2', 'lc3', 'lc4'], {}
-  );
-  // 期望：autoPadding 起作用，layout 成功
-  assert.strictEqual(r.ok, true, `autoPadding 应该让 infeasible 变成 feasible，实际: ${r.warn || r.error}`);
-  // 验证子尺寸 = 1.5x1.5（5-2*1 = 3 / 2 = 1.5）
-  for (let i = 0; i < 4; i++) {
-    const c = f.layoutChildren[i];
-    // width = 1.5cm = 1.5 * 28.3464567 ≈ 42.52pt
-    assert.ok(Math.abs(c.width - 1.5 * PT_PER_CM) < 1, `lc${i+1} width ${c.width/PT_PER_CM}cm 应该 = 1.5cm`);
-    assert.ok(Math.abs(c.height - 1.5 * PT_PER_CM) < 1, `lc${i+1} height ${c.height/PT_PER_CM}cm 应该 = 1.5cm`);
-  }
+    ['lc1', 'lc2', 'lc3', 'lc4'], {});
+  assert.strictEqual(r.ok, false);
+  assert.match(r.warn, /挤不下/);
+  assert.deepStrictEqual(h.snapshot(), before);
 });
 
-t.test('v1.2.7：applyLayout 真 infeasible（父尺寸真的不够）', async () => {
-  // 父 1x1cm R=0.5cm, padding 0.3, 2x2 → 父太小，autoPadding 减到 0 也放不下 4 个子
+t.test('布局小父框：以输入边距判断可行性', async () => {
   const f = makeStandardFixture();
   f.parent.width = cm(1);
   f.parent.height = cm(1);
-  f.parent._adjFraction = 0.5;  // 父 R = 0.5cm，d_max = 0
+  f.parent._adjFraction = 0.5;
   const h = createHarness({ shapes: f.allShapes });
-  const r = await RC.applyLayout(
-    h.driver, 'parent_p1',
-    { rows: 2, cols: 2, padding: 0.3, gutter: 0, linkRMode: 'subtract' },
-    ['lc1', 'lc2', 'lc3', 'lc4'], {}
-  );
-  // effective = 0, 2x2 仍需 ≥ 2*0 + 子尺寸 > 0 → 子尺寸 = 1/2 = 0.5cm，OK
-  // 但 4 个子都放得下（each 0.5x0.5），feasible
-  // 真正 infeasible：2x2 with gutter > 0，subW = (1-0-0)/2 = 0.5
-  // 试试：1x1 R=0.5, rows=2 cols=2, gutter=0.5 → subW = 0.5, 但 (cols-1)*gutter=0.5，totalW = 1-0-0.5 = 0.5, 2*subW=1 > 0.5 → infeasible
-  const r2 = await RC.applyLayout(
-    h.driver, 'parent_p1',
-    { rows: 2, cols: 2, padding: 0, gutter: 0.3, linkRMode: 'subtract' },
-    ['lc1', 'lc2', 'lc3', 'lc4'], {}
-  );
-  // totalW = 1 - 0 - 0.3 = 0.7, subW = 0.35 > 0 → 实际 feasible
-  // 真正的 infeasible：1x1, padding 0, gutter 0.6, 2x2 → totalW = 1-0-0.6 = 0.4, subW = 0.2 > 0 → 仍 feasible
-  // 极端：1x1, padding 0.6, gutter 0, 2x2 → totalW = -0.2 → infeasible
-  const r3 = await RC.applyLayout(
-    h.driver, 'parent_p1',
+  const r = await RC.applyLayout(h.driver, 'parent_p1',
     { rows: 2, cols: 2, padding: 0.6, gutter: 0, linkRMode: 'subtract' },
-    ['lc1', 'lc2', 'lc3', 'lc4'], {}
-  );
-  // effective = 0, totalW = 1 - 0 - 0 = 1, subW = 0.5 → feasible
-  // 真 infeasible 难构造（autoPadding 减了 padding）—— 改为期望 feasible
-  assert.strictEqual(r3.ok, true);
+    ['lc1', 'lc2', 'lc3', 'lc4'], {});
+  assert.strictEqual(r.ok, false);
+  h.assertNotCalled('setBox');
 });
 
 // ============================================================
@@ -658,12 +624,12 @@ t.test('syncLayoutChildrenR off：什么都不做', async () => {
   h.assertShape(f.layoutChildren[0], { adjFraction: origAdj });
 });
 
-t.test('syncLayoutChildrenR parentRcm=0：什么都不做', async () => {
+t.test('syncLayoutChildrenR parentRcm=0：清零子 R 角', async () => {
   const f = makeStandardFixture();
   const h = createHarness({ shapes: f.allShapes });
   const origAdj = f.layoutChildren[0]._adjFraction;
   const r = await RC.syncLayoutChildrenR(h.driver, 'parent_p1', ['lc1'], 0, 'subtract', 0);
-  assert.strictEqual(r.applied, 0);
+  assert.strictEqual(r.applied, 1);
   h.assertShape(f.layoutChildren[0], { adjFraction: origAdj });
 });
 
@@ -992,7 +958,7 @@ t.test('集成：saveLayoutTags → loadLayoutTags round-trip 一致', async () 
 t.test('pickupFromSelection: 选区里第一个 roundRect → 返回 cm + strict', async () => {
   const f = makeStandardFixture();
   // 喂 r2_medium（adjFraction=0.1, 短边 4cm → cm=0.4）当第一个 roundRect
-  const h = createHarness({ shapes: [f.shapes.r2_medium] });
+  const h = createHarness({ shapes: [f.shapes.r2_medium, f.shapes.r1_basic] });
   const r = await RC.pickupFromSelection(h.driver, h.slide.shapes);
   assert.ok(r);
   assert.strictEqual(r.id, 'r2_medium');
@@ -1049,7 +1015,7 @@ t.test('applyPickedToSelection: bug #1 — 吸取后能正常刷入（happy path
   // 这个测试就是验证整个 pipeline：pickup → apply 一气呵成能把 R 角刷到目标
   const f = makeStandardFixture();
   // 用 r2_medium 当源（adj=0.1, 短边 4cm → cm=0.4）
-  const h = createHarness({ shapes: [f.shapes.r2_medium] });
+  const h = createHarness({ shapes: [f.shapes.r2_medium, f.shapes.r1_basic] });
   // 1. 吸 r2_medium 的 R 角
   const source = await RC.pickupFromSelection(h.driver, h.slide.shapes);
   assert.ok(source);
@@ -1124,119 +1090,72 @@ t.test('applyPickedToSelection: syncStrict=false → 不刷 strict（即使源�
   assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
 });
 
-// ===== v1.2.15: syncStrict 双向覆盖（source=false 也要清目标的 strict） =====
+// ===== 防误触不能被样式刷的同步选项解除 =====
 
-t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 目标有 strict → 删 strict tag + 写 R 角', async () => {
-  // v1.2.15 新行为：source 不 strict 时，syncStrict=true 应该把目标的 strict tag **也删掉**
-  // （之前 v1.2 之前只单向：source strict → 目标 strict，source 不 strict → 啥也不做）
-  // 顺序：先删 strict → 再写 R 角（写的时候 target 已不是 strict，writeRadius 不被拦截）
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + strict目标 → 全拒', async () => {
   const f = makeStandardFixture();
   const h = createHarness({ shapes: f.allShapes });
-  const source = { cm: 0.4, sourceStrict: false };
-  // r7_strict fixture 已有 radiusLockStrict_v1='1'
-  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict], source, { syncStrict: true });
-  assert.strictEqual(r.ok, true);
-  // strict tag 删了
-  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], undefined, 'strict tag 应该被删');
-  // R 角被写（target 不再 strict，writeRadius 成功）
-  h.assertShape(f.shapes.r7_strict, { adjFraction: (v) => Math.abs(v - 0.4 / 5) < 1e-6 });
-  // 计数
-  assert.strictEqual(r.applied, 1);
-  assert.strictEqual(r.strictRemoved, 1);
-  assert.strictEqual(r.strictAdded, 0);
-  assert.strictEqual(r.strictSynced, 1);
-});
-
-t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 目标没 strict → 不删（no-op）+ 写 R 角', async () => {
-  // 目标本来就没有 strict，deleteTag 是 no-op，但 strictRemoved 仍然 +1（操作了）
-  // 这里其实应该区分"有 strict → 删"和"没 strict → no-op"才算精确，但当前实现统一 +1
-  // （行为上是 idempotent，UX 反馈时按"操作了 N 个目标"显示也合理）
-  const f = makeStandardFixture();
-  const h = createHarness({ shapes: f.allShapes });
-  const source = { cm: 0.4, sourceStrict: false };
-  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic], source, { syncStrict: true });
-  assert.strictEqual(r.ok, true);
-  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
-  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
-  // 计数
-  assert.strictEqual(r.applied, 1);
-  assert.strictEqual(r.strictRemoved, 1, 'deleteTag 被调用，计 1 次');
-  assert.strictEqual(r.strictAdded, 0);
-});
-
-t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true + 目标有 strict → 跳过拦截 + R 角不写 + strict 保留', async () => {
-  // v1.2.15 新行为：syncStrict=true 时 step 0 拦截**不生效**（让 override 逻辑处理）
-  // 目标原本就是 strict：
-  //   - step 0 跳过（syncStrict=true）
-  //   - step 1a 不进（source.strict=true）
-  //   - step 1b writeRadius 拒（target 已是 strict）→ failed++
-  //   - step 1c addTag strict（覆盖回 '1'，no-op）→ strictAdded++
-  const f = makeStandardFixture();
-  const h = createHarness({ shapes: f.allShapes });
-  const source = { cm: 0.4, sourceStrict: true };
-  // r7_strict 已有 strict tag
-  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict], source, { syncStrict: true });
-  assert.strictEqual(r.ok, true);
-  // 不会被 step 0 拒
-  assert.notStrictEqual(r.rejectReason, 'strict');
-  // R 角不写（writeRadius 拒）
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict],
+    { cm: 0.4, sourceStrict: false }, { syncStrict: true });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.rejectReason, 'strict');
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
   assert.strictEqual(r.applied, 0);
-  assert.strictEqual(r.failed, 1);
-  // strict 仍是 '1'（addTag 覆盖回 '1'，no-op 数据上）
-  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
-  // 计数
-  assert.strictEqual(r.strictAdded, 1);
-  assert.strictEqual(r.strictRemoved, 0);
-  assert.strictEqual(r.strictSynced, 1);
+  assert.strictEqual(r.strictSynced, 0);
+  h.assertNotCalled('deleteTag');
+  h.assertNotCalled('setAdjFraction');
 });
 
-t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true + 目标混合（1 strict + 1 普通）→ 各按情况', async () => {
-  // 关键组合测试：
-  //   - r1_basic: 普通 → 写 R 角成功 + 加 strict
-  //   - r7_strict: 已有 strict → 写 R 角拒 + addTag 覆盖
-  // step 0 因为 syncStrict=true 而跳过，所以不会整个拒绝
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 未保护目标 → 只写R角', async () => {
   const f = makeStandardFixture();
   const h = createHarness({ shapes: f.allShapes });
-  const source = { cm: 0.4, sourceStrict: true };
-  const r = await RC.applyPickedToSelection(
-    h.driver, [f.shapes.r1_basic, f.shapes.r7_strict], source, { syncStrict: true }
-  );
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic],
+    { cm: 0.4, sourceStrict: false }, { syncStrict: true });
   assert.strictEqual(r.ok, true);
-  // r1_basic 写了 R 角 + 加了 strict
   h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
-  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], '1');
-  // r7_strict 没写 R 角（已是 strict 被拒）+ strict 保留
-  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
-  // 计数
-  assert.strictEqual(r.applied, 1);
-  assert.strictEqual(r.failed, 1);
-  assert.strictEqual(r.strictAdded, 2);
   assert.strictEqual(r.strictRemoved, 0);
-});
-
-t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 目标混合（1 strict + 1 普通）→ 都删 strict + 都写 R 角', async () => {
-  //   - r1_basic: 没 strict → deleteTag 调（no-op）→ 写 R 角成功
-  //   - r7_strict: 有 strict → deleteTag 删掉 → 写 R 角成功
-  // 关键：r7_strict 现在能写 R 角了（之前 syncStrict=false 时会 step 0 拦截）
-  const f = makeStandardFixture();
-  const h = createHarness({ shapes: f.allShapes });
-  const source = { cm: 0.4, sourceStrict: false };
-  const r = await RC.applyPickedToSelection(
-    h.driver, [f.shapes.r1_basic, f.shapes.r7_strict], source, { syncStrict: true }
-  );
-  assert.strictEqual(r.ok, true);
-  // r1_basic 写了 R 角
-  h.assertShape(f.shapes.r1_basic, { adjFraction: (v) => Math.abs(v - 0.4 / 3) < 1e-6 });
-  // r7_strict 也写了 R 角（strict 被删了）
-  h.assertShape(f.shapes.r7_strict, { adjFraction: (v) => Math.abs(v - 0.4 / 5) < 1e-6 });
-  // 都没 strict 了
-  assert.strictEqual(f.shapes.r1_basic._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
-  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], undefined);
-  // 计数
-  assert.strictEqual(r.applied, 2);
-  assert.strictEqual(r.failed, 0);
-  assert.strictEqual(r.strictRemoved, 2);
   assert.strictEqual(r.strictAdded, 0);
+  h.assertNotCalled('deleteTag');
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true + strict目标 → 全拒', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r7_strict],
+    { cm: 0.4, sourceStrict: true }, { syncStrict: true });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.rejectReason, 'strict');
+  assert.strictEqual(r.applied, 0);
+  assert.strictEqual(r.strictAdded, 0);
+  h.assertNotCalled('addTag');
+  h.assertNotCalled('setAdjFraction');
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=true + 混合保护目标 → 整批不写', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.shapes.r7_strict],
+    { cm: 0.4, sourceStrict: true }, { syncStrict: true });
+  assert.strictEqual(r.ok, false);
+  h.assertShape(f.shapes.r1_basic, { adjFraction: 0, tags: {} });
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  assert.strictEqual(r.applied, 0);
+  assert.strictEqual(r.strictSynced, 0);
+  h.assertNotCalled('setAdjFraction');
+});
+
+t.test('applyPickedToSelection: syncStrict=true + sourceStrict=false + 混合保护目标 → 整批不写', async () => {
+  const f = makeStandardFixture();
+  const h = createHarness({ shapes: f.allShapes });
+  const r = await RC.applyPickedToSelection(h.driver, [f.shapes.r1_basic, f.shapes.r7_strict],
+    { cm: 0.4, sourceStrict: false }, { syncStrict: true });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.rejectReason, 'strict');
+  h.assertShape(f.shapes.r1_basic, { adjFraction: 0, tags: {} });
+  assert.strictEqual(f.shapes.r7_strict._tags[RC.LOCK_STRICT_TAG_KEY], '1');
+  assert.strictEqual(r.strictRemoved, 0);
+  h.assertNotCalled('deleteTag');
+  h.assertNotCalled('setAdjFraction');
 });
 
 t.test('applyPickedToSelection: syncStrict=false + 目标有 strict → 仍然拦截（行为不变）', async () => {
@@ -1274,7 +1193,7 @@ t.test('集成：完整 pipette pipeline — pickup → apply → history', asyn
   // 模拟 dialog.js 的 pipette 流程：吸取 + 刷入 + 记录 history
   const f = makeStandardFixture();
   // 用 r2_medium 当源（adj=0.1, 短边 4cm → cm=0.4）
-  const h = createHarness({ shapes: [f.shapes.r2_medium] });
+  const h = createHarness({ shapes: [f.shapes.r2_medium, f.shapes.r1_basic, f.shapes.r3_large, f.shapes.r4_tiny] });
   // 1. 吸 r2_medium（cm=0.4）
   const source = await RC.pickupFromSelection(h.driver, h.slide.shapes);
   assert.ok(source);
@@ -1438,7 +1357,7 @@ t.test('集成：monitorTick 拖回原值（来回拖）→ 应该 fire（lastCm
 // v1.2.7：autoPadding 端到端集成（拖父 R 角时子位置/尺寸也跟着变）
 // ============================================================
 
-t.test('v1.2.7 集成：拖父 R 角从 2.4 → 3.5（超过 d_max）→ 子位置/尺寸自动变（autoPadding）', async () => {
+t.test('v1.2.7 集成：父 R 过大：保留输入边距，仅将子 R 限幅到短边一半', async () => {
   // 父 12x8 默认 R=2.4, d_init=0.3
   // 当父 R=3.5 → d_max = 8/2 - 3.5 = 0.5，d_init 0.3 < 0.5 → 不调
   // 但 R=3.9 → d_max = 0.1, 0.3 > 0.1 → effective = 0.1
@@ -1465,17 +1384,17 @@ t.test('v1.2.7 集成：拖父 R 角从 2.4 → 3.5（超过 d_max）→ 子位�
   //                         subH = (8 - 2*0.1 - 0.2) / 2 = 3.8cm（gutter 在 width/height 都减一次）
   for (let i = 0; i < 4; i++) {
     const c = f.layoutChildren[i];
-    const expectedW = 5.8 * PT_PER_CM;
-    const expectedH = 3.8 * PT_PER_CM;
-    assert.ok(Math.abs(c.width - expectedW) < 1, `lc${i+1} width ${c.width/PT_PER_CM}cm 应该 = 5.8cm (autoPadding effective=0.1, gutter=0.2)`);
-    assert.ok(Math.abs(c.height - expectedH) < 1, `lc${i+1} height ${c.height/PT_PER_CM}cm 应该 = 3.8cm (autoPadding)`);
+    const expectedW = 5.6 * PT_PER_CM;
+    const expectedH = 3.6 * PT_PER_CM;
+    assert.ok(Math.abs(c.width - expectedW) < 1, `lc${i+1} width ${c.width/PT_PER_CM}cm 应该 = 5.6cm (padding=0.3, gutter=0.2)`);
+    assert.ok(Math.abs(c.height - expectedH) < 1, `lc${i+1} height ${c.height/PT_PER_CM}cm 应该 = 3.6cm (padding=0.3)`);
   }
-  // 子 R 角 = 父 R 角 = 3.9cm（same 模式）→ 但子短边 3.9cm, max R = 1.95cm → clamp 到 1.95cm
+  // 子 R 角 = 父 R 角 = 3.9cm（same 模式）→ 但子短边 3.9cm, max R = 1.8cm → clamp 到 1.8cm
   // 等距公式：R_sub = R_父 = 3.9 → clamp 到 1.95（短边一半）
   // adj = 1.95 / 3.9 = 0.5
   for (let i = 0; i < 4; i++) {
     const c = f.layoutChildren[i];
-    h.assertShape(c, { adjFraction: 0.5 }, `lc${i+1} R 角应该 = 父 R 角 = 3.9cm (clamp 到 1.95cm)`);
+    h.assertShape(c, { adjFraction: 0.5 }, `lc${i+1} R 角应该 = 父 R 角 = 3.9cm (clamp 到 1.8cm)`);
   }
 });
 
@@ -1570,12 +1489,9 @@ t.test('边距/间距联动按钮始终显示链条，只用背景色区分状�
     !dialogJs.includes("pgLinkIcon.textContent = linkPG ? '🔗' : '🔓';"),
     '关闭联动时不能再切换成开锁图标'
   );
-  assert.ok(
-    dialogHtml.includes('v1.3.1 · Group 布局与缩放稳定性修复') &&
-      i18nData.includes("footerVersion: 'v1.3.1 · Group 布局与缩放稳定性修复'") &&
-      i18nData.includes("footerVersion: 'v1.3.1 · Group layout and resize stability fixes'"),
-    '中英文页脚版本都应该与正式 v1.3.1 一致'
-  );
+  const version = 'v' + require('../package.json').version;
+  assert.ok(dialogHtml.includes(version) && i18nData.includes("footerVersion: '" + version),
+    '页脚必须与 package.json 版本一致');
 });
 
 // ============================================================

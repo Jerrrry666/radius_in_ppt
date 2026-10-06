@@ -6,6 +6,9 @@
   <title data-i18n="htmlTitle">R 角调整</title>
   <link rel="stylesheet" href="dialog.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <script src="../lib/vendor/fflate-0.8.2.js"></script>
+  <script src="../lib/pptx-geometry.js"></script>
+  <script src="../lib/host-queue.js"></script>
   <script src="../lib/ppt-driver.js"></script>
   <script src="../lib/radius-core.js"></script>
   <script src="i18n-data.js"></script>
@@ -100,7 +103,7 @@
           <span id="pipette-icon">🖌️</span>
           <span id="pipette-label" data-i18n="pipettePickR">吸取 R 角</span>
         </button>
-        <label id="pipette-sync-label" class="pipette-sync-option" data-i18n-title="pipetteSyncTitle" title="勾选后样式刷会把源形状的「防误触」状态**覆盖**到目标（双向：源开启则目标开启；源未开启则目标也解除）">
+        <label id="pipette-sync-label" class="pipette-sync-option" data-i18n-title="pipetteSyncTitle" title="勾选后，源形状已开启的防误触会复制到未保护目标；已保护目标必须先手动关闭防误触才能刷入">
           <input type="checkbox" id="pipette-sync-checkbox">
           <span data-i18n="pipetteSyncLabel">刷防误触状态</span>
         </label>
@@ -179,11 +182,11 @@
           <div class="layout-link-r-group">
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="same" checked>
-              <span data-i18n="layoutRlinkSame">等距（r = 父 R，45° 方向和边方向都等于 padding）</span>
+              <span data-i18n="layoutRlinkSame">相同 R（r = 父 R，过大时按子短边限幅）</span>
             </label>
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="subtract">
-              <span data-i18n="layoutRlinkSubtract">层级感（r = 父 R − padding，子 R 角小一圈；45° 方向比 padding 窄约 40%）</span>
+              <span data-i18n="layoutRlinkSubtract">等距缩进（r = max(0, 父 R − 边距)，1×1 且父 R ≥ 边距时圆弧等距）</span>
             </label>
             <label class="layout-link-r-opt">
               <input type="radio" name="layout-link-r-mode" value="off">
@@ -227,7 +230,7 @@
       <button id="reapply-btn" class="btn btn-ghost" disabled data-i18n="reapplyLock">重新应用锁定（针对当前选区）</button>
     </section>
 
-    <footer class="footer" data-i18n="footerVersion">v1.3.1 · Group 布局与缩放稳定性修复</footer>
+    <footer class="footer" data-i18n="footerVersion">v1.3.2 · 防误触与异步写入修复</footer>
 
     <!-- @build-strip-debug-log:start -->
     <!--
