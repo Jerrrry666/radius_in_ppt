@@ -2,23 +2,41 @@
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="NativeOnLoad">
   <ribbon><tabs><tab id="NativeRadiusTab" label="R角调整 · Native">
     <group id="NativeRadiusGroup" label="R角数值">
-      <editBox id="NativeRadiusValue" label="半径" sizeString="0000.00" getText="NativeGetValue" onChange="NativeChangeValue" />
+      <box id="NativeRadiusInputRow" boxStyle="horizontal">
+        <editBox id="NativeRadiusValue" label="半径" sizeString="0000.00" getText="NativeGetValue" onChange="NativeChangeValue" supertip="输入半径，点击应用；旁边的上下箭头每次调整0.1并立即应用。"/>
+        <box id="NativeRadiusSteps" boxStyle="vertical">
+          <button id="NativeRadiusUp" label="半径增加0.1" showLabel="false" image="stepUp" tag="up" getEnabled="NativeGetStepEnabled" onAction="NativeStep" screentip="增加0.1并立即应用"/>
+          <button id="NativeRadiusDown" label="半径减少0.1" showLabel="false" image="stepDown" tag="down" getEnabled="NativeGetStepEnabled" onAction="NativeStep" screentip="减少0.1并立即应用"/>
+        </box>
+      </box>
       <dropDown id="NativeRadiusUnit" label="单位" getSelectedItemIndex="NativeGetUnit" onAction="NativeChangeUnit">
         <item id="NativeCm" label="厘米 cm"/><item id="NativePercent" label="短边百分比 %"/>
       </dropDown>
-      <button id="NativeApply" label="应用R角" size="large" onAction="NativeApply" />
-      <button id="NativeRead" label="读取选区" onAction="NativeRead" />
+      <button id="NativeRead" label="读取选区" image="readSelection" getEnabled="NativeGetReadEnabled" onAction="NativeRead"/>
+      <button id="NativeApply" label="应用R角" size="large" image="applyRadius" getEnabled="NativeGetWriteEnabled" onAction="NativeApply"/>
     </group>
     <group id="NativePresetGroup" label="常用预设">
-      <button id="NativeZero" label="0cm" tag="0" onAction="NativePreset" />
-      <button id="Native01" label="0.10cm" tag="0.1" onAction="NativePreset" />
-      <button id="Native03" label="0.30cm" tag="0.3" onAction="NativePreset" />
-      <button id="Native05" label="0.50cm" tag="0.5" onAction="NativePreset" />
+      <button id="NativeZero" label="0cm" image="presetZero" tag="0" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
+      <button id="Native01" label="0.10cm" image="presetSmall" tag="0.1" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
+      <button id="Native03" label="0.30cm" image="presetMedium" tag="0.3" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
+      <button id="Native05" label="0.50cm" image="presetLarge" tag="0.5" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
     </group>
-    <group id="NativeProtectionGroup" label="加载项写入保护">
-      <button id="NativeProtect" label="开启防误触" tag="on" onAction="NativeProtect" supertip="阻止加载项写入，保留现有固定值；本实验尚未提供拖拽期间的实时监测。" />
-      <button id="NativeUnprotect" label="解除防误触" tag="off" onAction="NativeProtect" />
-      <button id="NativeSelfTest" label="算法自检" onAction="NativeSelfTest" />
+    <group id="NativeProtectionGroup" label="选区防误触状态">
+      <toggleButton id="NativeProtect" label="防误触" size="large" image="protect" getPressed="NativeGetProtectionPressed" getEnabled="NativeGetProtectionEnabled" onAction="NativeToggleProtect" supertip="开启后阻止本加载项写入R角；混合选区点击可全部开启。再次点击可全部解除。"/>
+      <box id="NativeProtectionInfo" boxStyle="vertical">
+        <button id="NativeUnprotect" label="解除防误触" image="unprotect" tag="off" getEnabled="NativeGetProtectionEnabled" onAction="NativeProtect"/>
+        <labelControl id="NativeStatusOff" label="防误触：未开启" tag="off" getVisible="NativeGetStatusVisible"/>
+        <labelControl id="NativeStatusOn" label="防误触：已开启" tag="on" getVisible="NativeGetStatusVisible"/>
+        <labelControl id="NativeStatusMixed" label="防误触：部分开启" tag="mixed" getVisible="NativeGetStatusVisible"/>
+        <labelControl id="NativeStatusEmpty" label="请选择圆角矩形" tag="empty" getVisible="NativeGetStatusVisible"/>
+        <labelControl id="NativeStatusGroup" label="请选择完整顶层组合" tag="group" getVisible="NativeGetStatusVisible"/>
+        <labelControl id="NativeStatusError" label="选区状态读取失败" tag="error" getVisible="NativeGetStatusVisible"/>
+        <labelControl id="NativeStatusCount" getLabel="NativeGetCountLabel" screentip="R为选中圆角数量，后面是已保护数量/圆角总数。"/>
+      </box>
+    </group>
+    <group id="NativeToolsGroup" label="工具">
+      <button id="NativeSelfTest" label="算法自检" image="selfTest" onAction="NativeSelfTest"/>
+      <labelControl id="NativeVersion" label="v1.4.0"/>
     </group>
   </tab></tabs></ribbon>
 </customUI>

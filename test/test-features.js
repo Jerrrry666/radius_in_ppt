@@ -1489,9 +1489,12 @@ t.test('边距/间距联动按钮始终显示链条，只用背景色区分状�
     !dialogJs.includes("pgLinkIcon.textContent = linkPG ? '🔗' : '🔓';"),
     '关闭联动时不能再切换成开锁图标'
   );
-  const version = 'v' + require('../package.json').version;
+  // The task pane is retained at its manifest version as a migration reference.
+  // package.json now tracks the active native PPAM release.
+  const manifest = fs.readFileSync(path.join(__dirname, '..', 'manifest.xml'), 'utf8');
+  const version = 'v' + manifest.match(/<Version>([^<]+)<\/Version>/)[1];
   assert.ok(dialogHtml.includes(version) && i18nData.includes("footerVersion: '" + version),
-    '页脚必须与 package.json 版本一致');
+    '旧task pane页脚必须与其manifest版本一致');
 });
 
 // ============================================================

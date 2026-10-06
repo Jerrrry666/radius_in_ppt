@@ -2,6 +2,15 @@ Attribute VB_Name = "PptNativeDriver"
 Option Explicit
 
 ' Native PowerPoint transport. No radius, protection or layout policy here.
+Public Function HasShapeSelection() As Boolean
+    If Application.Presentations.Count = 0 Then Exit Function
+    HasShapeSelection = (Application.ActiveWindow.Selection.Type = 2)
+End Function
+
+Public Sub ConnectEvents(ByVal listener As RadiusNativeEvents)
+    Set listener.Host = Application
+End Sub
+
 Public Function SelectionRoots() As Collection
     Dim result As New Collection, selected As Object, i As Long
     If Application.Presentations.Count = 0 Then Err.Raise 5, , "Open a presentation first."
@@ -58,6 +67,8 @@ End Sub
 
 Public Function Children(ByVal shape As Object) As Collection
     Dim result As New Collection, i As Long
+    ' Mac can flatten nested leaves here; safe for read-only preflight.
+    ' Ungroup's returned range supplies the direct transaction members.
     For i = 1 To shape.GroupItems.Count
         result.Add shape.GroupItems.Item(i)
     Next i
@@ -105,17 +116,6 @@ Public Function Ungroup(ByVal shape As Object) As Collection
         result.Add items.Item(i)
     Next i
     Set Ungroup = result
-End Function
-
-Public Function FindShape(ByVal shapes As Collection, ByVal id As Long) As Object
-    Dim shape As Object
-    For Each shape In shapes
-        If shape.Id = id Then
-            Set FindShape = shape
-            Exit Function
-        End If
-    Next shape
-    Err.Raise 5, , "Shape identity changed during ungroup."
 End Function
 
 Private Function RangeFor(ByVal slide As Object, ByVal shapes As Collection) As Object

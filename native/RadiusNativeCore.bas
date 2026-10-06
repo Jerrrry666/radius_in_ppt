@@ -27,6 +27,22 @@ Public Function NumberText(ByVal value As Double) As String
     NumberText = Replace(Format$(value, "0.000000"), ",", ".")
 End Function
 
+Public Function StepValue(ByVal value As Double, ByVal unit As String, ByVal direction As Long) As Double
+    Dim maximum As Double
+    If direction <> 1 And direction <> -1 Then Err.Raise 5, , "Unsupported step direction."
+    If value < 0 Or value > 1000000 Then Err.Raise 5, , "Radius is out of range."
+    If unit = "cm" Then
+        maximum = 1000000
+    ElseIf unit = "%" Then
+        maximum = 50
+    Else
+        Err.Raise 5, , "Unsupported unit."
+    End If
+    StepValue = Round(value + direction * 0.1, 6)
+    If StepValue < 0 Then StepValue = 0
+    If StepValue > maximum Then StepValue = maximum
+End Function
+
 Public Function ComputeTarget(ByVal value As Double, ByVal unit As String, ByVal shortCm As Double) As Double
     If shortCm <= 0 Then Err.Raise 5, , "Shape has zero width or height."
     If value < 0 Then Err.Raise 5, , "Radius must not be negative."
@@ -70,6 +86,25 @@ Public Function SelectionLeaves() As Collection
     Set SelectionLeaves = leaves
 End Function
 
+Public Sub SelectionSummary(ByRef count As Long, ByRef protectedCount As Long, ByRef editable As Boolean)
+    Dim roots As Collection, leaves As New Collection, shape As Object, slide As Object
+    count = 0
+    protectedCount = 0
+    editable = False
+    If Not PptNativeDriver.HasShapeSelection() Then Exit Sub
+    Set roots = PptNativeDriver.SelectionRoots()
+    Set slide = PptNativeDriver.CurrentSlide()
+    editable = True
+    For Each shape In roots
+        If Not PptNativeDriver.IsTopLevel(slide, shape) Then editable = False
+        CollectLeaves shape, leaves, 0
+    Next shape
+    count = leaves.Count
+    For Each shape In leaves
+        If PptNativeDriver.ReadTag(shape, STRICT_KEY) = "1" Then protectedCount = protectedCount + 1
+    Next shape
+End Sub
+
 Private Function PrepareNode(ByVal shape As Object, ByVal value As Double, ByVal unit As String, ByVal depth As Long, ByVal action As String) As Collection
     Dim node As New Collection, nodes As New Collection, child As Object, prepared As Collection, eligible As Long
     If depth > 64 Then Err.Raise 5, , "Group nesting is too deep."
@@ -80,8 +115,8 @@ Private Function PrepareNode(ByVal shape As Object, ByVal value As Double, ByVal
     node.Add action, "Action"
     node.Add value, "Value"
     node.Add unit, "Unit"
+    ' Preserve layout metadata during explicit radius/protection edits.
     If PptNativeDriver.ShapeType(shape) = 6 Then
-        If PptNativeDriver.ReadTag(shape, "layoutParent_v1") <> "" Or PptNativeDriver.ReadTag(shape, "layoutChild_v1") <> "" Then Err.Raise 5, , "Use the Office.js edition for tagged layouts."
         For Each child In PptNativeDriver.Children(shape)
             Set prepared = PrepareNode(child, value, unit, depth + 1, action)
             eligible = eligible + CLng(prepared("Eligible"))
@@ -90,7 +125,6 @@ Private Function PrepareNode(ByVal shape As Object, ByVal value As Double, ByVal
     ElseIf IsRoundRect(shape) Then
         ' Full live preflight happens before ANY write or ungroup operation.
         If action = "radius" And PptNativeDriver.ReadTag(shape, STRICT_KEY) = "1" Then Err.Raise 5, , "Turn off protection explicitly before applying radius."
-        If PptNativeDriver.ReadTag(shape, "layoutParent_v1") <> "" Or PptNativeDriver.ReadTag(shape, "layoutChild_v1") <> "" Then Err.Raise 5, , "Use the Office.js edition for tagged layouts."
         If action = "radius" Then
             node.Add ComputeTarget(value, unit, PptNativeDriver.ShortSidePoints(shape) / PT_PER_CM), "Target"
         Else
@@ -116,23 +150,30 @@ Private Function NodeShapes(ByVal nodes As Collection) As Collection
     Set NodeShapes = result
 End Function
 
-Private Sub WriteNode(ByVal node As Collection, ByVal slide As Object)
-    Dim shape As Object, fresh As Collection, children As Collection, child As Collection
+Private Sub WriteNode(ByVal node As Collection, ByVal slide As Object, Optional ByVal depth As Long = 0)
+    Dim shape As Object, fresh As Collection, children As Collection, child As Collection, member As Object, directNodes As Collection
     Dim opened As Boolean, mapped As Boolean, errorNumber As Long, errorText As String, restoreError As String
     Dim actualCm As Double
     Set shape = node("Shape")
     Set children = node("Children")
     If CLng(node("Eligible")) = 0 Then Exit Sub
+    If depth > 64 Then Err.Raise 5, , "Group nesting is too deep."
     On Error GoTo Failed
     If children.Count > 0 Then
         Set fresh = PptNativeDriver.Ungroup(shape)
         opened = True
-        For Each child In children
-            SetNodeShape child, PptNativeDriver.FindShape(fresh, CLng(child("Id")))
-        Next child
+        ' GroupItems may flatten nested leaves on Mac. Build the actual
+        ' direct hierarchy from the ungroup return, never old group proxies.
+        Set directNodes = New Collection
+        For Each member In fresh
+            directNodes.Add PrepareNode(member, CDbl(node("Value")), CStr(node("Unit")), depth + 1, CStr(node("Action")))
+        Next member
+        Set children = directNodes
+        node.Remove "Children"
+        node.Add children, "Children"
         mapped = True
         For Each child In children
-            WriteNode child, slide
+            WriteNode child, slide, depth + 1
         Next child
         Set shape = PptNativeDriver.Regroup(slide, NodeShapes(children))
         SetNodeShape node, shape
@@ -218,4 +259,10 @@ Public Sub SelfTest()
     If ComputeTarget(0, "cm", 4) <> 0 Then Err.Raise 5, , "Zero radius failed."
     If ComputeTarget(3, "cm", 4) <> 2 Then Err.Raise 5, , "Radius clamp failed."
     If ComputeTarget(20, "%", 4) <> 0.8 Then Err.Raise 5, , "Percent conversion failed."
+    If Abs(StepValue(0.3, "cm", 1) - 0.4) > 0.000001 Then Err.Raise 5, , "Up step failed."
+    If Abs(StepValue(0.3, "cm", -1) - 0.2) > 0.000001 Then Err.Raise 5, , "Down step failed."
+    If StepValue(0.05, "cm", -1) <> 0 Then Err.Raise 5, , "Step lower bound failed."
+    If StepValue(50, "%", 1) <> 50 Then Err.Raise 5, , "Percent step upper bound failed."
+    If Abs(StepValue(0.05, "cm", 1) - 0.15) > 0.000001 Then Err.Raise 5, , "Step precision failed."
+    If StepValue(1000000, "cm", 1) <> 1000000 Then Err.Raise 5, , "Step upper bound failed."
 End Sub

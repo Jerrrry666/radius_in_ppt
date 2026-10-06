@@ -1,21 +1,25 @@
-> 2026-10-07：按用户明确要求，本分支交付改为随PowerPoint加载的原生PPAM，默认构建PPAM及一次安装ZIP；不再默认构建外置app。10项格式/文件准备测试和287项Office.js回归测试，宿主编译及重启加载待验收。详情见[说明](plans/ribbon-vba-mac.md)。
-
 # LOG
 
-> 项目主日志 — high level 视角
-> per-version 详细变更见 [changelogs/](./changelogs/)
+> 2026-10-07：当前开发为`codex/ribbon-vba-mac`的原生PPAM。v1.4.0已获用户批准，尚未commit/发布。当前协作规则见[AGENTS.md](AGENTS.md)。
 
-## 状态
+## 当前状态
 
 | 指标 | 值 |
 | --- | --- |
-| 当前里程碑 | v1.3.2 Review修复（本地待PowerPoint验收，未发布） |
-| 单元测试 | **287 / 0**（算法115＋功能96＋group40＋回归36）|
-| Driver 烟囱测试 | v1.3.2待实测；v1.3.1历史成绩14/14|
-| End-to-end PPT 验证 | v1.3.2待验收（Mac锁屏）；v1.3.1历史实测保留在changelog |
-| 未来 feature 测试策略 | 走 `npm test`（纯算法 + 功能）+ 代码 review，**不再 PPT 实测**（Mac LTSC 真实跑跟 mock 不一致时必须补 PPT 实测）|
+| 交付 | 原生PPAM和一次安装ZIP，由PowerPoint加载 |
+| 功能 | cm/%、读取、预设、多选、限幅、防误触、完整顶层组合事务 |
+| v1.4新增 | 所有动作图标、自动保护状态、±0.1即时微调 |
+| 本机宿主 | PowerPoint16.113.3/26092714；16.111目标待另行验收 |
+| 格式与安装测试 | 17项；不执行VBA |
+| VBA自检 | 10项；实际宿主运行 |
+| Office.js迁移对照 | 保留npm test，不能代替原生宿主验证 |
+| 未迁移 | 实时固定R、复杂布局、样式刷、自定义预设、历史 |
 
----
+默认构建使用`npm run build`或`python3 tools/build-native.py --distribution`。安装到`~/Library/Application Support/RadiusInPptNative`，不构建.app、不运行server、不注册wef。原生架构为Ribbon/事件通知→RadiusNativeCore→PptNativeDriver。验收记录见[changelogs/v1.4.md](changelogs/v1.4.md)。
+
+## 以下为历史Office.js路线记录
+
+历史功能、测试策略和目录结构保留供迁移参考，不代表当前原生插件已实现。
 
 ## 已实现
 

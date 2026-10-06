@@ -4,7 +4,7 @@ set -euo pipefail
 
 PACKAGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD="$PACKAGE_DIR/RadiusInPptNative.ppam"
-DESTINATION="$HOME/Library/Containers/com.microsoft.Powerpoint/Data/Documents/RadiusInPptNative"
+DESTINATION="$HOME/Library/Application Support/RadiusInPptNative"
 REVEAL=1
 
 while [ "$#" -gt 0 ]; do
@@ -45,11 +45,11 @@ printf '%s\n' \
   '1. 工具 → PowerPoint 加载项 → 添加，选择上面的 .ppam，并保持勾选。' \
   '2. 按 Office 的提示允许此插件的宏。' \
   '3. 顶部应出现「R角调整 · Native」选项卡。' \
-  '4. Cmd+Q 退出再打开，确认选项卡仍在；Mac LTSC 启动加载尚待验收。' \
+  '4. Cmd+Q 退出再打开，确认选项卡仍在；本机 PowerPoint 16.113.3 已验证自动加载。' \
   '' \
   '此脚本仅准备安装文件；PowerPoint 注册仍需完成第 1 步。' \
   '以后使用只打开 PowerPoint 即可，无需再运行此脚本。' \
-  '更新时先在 PowerPoint 加载项管理中卸载旧插件，再替换并重新添加。'
+  '更新同一路径前先保存并Cmd+Q退出PowerPoint；换路径时移除旧项再添加新路径。'
 
 if [ "$REVEAL" -eq 1 ]; then
   /usr/bin/open -R "$TARGET"

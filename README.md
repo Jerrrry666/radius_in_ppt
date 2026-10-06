@@ -1,10 +1,10 @@
-# R角调整 — Mac PowerPoint 原生加载项实验
+# R角调整 v1.4.0 — Mac PowerPoint 原生加载项
 
 分支：`codex/ribbon-vba-mac`。目标平台：Office LTSC Standard for Mac 2021。
 
 交付的是安装到 PowerPoint 中的 `.ppam` 插件。顶部「R角调整 · Native」直接提供数值输入、cm/%单位、应用、读取和预设；使用时只打开 PowerPoint，无需启用独立 app 或本地服务器。[Microsoft 文档确认 Mac 支持 VBA 加载项和 Ribbon XML](https://learn.microsoft.com/en-us/office/vba/api/overview/office-mac)。
 
-**当前为实验原型：Mac 宿主加载、编译和重启后的自动加载尚未验收，现有功能也尚未全部迁移。**
+**2026-10-07已在本机PowerPoint16.113.3验证加载、控件读写及退出后的自动加载。仍为原生迁移原型，完整功能尚未全部迁移；16.111目标版本需另行验收。**
 
 ## 一次安装
 
@@ -13,27 +13,32 @@
 3. 在 PowerPoint 的「工具 → PowerPoint 加载项」中添加 `.ppam`，保持勾选，按 Office 提示允许此插件的宏。
 4. 顶部应出现「R角调整 · Native」。Cmd+Q 完全退出后重新打开，确认选项卡仍在。
 
-目标是完成安装后由 PowerPoint 持续加载。安装脚本只复制文件、在 Finder 中显示位置，PowerPoint 注册仍需第 3 步；脚本不参与日常运行。不要从会被重建的 `dist` 目录注册插件。更新前先在 PowerPoint 中卸载旧项，再替换文件并重新添加。
+目标是完成安装后由 PowerPoint 持续加载。安装脚本只复制文件、在 Finder 中显示位置，PowerPoint 注册仍需第 3 步；脚本不参与日常运行。不要从会被重建的 `dist` 目录注册插件。更新相同路径时先保存并Cmd+Q退出，再替换文件、重新打开验证；更换安装路径时移除旧项后添加新路径。
+
+默认安装目录为`~/Library/Application Support/RadiusInPptNative`。半径框旁的上/下箭头每次调整当前单位0.1并立即写入选区；手动输入保留「应用R角」提交方式。防误触开启后写入按钮禁用，混合选区显示保护数量。
 
 详细步骤及稳定目录见 [安装说明](native/INSTALL.txt)。
 
-## 原型功能
+## 当前功能
 
 | 功能 | 状态 |
 | --- | --- |
-| 顶部半径输入及 cm/% | 已有源码 |
-| 读取选区及0/0.1/0.3/0.5cm预设 | 已有源码 |
-| 多选圆角、限幅、写入保护 | 已有源码 |
-| 整组写入及恢复名称/tag/选区 | 已有安全事务源码 |
+| 顶部半径输入及 cm/% | 本机实测通过 |
+| 读取选区及0/0.1/0.3/0.5cm预设 | 本机实测通过 |
+| 多选圆角、限幅、写入保护 | 本机实测通过 |
+| 上下箭头±0.1，点击立即应用 | cm/%本机实测通过 |
+| 防误触开关、未开启/已开启/部分开启及数量 | 随选区自动刷新 |
+| 全部动作按钮图标 | PNG随PPAM嵌入，无需外部图标库 |
+| 整组写入及恢复名称/tag/选区 | 缩放嵌套组实测通过 |
 | 实时固定R、样式刷、布局、历史 | 尚未迁移 |
-| Mac LTSC 宿主加载、编译和启动持久性 | 尚未验收 |
+| Mac 宿主加载、编译和启动持久性 | PowerPoint16.113.3实测通过 |
 
-原生保护只阻止本加载项写入，还未自动纠正拖动黄色手柄或尺寸。带布局tag、进入组合单选叶子的写入暂时拒绝。完整实现及限制见 [实验说明](plans/ribbon-vba-mac.md)。
+原生保护只阻止本加载项写入，还未自动纠正拖动黄色手柄或尺寸。带布局tag的形状支持显式R角和保护操作，保留布局元数据；自动布局联动尚未迁移。进入组合单选叶子时需改选完整顶层组合。完整实现及限制见 [实验说明](plans/ribbon-vba-mac.md)。
 
 ## 构建和验证
 
 ```sh
-bash tools/build-app.sh
+npm run build
 npm test
 python3 -m venv .venv-native
 .venv-native/bin/pip install -r native/requirements-test.txt
@@ -44,4 +49,4 @@ python3 -m venv .venv-native
 
 Office.js 原实现保留为迁移对照，历史说明见 [task pane 文档](README.taskpane.md)。需要对照 app 时显式运行 `bash tools/build-app.sh --legacy-taskpane`；原 `.app`/wef 部署及 DMG 脚本不适用于原生插件的安装。
 
-[English](README.en.md) · [变更日志](changelogs/v1.3.md)
+[English](README.en.md) · [变更日志](changelogs/v1.4.md)
