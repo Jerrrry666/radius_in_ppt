@@ -1,3 +1,5 @@
+> 本分支为Mac原生VBA顶部功能区实验，见[实现、构建及试用说明](plans/ribbon-vba-mac.md)。产物为dist/RadiusInPptNative.ppam；Mac宿主加载和编译尚未验证。
+
 # R 角调整 — macOS PowerPoint 加载项
 
 > 🌍 **[English version](./README.en.md)**

@@ -3,7 +3,9 @@
   "version": "1.3.2",
   "description": "R 角调整 v1.3+ — 单元测试（纯算法 + 功能）",
   "scripts": {
-    "test": "node test/test-radius-core.js && node test/test-features.js && node test/test-driver-group.js && node test/test-regressions.js"
+    "test": "node test/test-radius-core.js && node test/test-features.js && node test/test-driver-group.js && node test/test-regressions.js",
+    "build:native": "python3 tools/build-native.py",
+    "test:native": "python3 test/test-native-package.py"
   },
   "private": true
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="NativeOnLoad">
+  <ribbon><tabs><tab id="NativeRadiusTab" label="R角调整 · Native">
+    <group id="NativeRadiusGroup" label="R角数值">
+      <editBox id="NativeRadiusValue" label="半径" sizeString="0000.00" getText="NativeGetValue" onChange="NativeChangeValue" />
+      <dropDown id="NativeRadiusUnit" label="单位" getSelectedItemIndex="NativeGetUnit" onAction="NativeChangeUnit">
+        <item id="NativeCm" label="厘米 cm"/><item id="NativePercent" label="短边百分比 %"/>
+      </dropDown>
+      <button id="NativeApply" label="应用R角" size="large" onAction="NativeApply" />
+      <button id="NativeRead" label="读取选区" onAction="NativeRead" />
+    </group>
+    <group id="NativePresetGroup" label="常用预设">
+      <button id="NativeZero" label="0cm" tag="0" onAction="NativePreset" />
+      <button id="Native01" label="0.10cm" tag="0.1" onAction="NativePreset" />
+      <button id="Native03" label="0.30cm" tag="0.3" onAction="NativePreset" />
+      <button id="Native05" label="0.50cm" tag="0.5" onAction="NativePreset" />
+    </group>
+    <group id="NativeProtectionGroup" label="加载项写入保护">
+      <button id="NativeProtect" label="开启防误触" tag="on" onAction="NativeProtect" supertip="阻止加载项写入，保留现有固定值；本实验尚未提供拖拽期间的实时监测。" />
+      <button id="NativeUnprotect" label="解除防误触" tag="off" onAction="NativeProtect" />
+      <button id="NativeSelfTest" label="算法自检" onAction="NativeSelfTest" />
+    </group>
+  </tab></tabs></ribbon>
+</customUI>
