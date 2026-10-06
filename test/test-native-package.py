@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 import re
 import struct
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -89,6 +90,64 @@ class NativePackageTests(unittest.TestCase):
             decompressed = decompress_stream(builder.compressed(data))
             self.assertEqual(decompressed[:length], data)
             self.assertTrue(all(b == 32 for b in decompressed[length:]))
+
+    def test_distribution_contains_only_the_embedded_plugin_and_installation_files(self):
+        output = builder.distribution(self.output)
+        first = output.read_bytes()
+        with zipfile.ZipFile(output) as archive:
+            prefix = 'RadiusInPptNative-mac/'
+            self.assertEqual(set(archive.namelist()), {
+                prefix + 'RadiusInPptNative.ppam',
+                prefix + 'Install-RadiusInPptNative.command',
+                prefix + 'INSTALL.txt',
+            })
+            self.assertEqual(archive.read(prefix + 'RadiusInPptNative.ppam'), self.output.read_bytes())
+            mode = archive.getinfo(prefix + 'Install-RadiusInPptNative.command').external_attr >> 16
+            self.assertEqual(mode & 0o777, 0o755)
+        self.assertEqual(builder.distribution(self.output).read_bytes(), first)
+
+    def test_install_helper_handles_spaces_reinstall_and_preserves_previous_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            package = directory / 'Extracted package'
+            package.mkdir()
+            helper = package / 'Install-RadiusInPptNative.command'
+            helper.write_bytes((ROOT / 'native' / helper.name).read_bytes())
+            payload = package / 'RadiusInPptNative.ppam'
+            payload.write_bytes(self.output.read_bytes())
+            destination = directory / 'Mac Library' / '原生插件'
+            command = ['bash', str(helper), '--destination', str(destination), '--no-reveal']
+            target = destination / payload.name
+            previous = destination / 'RadiusInPptNative.previous.ppam'
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual(target.read_bytes(), payload.read_bytes())
+            self.assertFalse(previous.exists())
+            target_stat = target.stat()
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual(target.stat().st_mtime_ns, target_stat.st_mtime_ns)
+            self.assertFalse(previous.exists())
+            old = target.read_bytes()
+            with zipfile.ZipFile(payload, 'a') as archive:
+                archive.writestr('docProps/test-update.txt', 'new package')
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual(target.read_bytes(), payload.read_bytes())
+            self.assertEqual(previous.read_bytes(), old)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o644)
+            self.assertFalse(list(destination.glob('.radius-install.*')))
+
+    def test_install_helper_rejects_missing_or_corrupt_payload_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            helper = directory / 'Install.command'
+            helper.write_bytes((ROOT / 'native' / 'Install-RadiusInPptNative.command').read_bytes())
+            destination = directory / 'Untouched'
+            command = ['bash', str(helper), '--destination', str(destination), '--no-reveal']
+            for payload in (None, b'not a PowerPoint ZIP'):
+                if payload is not None:
+                    (directory / 'RadiusInPptNative.ppam').write_bytes(payload)
+                result = subprocess.run(command, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(destination.exists())
 
     def test_build_is_reproducible_and_missing_callback_fails(self):
         other = builder.build(Path(self.temp.name) / 'second.ppam')

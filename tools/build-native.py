@@ -8,6 +8,7 @@ import argparse
 import math
 from pathlib import Path
 import re
+import shutil
 import struct
 import xml.etree.ElementTree as ET
 import zipfile
@@ -189,9 +190,36 @@ def build(output, native=ROOT / 'native'):
     return output
 
 
+def distribution(output, native=ROOT / 'native'):
+    """Package a one-time install helper; no executable app or web resources."""
+    folder = output.parent / 'RadiusInPptNative-mac'
+    folder.mkdir(parents=True, exist_ok=True)
+    files = {
+        'RadiusInPptNative.ppam': (output, 0o644),
+        'Install-RadiusInPptNative.command': (native / 'Install-RadiusInPptNative.command', 0o755),
+        'INSTALL.txt': (native / 'INSTALL.txt', 0o644),
+    }
+    archive_path = output.parent / 'RadiusInPptNative-mac.zip'
+    with zipfile.ZipFile(archive_path, 'w') as archive:
+        for name, (source, mode) in files.items():
+            target = folder / name
+            shutil.copyfile(source, target)
+            target.chmod(mode)
+            info = zipfile.ZipInfo(folder.name + '/' + name, (2026, 10, 7, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = (0o100000 | mode) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, target.read_bytes())
+    return archive_path
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT / 'dist' / 'RadiusInPptNative.ppam')
+    parser.add_argument('--distribution', action='store_true', help='Also build the Mac installation ZIP')
     args = parser.parse_args()
-    print(build(args.output))
+    output = build(args.output)
+    print(output)
+    if args.distribution:
+        print(distribution(output))
     print('Source-only Mac PPAM built. PowerPoint loading/compilation is NOT yet verified.')

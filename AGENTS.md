@@ -5,11 +5,12 @@
 
 ## 0. 项目定位
 
-macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分比** 设置圆角矩形的 R 角（圆角半径）。支持多选 / 锁定 R 角绝对值 / 防误触 / 预设库 / 样式刷 / 5 次历史 / v1.2 布局模式。
+本分支为macOS PowerPoint **原生PPAM加载项实验**。用户于2026-10-07明确要求安装后随PowerPoint加载、无需单独启用app；以此为交付目标。现有task pane完整功能保留作为迁移对照，原生迁移范围及待验收状态见plans/ribbon-vba-mac.md。
 
 - **目标平台**：Office LTSC Standard for Mac 2021（build 16.111 / 26071325）
-- **API 范围**：PowerPointApi 1.1 ~ 1.10
-- **最终形态**：`.app`（约 440 KB），双击启动本地静态 server + 把 manifest 注册到 PowerPoint 加载项目录
+- **API 范围**：原生PowerPoint VBA对象；Office.js对照代码采用PowerPointApi 1.1 ~ 1.10
+- **交付形态**：`.ppam`及一次安装说明，由PowerPoint加载；无需独立app或本地server。Mac LTSC加载/编译/启动持久性待验收。
+- **构建入口**：`bash tools/build-app.sh`在本分支生成PPAM及安装ZIP；`--legacy-taskpane`仅用于构建旧路线对照。`build-dmg.sh`/`build-and-deploy.sh`不适用于原生分支。
 
 ---
 
@@ -71,6 +72,8 @@ macOS PowerPoint **task pane 加载项**，让用户用 **厘米** 或 **百分�
 ### 1.2 架构铁律
 
 三层架构（v1.2 决定，**禁止回退**）：
+
+原生对应层为`RadiusNativeRibbon.bas → RadiusNativeCore.bas → PptNativeDriver.bas`；同样保持UI、业务和薄宿主交互边界。下图为保留的Office.js对照架构。
 
 ```
 dialog.js (UI 层)         事件绑定 / 渲染 / toast / debug log

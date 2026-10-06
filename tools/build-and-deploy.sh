@@ -20,6 +20,12 @@ set -eo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
+if [ -d "$ROOT/native" ]; then
+  echo '[native] 本分支使用 PowerPoint 加载项管理安装 .ppam，请参阅 native/INSTALL.txt。' >&2
+  echo '[native] 构建：bash tools/build-app.sh；此分支不使用 wef/.app 部署。' >&2
+  exit 1
+fi
+
 NEW_VERSION="${1:-}"
 COMMIT_MSG="${2:-}"
 

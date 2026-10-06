@@ -1,0 +1,31 @@
+R角调整 · Native — Mac PowerPoint 内置加载项实验
+
+交付文件是 RadiusInPptNative.ppam。代码和顶部控件由 PowerPoint 加载。
+使用时无需启动独立 app、Node、本地服务器或浏览器。
+
+一次安装
+1. 将 .ppam 保存到长期保留的位置，避免从会被重建的 dist 文件夹注册。
+   可双击同目录的 Install-RadiusInPptNative.command 准备稳定安装文件；
+   该脚本只复制文件并在 Finder 中显示位置，不启动服务、不修改宏设置。
+   若 macOS 限制运行脚本，可直接手动复制 .ppam，无需运行脚本。
+2. 在 PowerPoint 中进入「工具 → PowerPoint 加载项」，添加 .ppam，保持勾选。
+   文件选择器中可按 Cmd+Shift+G，输入：
+   ~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/RadiusInPptNative
+3. 按 Office 提示允许此插件的宏；顶部应出现「R角调整 · Native」。
+4. Cmd+Q 完全退出 PowerPoint 后重新打开，确认选项卡仍在。
+   持续勾选的加载项预期随 PowerPoint 加载，具体 Mac LTSC 行为尚待验收。
+
+日常使用
+打开 PowerPoint，选中圆角矩形，在顶部输入 cm 或 %，点击「应用」。
+安装完成后不用再次打开 .ppam 或安装脚本；插件适用于当前打开的文稿。
+
+更新和卸载
+更新前在「PowerPoint 加载项」中取消勾选并移除旧项，再替换文件并重新添加。
+文件准备脚本更新时保留 RadiusInPptNative.previous.ppam，可用于恢复旧文件。
+卸载时从 PowerPoint 加载项列表移除，再删除安装目录即可。
+
+原型范围
+已包含顶部数值输入、单位选择、预设、读取、多选、写入保护和组合事务源码。
+实时固定R、样式刷、布局、自定义预设库及历史尚未迁移。
+当前格式测试通过，尚未在 Mac PowerPoint 加载、编译或验收。
+如加载报错，可记录完整 Office/VBA 错误；源模块保存在仓库 native/。

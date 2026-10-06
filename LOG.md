@@ -1,4 +1,4 @@
-> 2026-10-07：本分支新增Mac原生VBA功能区实验，详情见[说明](plans/ribbon-vba-mac.md)。
+> 2026-10-07：按用户明确要求，本分支交付改为随PowerPoint加载的原生PPAM，默认构建PPAM及一次安装ZIP；不再默认构建外置app。10项格式/文件准备测试和287项Office.js回归测试，宿主编译及重启加载待验收。详情见[说明](plans/ribbon-vba-mac.md)。
 
 # LOG
 
