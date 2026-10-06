@@ -1,0 +1,613 @@
+{
+  "passed": 7,
+  "checks": [
+    "three rounded shapes: 0.30 + two up steps = 0.50cm; arrow preserved",
+    "mixed strict selection: partial-protection state, radius controls disabled, unchanged",
+    "zero + three up steps = 0.30cm; protection toggle on/off, metadata preserved",
+    "20% up/down intermediate values and 50% upper limit; final radius 1.00cm",
+    "fresh scaled nested group: 0.10 + two up steps = 0.30cm; protection on/off, geometry and hierarchy preserved",
+    "strict nested group: partial-protection state, writes disabled, unchanged",
+    "non-rounded arrow: no eligible radius, writes disabled, unchanged"
+  ],
+  "sourceFiles": [
+    {
+      "file": "/tmp/RadiusNativeV140Controls.pptx",
+      "slides": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "6",
+        "7"
+      ]
+    },
+    {
+      "file": "/tmp/RadiusNativeV140GroupControls.pptx",
+      "slides": [
+        "5"
+      ]
+    }
+  ],
+  "savedState": {
+    "1": {
+      "Parent": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          9.0,
+          5.0
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"padding\": 0.35, \"linkRMode\": \"same\", \"childIds\": [\"3\"]}",
+          "RADIUSLOCK_V1": "0.500000"
+        },
+        "fraction": 0.1,
+        "radiusCm": 0.5
+      },
+      "Child": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          13.0,
+          2.0,
+          4.0,
+          3.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "2",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.500000"
+        },
+        "fraction": 0.16667,
+        "radiusCm": 0.5000100000000001
+      },
+      "Plain": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          19.0,
+          2.0,
+          5.0,
+          4.0
+        ],
+        "tags": {},
+        "fraction": 0.125,
+        "radiusCm": 0.5
+      },
+      "Arrow": {
+        "id": "5",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          10.0,
+          5.0,
+          2.0
+        ],
+        "tags": {}
+      }
+    },
+    "2": {
+      "EarlyPlain": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          5.0,
+          3.0
+        ],
+        "tags": {},
+        "fraction": 0.15,
+        "radiusCm": 0.44999999999999996
+      },
+      "LateProtectedChild": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          10.0,
+          2.0,
+          5.0,
+          3.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "42",
+          "RADIUSLOCKSTRICT_V1": "1",
+          "RADIUSLOCK_V1": "0.45"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.44999999999999996
+      }
+    },
+    "3": {
+      "ProtectionChild": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          6.0,
+          4.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "42",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.075,
+        "radiusCm": 0.3
+      }
+    },
+    "4": {
+      "UnitsChild": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          4.0,
+          2.0
+        ],
+        "tags": {},
+        "fraction": 0.5,
+        "radiusCm": 1.0
+      }
+    },
+    "5": {
+      "OuterGroup": {
+        "id": "8",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.8,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "GroupParent": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          8.4,
+          3.2
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"linkRMode\": \"same\", \"childIds\": [\"5\"]}",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.09375,
+        "radiusCm": 0.30000000000000004
+      },
+      "InnerGroup": {
+        "id": "7",
+        "group": true,
+        "parent": "OuterGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "NestedChild": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          2.4
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "3",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.125,
+        "radiusCm": 0.3
+      },
+      "NestedArrow": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          6.0,
+          5.6,
+          1.6
+        ],
+        "tags": {}
+      }
+    },
+    "6": {
+      "OuterGroup": {
+        "id": "2",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.8,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "GroupParent": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          8.4,
+          3.2
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"linkRMode\": \"same\", \"childIds\": [\"5\"]}"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.48
+      },
+      "InnerGroup": {
+        "id": "4",
+        "group": true,
+        "parent": "OuterGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "NestedChild": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          2.4
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "3",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCKSTRICT_V1": "1"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.36
+      },
+      "NestedArrow": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          6.0,
+          5.6,
+          1.6
+        ],
+        "tags": {}
+      }
+    },
+    "7": {
+      "OnlyArrow": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          5.0,
+          2.0
+        ],
+        "tags": {}
+      }
+    }
+  },
+  "host": "PowerPoint for Mac 16.113.3 (26092714)",
+  "version": "1.4.0",
+  "date": "2026-10-07",
+  "phaseSnapshots": {
+    "slide1_after_first_up": {
+      "Parent": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          9.0,
+          5.0
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"padding\": 0.35, \"linkRMode\": \"same\", \"childIds\": [\"3\"]}",
+          "RADIUSLOCK_V1": "0.400000"
+        },
+        "fraction": 0.08,
+        "radiusCm": 0.4
+      },
+      "Child": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          13.0,
+          2.0,
+          4.0,
+          3.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "2",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.400000"
+        },
+        "fraction": 0.13333,
+        "radiusCm": 0.39999
+      },
+      "Plain": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          19.0,
+          2.0,
+          5.0,
+          4.0
+        ],
+        "tags": {},
+        "fraction": 0.1,
+        "radiusCm": 0.4
+      },
+      "Arrow": {
+        "id": "5",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          10.0,
+          5.0,
+          2.0
+        ],
+        "tags": {}
+      }
+    },
+    "slide3_after_three_up_and_protect": {
+      "id": "2",
+      "group": false,
+      "parent": null,
+      "boxCm": [
+        2.0,
+        2.0,
+        6.0,
+        4.0
+      ],
+      "tags": {
+        "LAYOUTCHILD_V1": "42",
+        "CUSTOM": "KeepCase",
+        "RADIUSLOCK_V1": "0.300000",
+        "RADIUSLOCKSTRICT_V1": "1"
+      },
+      "fraction": 0.075,
+      "radiusCm": 0.3
+    },
+    "slide4_after_percent_up": {
+      "id": "2",
+      "group": false,
+      "parent": null,
+      "boxCm": [
+        2.0,
+        2.0,
+        4.0,
+        2.0
+      ],
+      "tags": {},
+      "fraction": 0.201,
+      "radiusCm": 0.402
+    },
+    "slide4_after_percent_down": {
+      "id": "2",
+      "group": false,
+      "parent": null,
+      "boxCm": [
+        2.0,
+        2.0,
+        4.0,
+        2.0
+      ],
+      "tags": {},
+      "fraction": 0.2,
+      "radiusCm": 0.4
+    },
+    "clean_group_after_first_up": {
+      "OuterGroup": {
+        "id": "10",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.8,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "GroupParent": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          8.4,
+          3.2
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"linkRMode\": \"same\", \"childIds\": [\"5\"]}"
+        },
+        "fraction": 0.0625,
+        "radiusCm": 0.2
+      },
+      "InnerGroup": {
+        "id": "9",
+        "group": true,
+        "parent": "OuterGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "NestedChild": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          2.4
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "3",
+          "CUSTOM": "KeepCase"
+        },
+        "fraction": 0.08333,
+        "radiusCm": 0.199992
+      },
+      "NestedArrow": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          6.0,
+          5.6,
+          1.6
+        ],
+        "tags": {}
+      }
+    },
+    "clean_group_after_second_up_and_protect_unprotect": {
+      "OuterGroup": {
+        "id": "16",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.8,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "GroupParent": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          8.4,
+          3.2
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"linkRMode\": \"same\", \"childIds\": [\"5\"]}",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.09375,
+        "radiusCm": 0.30000000000000004
+      },
+      "InnerGroup": {
+        "id": "15",
+        "group": true,
+        "parent": "OuterGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "NestedChild": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          2.4
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "3",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.125,
+        "radiusCm": 0.3
+      },
+      "NestedArrow": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          6.0,
+          5.6,
+          1.6
+        ],
+        "tags": {}
+      }
+    }
+  },
+  "notes": [
+    "The first fixture was manually moved during concurrent UI operation; slide 5 is verified from a fresh independent fixture.",
+    "All snapshots were read from PPTX files saved by the real PowerPoint host. No VBA test macros were used.",
+    "Final package was installed while PowerPoint was fully closed. After restart, the ribbon loaded automatically; selection refresh, group up/down and ten algorithm checks passed. Saved group geometry/tags were independently rechecked."
+  ],
+  "finalPackage": {
+    "sha256": "2d9f68a83ea566f650f7b82826da7ea7967a2ccb8359ffde16f141836e930b7d",
+    "installedPath": "/Users/ma/Library/Application Support/RadiusInPptNative/RadiusInPptNative.ppam",
+    "restartAutoLoad": true,
+    "selectionRefresh": true,
+    "groupUpDownAfterRestart": true,
+    "hostAlgorithmChecks": 10
+  }
+}

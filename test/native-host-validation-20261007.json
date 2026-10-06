@@ -1,0 +1,327 @@
+{
+  "passed": 7,
+  "checks": [
+    "tagged parent/child + mixed multiselection: 0.50cm",
+    "late strict leaf: entire selection unchanged",
+    "tagged leaf: protect/reject/unprotect/apply 0.30cm",
+    "4x2cm shape: upper radius clamp 1.00cm",
+    "scaled nested group: 0.30cm + protect/reject/unprotect; hierarchy/tags/geometry preserved",
+    "strict nested leaf: group and all descendants unchanged",
+    "non-rounded arrow: unchanged"
+  ],
+  "savedState": {
+    "1": {
+      "Parent": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          9.0,
+          5.0
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"padding\": 0.35, \"linkRMode\": \"same\", \"childIds\": [\"3\"]}",
+          "RADIUSLOCK_V1": "0.500000"
+        },
+        "fraction": 0.1,
+        "radiusCm": 0.5
+      },
+      "Child": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          13.0,
+          2.0,
+          4.0,
+          3.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "2",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.500000"
+        },
+        "fraction": 0.16667,
+        "radiusCm": 0.5000100000000001
+      },
+      "Plain": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          19.0,
+          2.0,
+          5.0,
+          4.0
+        ],
+        "tags": {},
+        "fraction": 0.125,
+        "radiusCm": 0.5
+      },
+      "Arrow": {
+        "id": "5",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          10.0,
+          5.0,
+          2.0
+        ],
+        "tags": {}
+      }
+    },
+    "2": {
+      "EarlyPlain": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          5.0,
+          3.0
+        ],
+        "tags": {},
+        "fraction": 0.15,
+        "radiusCm": 0.44999999999999996
+      },
+      "LateProtectedChild": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          10.0,
+          2.0,
+          5.0,
+          3.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "42",
+          "RADIUSLOCKSTRICT_V1": "1",
+          "RADIUSLOCK_V1": "0.45"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.44999999999999996
+      }
+    },
+    "3": {
+      "ProtectionChild": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          6.0,
+          4.0
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "42",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.075,
+        "radiusCm": 0.3
+      }
+    },
+    "4": {
+      "UnitsChild": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          4.0,
+          2.0
+        ],
+        "tags": {},
+        "fraction": 0.5,
+        "radiusCm": 1.0
+      }
+    },
+    "5": {
+      "OuterGroup": {
+        "id": "14",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.8,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "GroupParent": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          8.4,
+          3.2
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"linkRMode\": \"same\", \"childIds\": [\"5\"]}",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.09375,
+        "radiusCm": 0.30000000000000004
+      },
+      "InnerGroup": {
+        "id": "13",
+        "group": true,
+        "parent": "OuterGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "NestedChild": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          2.4
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "3",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCK_V1": "0.300000"
+        },
+        "fraction": 0.125,
+        "radiusCm": 0.3
+      },
+      "NestedArrow": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          6.0,
+          5.6,
+          1.6
+        ],
+        "tags": {}
+      }
+    },
+    "6": {
+      "OuterGroup": {
+        "id": "2",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.8,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "GroupParent": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          8.4,
+          3.2
+        ],
+        "tags": {
+          "LAYOUTPARENT_V1": "{\"rows\": 1, \"cols\": 1, \"linkRMode\": \"same\", \"childIds\": [\"5\"]}"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.48
+      },
+      "InnerGroup": {
+        "id": "4",
+        "group": true,
+        "parent": "OuterGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          5.6
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "NestedChild": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          2.0,
+          5.6,
+          2.4
+        ],
+        "tags": {
+          "LAYOUTCHILD_V1": "3",
+          "CUSTOM": "KeepCase",
+          "RADIUSLOCKSTRICT_V1": "1"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.36
+      },
+      "NestedArrow": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerGroup",
+        "boxCm": [
+          13.2,
+          6.0,
+          5.6,
+          1.6
+        ],
+        "tags": {}
+      }
+    },
+    "7": {
+      "OnlyArrow": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          5.0,
+          2.0
+        ],
+        "tags": {}
+      }
+    }
+  },
+  "host": {
+    "application": "PowerPoint for Mac",
+    "version": "16.113.3",
+    "build": "26092714",
+    "date": "2026-10-07"
+  },
+  "intermediateObservations": {
+    "percent20ReadCm": 0.4,
+    "zeroSavedRadiusCm": 0.0,
+    "protectedGroupRadiusCm": 0.3,
+    "preset10SavedRadiusCm": 0.1
+  },
+  "payloadSha256": "ba8fb842257948af21d958a10cfa5e462e8ed88f263b9a6008a8b6048d725fb2"
+}

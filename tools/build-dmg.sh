@@ -13,6 +13,11 @@ set -eo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
+if [ -d "$ROOT/native" ]; then
+  echo '[native] 本分支交付 .ppam 安装包；运行 bash tools/build-app.sh 生成 ZIP。' >&2
+  exit 1
+fi
+
 if [ ! -d "$ROOT/dist/RadiusInPpt.app" ]; then
   echo "[dmg] .app 不存在，先跑 build-app.sh"
   bash "$ROOT/tools/build-app.sh"

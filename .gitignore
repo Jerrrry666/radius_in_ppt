@@ -39,6 +39,11 @@ dist/
 node_modules/
 npm-debug.log*
 
+# Native experiment Python tooling
+.venv-native/
+__pycache__/
+*.pyc
+
 # 备份
 *.bak.*
 *~

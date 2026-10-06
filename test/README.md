@@ -1,6 +1,6 @@
-# R 角调整 — 测试
+# R角调整 — 原生与历史对照测试
 
-## 跑测试
+## Office.js历史对照测试
 
 ```bash
 npm test
@@ -12,10 +12,62 @@ npm test
 node test/test-radius-core.js         # 115项 — 纯算法
 node test/test-features.js            # 96项 — 功能（业务函数）
 node test/test-driver-group.js        # 40项 — 分层树加载/组合事务
-node test/test-regressions.js         # 32项 — 实际UI wiring、OOXML、错误/并发/HTTP回归
+node test/test-regressions.js         # 36项 — 实际UI wiring、OOXML、错误/并发/HTTP回归
 ```
 
 共287项；mock通过不等于Mac LTSC宿主API已验证，driver更新还需要真实PPT的14/14烟囱测试。
+
+## 原生PPAM宿主回归
+
+`test-native-package.py`验证格式/分发文件，不执行VBA。使用普通PPTX测试真实安装后的Ribbon，避免跨VBA项目的测试加载项影响宿主：
+
+```bash
+.venv-native/bin/pip install python-pptx
+.venv-native/bin/python test/native-host-fixture.py build /tmp/RadiusNativeRegression.pptx
+```
+
+在PowerPoint打开该文稿。每页先激活画布、Esc、Cmd+A，使用「R角调整 · Native」执行：
+
+| 页 | 操作及预期 |
+| --- | --- |
+| 1 | 0.50cm预设；父、子、普通圆角均写0.50，箭头不变，布局JSON保留 |
+| 2 | 0.50cm；v1.4显示部分开启1/2并禁用所有R角写入，前面的普通形状也不变 |
+| 3 | 开启防误触→写入按钮禁用→解除防误触→0.30cm |
+| 4 | 20%→读回0.40cm；0cm→读回0；0.10cm→读回0.10；输入100cm→读回钳制值1.00cm |
+| 5 | 0.30cm→开启防误触→写入按钮禁用→解除防误触→0.30cm；两层组合、名称、标签和几何保留 |
+| 6 | 0.30cm；嵌套strict子在解组前拦截，全部ID/几何/标签/R角不变 |
+| 7 | 显示请选择圆角矩形、按钮禁用；箭头不变 |
+
+Cmd+S后运行独立保存状态校验，最终状态以表中最后一步为准：
+
+```bash
+.venv-native/bin/python test/native-host-fixture.py inspect /tmp/RadiusNativeRegression.pptx
+.venv-native/bin/python test/native-host-fixture.py verify /tmp/RadiusNativeRegression.pptx
+```
+
+`verify`断言7页最终半径、原始标签、叶子ID、层级、名称和几何，独立于VBA源码。第4页中间值需实机读取，必要时用`inspect`保存阶段快照。2026-10-07在PowerPoint16.113.3通过；[本机保存状态](native-host-validation-20261007.json)不代表16.111或其他宿主版本已经验收。
+
+## v1.4控件宿主协议
+
+当前17项原生格式/安装测试；真实VBA算法自检10项。微调必须检查保存的实际半径，不能只看输入框变化。
+
+| 页 | 控件操作与核对 |
+| --- | --- |
+| 1 | 混合多选，0.30cm预设→上箭头0.40→保存核对→上箭头0.50；3个圆角、箭头不变 |
+| 2 | 选中全部，部分开启1/2；微调/预设/应用禁用，选区变化自动刷新 |
+| 3 | 0cm，下箭头禁用→连续3次上箭头0.30→保护开启1/1→全部写入禁用→再次点toggle解除 |
+| 4 | 20%应用→上箭头20.1%（R=0.402cm）→下箭头20%（R=0.40cm）→50%应用，上箭头禁用 |
+| 5 | 完整缩放嵌套组，0.10cm→两次上箭头0.30→保护开启2/2→解除；每阶段保存检查几何/层级/标签 |
+| 6 | strict嵌套子选区显示部分开启1/2，全部R角写入禁用，组与叶子不变 |
+| 7 | 非圆角箭头，圆角数0，全部R角控件禁用 |
+
+2026-10-07控件实测中第一个文稿在并发手动操作时发生组合整体移动，第5页另用全新样本重跑。独立核对明确记录两个保存文件来源：
+
+```sh
+.venv-native/bin/python test/native-host-fixture.py verify-controls /tmp/RadiusNativeV140Controls.pptx /tmp/RadiusNativeV140GroupControls.pptx
+```
+
+[控件验收记录](native-host-validation-v1.4-20261007.json)含保存状态及中间数值快照；第5页使用独立样本，其他页使用第一文稿。第一个文稿发生的整体移动不能算作插件的几何验证通过。
 
 ## 测试分层
 
@@ -29,7 +81,7 @@ node test/test-regressions.js         # 32项 — 实际UI wiring、OOXML、错�
 
 **v1.3 重整后**：功能测试用 `assertShape` 验最终状态，**不关心 driver 内部调了哪些方法**。
 
-## 写新功能怎么测（v1.3 流程）
+## 历史Office.js新功能测试流程（v1.3）
 
 ### 1. 拿标准 fixture
 
