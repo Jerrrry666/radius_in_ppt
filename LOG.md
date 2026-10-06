@@ -1,3 +1,5 @@
+> 2026-10-07：本分支新增Mac Office.js功能区实验，详情见[说明](plans/ribbon-officejs-mac.md)。
+
 # LOG
 
 > 项目主日志 — high level 视角

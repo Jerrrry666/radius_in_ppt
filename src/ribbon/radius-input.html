@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>设置 R 角 / Set radius</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <style>
+    :root { color-scheme: light dark; font: 15px -apple-system,BlinkMacSystemFont,sans-serif; }
+    body { max-width: 380px; margin: 24px auto; padding: 0 20px; }
+    h1 { font-size: 20px; } label { display: block; margin: 14px 0 6px; }
+    input,select,button { font: inherit; padding: 10px; border-radius: 8px; border: 1px solid #888; }
+    input { width: 65%; } button { cursor: pointer; margin: 18px 8px 0 0; }
+    #apply { background: #245fc4; color: white; } p { font-size: 12px; line-height: 1.6; } #error { color: #d33; }
+  </style>
+</head>
+<body>
+  <h1 id="title">设置 R 角</h1>
+  <form id="form">
+    <label for="value" id="label">圆角半径</label>
+    <input id="value" type="number" min="0" step="0.01" required autofocus>
+    <select id="unit" aria-label="单位 / Unit"><option value="cm">cm</option><option value="%">%</option></select>
+    <p id="hint">超过短边一半时按最大圆角处理。防误触形状会阻止整批写入。</p>
+    <p id="error" role="alert"></p>
+    <button id="apply" type="submit" disabled>应用</button><button id="cancel" type="button" disabled>取消</button>
+  </form>
+  <script src="radius-input.js"></script>
+</body>
+</html>

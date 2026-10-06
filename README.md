@@ -1,3 +1,5 @@
+> 本分支为Mac Office.js顶部功能区实验，见[实现与验证说明](plans/ribbon-officejs-mac.md)。正式版本号保持1.3.2；宿主验收待完成。
+
 # R 角调整 — macOS PowerPoint 加载项
 
 > 🌍 **[English version](./README.en.md)**

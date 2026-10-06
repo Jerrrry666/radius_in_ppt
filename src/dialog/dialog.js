@@ -2407,17 +2407,64 @@
     else await onSelectionChangedForPipette();
   }
 
+  // Ribbon and pane share this UI controller, selection epochs and monitor.
+  let resolveRibbonReady;
+  const ribbonReady = new Promise((resolve) => { resolveRibbonReady = resolve; });
+  window.RadiusPaneActions = {
+    ready: ribbonReady,
+    notify: showToast,
+    selectionToken: () => selectionEpoch,
+    inputValue: () => ({ value: Number($('radius-input').value) || 0, unit: currentUnit }),
+    async execute(action, payload) {
+      payload = payload || {};
+      if (action === 'apply' && (!Number.isFinite(payload.value) || payload.value < 0 || !['cm', '%'].includes(payload.unit))) {
+        throw new Error('无效的R角数值 / Invalid radius');
+      }
+      const epoch = await refreshSelection();
+      if (epoch !== selectionEpoch) throw new Error('选区已改变 / Selection changed');
+      const shapes = selectedShapes.filter((shape) => shape.isRoundRect);
+      if (!shapes.length) throw new Error('请选中圆角矩形 / Select rounded rectangles');
+      if (action === 'apply') {
+        if (shapes.some((shape) => shape.strictLocked)) throw new Error('请先手动关闭防误触 / Turn off protection first');
+        onUnitChange(payload.unit);
+        $('radius-input').value = String(payload.value);
+        return onApply();
+      }
+      if (action === 'read') {
+        onUnitChange('cm'); $('radius-input').value = String(shapes[0].currentCm);
+        return;
+      }
+      if (action === 'lock') {
+        // A hidden pane may contain an old input. Lock each actual current R.
+        $('radius-input').value = '';
+        return onToggleLock();
+      }
+      if (action === 'strict') return onToggleStrict(!shapes.every((shape) => shape.strictLocked));
+      if (action === 'reapply') return onReapply();
+      if (action === 'pick') return onPipetteButtonClick();
+      if (action === 'brush') {
+        if (!pipetteSource) throw new Error('请先吸取R角 / Pick a radius first');
+        return applyPipetteToSelection();
+      }
+      throw new Error('Unknown ribbon action: ' + action);
+    },
+  };
+
   // ---------------- 初始化 ----------------
 
-  window.PptDriver.onReady(() => {
+  window.PptDriver.onReady(async () => {
+    if (document.readyState === 'loading') {
+      await new Promise((resolve) => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+    }
     // Apply i18n to any [data-i18n] / [data-i18n-*] attributes (HTML inline script
     // already did this on DOMContentLoaded, but call again in case Office is slow
     // and dynamic textContent / placeholder updates need to be re-translated).
     if (window.i18n && window.i18n.applyAll) window.i18n.applyAll();
     bindEvents();
     renderPresets(userPresets); // 渲染空预设库
-    refreshSelection();
     // 选区变化：分发到 pipette（sourcing → pickup；brushing → apply）或 refreshSelection（idle）
     window.PptDriver.onSelectionChanged(handleSelectionChanged);
+    await refreshSelection();
+    resolveRibbonReady();
   });
 })();

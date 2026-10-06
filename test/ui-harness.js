@@ -24,6 +24,7 @@ function createUiHarness(shapes, selected) {
     querySelectorAll() { return []; }
     addEventListener() {}
     setAttribute() {}
+    removeAttribute() {}
   }
   const document = {
     getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); },
@@ -82,7 +83,7 @@ function createUiHarness(shapes, selected) {
   };`;
   const source = fs.readFileSync(path.join(__dirname, '../src/dialog/dialog.js'), 'utf8');
   vm.runInContext(source.replace(/\}\)\(\);\s*$/, exportForTests + '\n})();'), context);
-  return { ...host, ui: context.ui, nodes, timers, logs, queue,
+  return { ...host, ui: context.ui, paneActions: context.window.RadiusPaneActions, nodes, timers, logs, queue,
     select(shapes) { roots = shapes; },
     failRun(fn) { runOverride = fn; },
     get maxRunning() { return maxRunning; },
