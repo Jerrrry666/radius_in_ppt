@@ -3,15 +3,19 @@
   <ribbon><tabs><tab id="NativeRadiusTab" label="R角调整 · Native">
     <group id="NativeRadiusGroup" label="R角数值">
       <box id="NativeRadiusInputRow" boxStyle="horizontal">
-        <editBox id="NativeRadiusValue" label="半径" sizeString="0000.00" getText="NativeGetValue" onChange="NativeChangeValue" supertip="输入半径，点击应用；旁边的上下箭头每次调整0.1并立即应用。"/>
+        <labelControl id="NativeRadiusValueLabel" label="半径"/>
+        <editBox id="NativeRadiusValue" label="半径" showLabel="false" sizeString="0.00" getText="NativeGetValue" onChange="NativeChangeValue" supertip="输入半径，点击应用；右侧上下箭头每次调整0.1当前单位并立即应用。"/>
         <box id="NativeRadiusSteps" boxStyle="vertical">
           <button id="NativeRadiusUp" label="半径增加0.1" showLabel="false" image="stepUp" tag="up" getEnabled="NativeGetStepEnabled" onAction="NativeStep" screentip="增加0.1并立即应用"/>
           <button id="NativeRadiusDown" label="半径减少0.1" showLabel="false" image="stepDown" tag="down" getEnabled="NativeGetStepEnabled" onAction="NativeStep" screentip="减少0.1并立即应用"/>
         </box>
       </box>
-      <dropDown id="NativeRadiusUnit" label="单位" getSelectedItemIndex="NativeGetUnit" onAction="NativeChangeUnit">
-        <item id="NativeCm" label="厘米 cm"/><item id="NativePercent" label="短边百分比 %"/>
-      </dropDown>
+      <box id="NativeRadiusUnitRow" boxStyle="horizontal">
+        <labelControl id="NativeRadiusUnitLabel" label="单位"/>
+        <dropDown id="NativeRadiusUnit" label="单位" showLabel="false" getSelectedItemIndex="NativeGetUnit" onAction="NativeChangeUnit">
+          <item id="NativeCm" label="厘米 cm"/><item id="NativePercent" label="短边百分比 %"/>
+        </dropDown>
+      </box>
       <button id="NativeRead" label="读取选区" image="readSelection" getEnabled="NativeGetReadEnabled" onAction="NativeRead"/>
       <button id="NativeApply" label="应用R角" size="large" image="applyRadius" getEnabled="NativeGetWriteEnabled" onAction="NativeApply"/>
     </group>
@@ -20,6 +24,68 @@
       <button id="Native01" label="0.10cm" image="presetSmall" tag="0.1" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
       <button id="Native03" label="0.30cm" image="presetMedium" tag="0.3" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
       <button id="Native05" label="0.50cm" image="presetLarge" tag="0.5" getEnabled="NativeGetWriteEnabled" onAction="NativePreset"/>
+    </group>
+    <group id="NativeRelationGroup" label="父子关系">
+      <box id="NativeRelationCreate" boxStyle="vertical">
+        <button id="NativeRelParent" label="设为父对象" image="relationParent" tag="parent" getEnabled="NativeRelGetEnabled" onAction="NativeRelAction" supertip="先单选父圆角矩形，点击记住父对象，再改选子对象。旧布局可查看或显式解除后重建。"/>
+        <button id="NativeRelBind" label="绑定子对象" image="relationBind" tag="bind" getEnabled="NativeRelGetEnabled" onAction="NativeRelAction" supertip="将当前选中的圆角矩形绑定到已指定的父对象；保留位置、尺寸、R角、组合和防误触。已有其他关系的对象须先显式解除。"/>
+        <button id="NativeRelCancel" label="取消待绑定" image="relationDetach" tag="cancel" getEnabled="NativeRelGetEnabled" onAction="NativeRelAction"/>
+      </box>
+      <box id="NativeRelationInspect" boxStyle="vertical">
+        <dynamicMenu id="NativeRelView" label="查看关系" image="relationView" tag="父：|子|选中父子对象|选中全部子对象|本页暂无关系|父对象缺失|关系读取失败" getEnabled="NativeRelGetEnabled" getContent="NativeRelGetMenu" invalidateContentOnDrop="true" supertip="列出当前页的关系编号、父对象和子对象名称，点击成员定位。"/>
+        <toggleButton id="NativeRelPreview" label="编号预览" image="relationPreview" tag="preview|关系编号预览 · 副本（关闭预览返回原稿）|父|子" getEnabled="NativeRelGetEnabled" getPressed="NativeRelPreviewPressed" onAction="NativeRelPreview" supertip="在临时副本文稿中显示关系编号及父/子角色。原稿保存和导出保留原画面；再次点击关闭副本并返回原稿。"/>
+        <menu id="NativeRelRemove" label="解除关系" image="relationDetach">
+          <button id="NativeRelDetach" label="解除当前子对象" image="relationDetach" tag="child" getEnabled="NativeRelGetEnabled" onAction="NativeRelAction"/>
+          <button id="NativeRelRemoveAll" label="解除整组关系…" image="relationDetach" tag="whole|解除{key}：父「{parent}」及{count}个子对象的关系？" getEnabled="NativeRelGetEnabled" onAction="NativeRelAction" supertip="仅解除父子归属，所有对象留在原位，R角和保护状态保留。"/>
+        </menu>
+      </box>
+      <box id="NativeRelationStatusBox" boxStyle="vertical">
+        <labelControl id="NativeRelStatus" tag="当前：|未绑定|父|子|待绑定父：|请选择圆角矩形|选区：|编号预览副本|关系状态读取失败|关系不完整|个对象|未绑定：" getLabel="NativeRelGetStatus"/>
+        <labelControl id="NativeRelInfo" tag="父：|子：|本页关系：|待绑定子：|请改选子对象|选择中含父对象|已有其他关系，请先解除|关闭预览返回原稿" getLabel="NativeRelGetInfo"/>
+      </box>
+    </group>
+    <group id="NativeLayoutGroup" label="自动布局与R角联动">
+      <box id="NativeLayoutRowsRow" boxStyle="horizontal">
+        <labelControl id="NativeLayoutRowsLabel" label="行数"/>
+        <editBox id="NativeLayoutRows" label="行数" showLabel="false" sizeString="00" tag="rows" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="输入行数，或用旁边的箭头每次调整1；按子对象数量自动配列数，最多25行。修改后点击应用布局。"/>
+        <box id="NativeLayoutRowsSteps" boxStyle="vertical">
+          <button id="NativeLayoutRowsUp" label="行数增加1" showLabel="false" image="stepUp" tag="rows|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="行数增加1，自动调整列数"/>
+          <button id="NativeLayoutRowsDown" label="行数减少1" showLabel="false" image="stepDown" tag="rows|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="行数减少1，自动调整列数"/>
+        </box>
+      </box>
+      <box id="NativeLayoutColumnsRow" boxStyle="horizontal">
+        <labelControl id="NativeLayoutColumnsLabel" label="列数"/>
+        <editBox id="NativeLayoutColumns" label="列数" showLabel="false" sizeString="00" tag="columns" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="输入列数，或用旁边的箭头每次调整1；按子对象数量自动配行数，最多25列。修改后点击应用布局。"/>
+        <box id="NativeLayoutColumnsSteps" boxStyle="vertical">
+          <button id="NativeLayoutColumnsUp" label="列数增加1" showLabel="false" image="stepUp" tag="columns|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="列数增加1，自动调整行数"/>
+          <button id="NativeLayoutColumnsDown" label="列数减少1" showLabel="false" image="stepDown" tag="columns|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="列数减少1，自动调整行数"/>
+        </box>
+      </box>
+      <box id="NativeLayoutRadius" boxStyle="horizontal">
+        <labelControl id="NativeLayoutModeLabel" label="子R角"/>
+        <dropDown id="NativeLayoutMode" label="子R角" showLabel="false" getSelectedItemIndex="NativeLayoutGetMode" onAction="NativeLayoutMode" getEnabled="NativeLayoutGetEnabled" supertip="已应用的关系切换模式立即更新子R角，保留位置尺寸。子R角限到短边一半；关闭模式保留原adjustment。">
+          <item id="NativeLayoutSame" label="与父相同"/><item id="NativeLayoutSubtract" label="父R减边距"/><item id="NativeLayoutOff" label="关闭R联动"/>
+        </dropDown>
+      </box>
+      <box id="NativeLayoutPaddingRow" boxStyle="horizontal">
+        <labelControl id="NativeLayoutPaddingLabel" label="边距cm"/>
+        <editBox id="NativeLayoutPadding" label="边距cm" showLabel="false" sizeString="0.00" tag="padding" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="父框到子框的内边距，箭头每次调整0.1cm，下限0。空间不足时拒绝，不自动改小。修改后点击应用布局。"/>
+        <box id="NativeLayoutPaddingSteps" boxStyle="vertical">
+          <button id="NativeLayoutPaddingUp" label="边距增加0.1cm" showLabel="false" image="stepUp" tag="padding|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="边距增加0.1cm"/>
+          <button id="NativeLayoutPaddingDown" label="边距减少0.1cm" showLabel="false" image="stepDown" tag="padding|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="边距减少0.1cm，下限0"/>
+        </box>
+      </box>
+      <box id="NativeLayoutGapRow" boxStyle="horizontal">
+        <labelControl id="NativeLayoutGapLabel" label="间距cm"/>
+        <editBox id="NativeLayoutGap" label="间距cm" showLabel="false" sizeString="0.00" tag="gap" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="子框之间的间距，箭头每次调整0.1cm，下限0。修改后点击应用布局。"/>
+        <box id="NativeLayoutGapSteps" boxStyle="vertical">
+          <button id="NativeLayoutGapUp" label="间距增加0.1cm" showLabel="false" image="stepUp" tag="gap|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="间距增加0.1cm"/>
+          <button id="NativeLayoutGapDown" label="间距减少0.1cm" showLabel="false" image="stepDown" tag="gap|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="间距减少0.1cm，下限0"/>
+        </box>
+      </box>
+      <labelControl id="NativeLayoutState" tag="联动已开启|联动已关闭|待应用布局|联动暂停：|请选择一组父子" getLabel="NativeLayoutStatus"/>
+      <button id="NativeLayoutApply" label="应用布局" image="layoutApply" getEnabled="NativeLayoutGetEnabled" onAction="NativeLayoutApply" supertip="按父对象尺寸、行列、厘米边距和间距排列全部子对象，并应用R角模式。任何子对象受保护时整批停止。"/>
+      <toggleButton id="NativeLayoutAuto" label="自动联动" image="relationBind" getEnabled="NativeLayoutGetEnabled" getPressed="NativeLayoutAutoPressed" onAction="NativeLayoutAuto" supertip="开启时立即应用布局。之后父对象移动、缩放或调整黄色手柄后，点击空白处或其他对象即可同步，保存前也同步；本加载项修改父R角立即联动。关闭后可手动应用布局。"/>
     </group>
     <group id="NativeProtectionGroup" label="选区防误触状态">
       <toggleButton id="NativeProtect" label="防误触" size="large" image="protect" getPressed="NativeGetProtectionPressed" getEnabled="NativeGetProtectionEnabled" onAction="NativeToggleProtect" supertip="开启后阻止本加载项写入R角；混合选区点击可全部开启。再次点击可全部解除。"/>

@@ -8,14 +8,19 @@
 | --- | --- |
 | 交付 | 原生PPAM和一次安装ZIP，由PowerPoint加载 |
 | 功能 | cm/%、读取、预设、多选、限幅、防误触、完整顶层组合事务 |
-| v1.4新增 | 所有动作图标、自动保护状态、±0.1即时微调 |
-| 本机宿主 | PowerPoint16.113.3/26092714；16.111目标待另行验收 |
-| 格式与安装测试 | 17项；不执行VBA |
-| VBA自检 | 10项；实际宿主运行 |
+| v1.4新增 | 所有动作图标、自动保护状态、半径即时微调、父子关系、编号预览、网格布局/R角联动及四个布局输入微调 |
+| 本机宿主 | 本轮控件补验16.113.4/26100421；基础/关系记录16.113.3/26092714；16.111目标待另行验收 |
+| 格式与安装测试 | 19项通过；不执行VBA |
+| 父子关系宿主验证 | 7页保存核对及单页批量绑定通过；临时副本预览、跨页/文稿取消通过 |
+| 布局联动宿主验证 | 9页协议进行中；已核对网格、即时父R、内缩0下限、父移动缩放及off模式 |
+| 布局控件补验 | 两列紧凑排列、四框八个箭头；暂存无写入、普通/嵌套网格、边界和保护状态通过 |
+| 半径控件补验 | 半径框宽度/箭头间距与布局输入统一；cm/%即时微调、0/50%边界及混合strict禁用、保存核对通过 |
+| 框内箭头样式诉求 | 尚未实现；公开Ribbon XML未提供自定义内嵌步进框，需用户选择是否改用自定义参数面板 |
+| VBA自检 | 26项；实际宿主运行，含参数微调/容量/零下限 |
 | Office.js迁移对照 | 保留npm test，不能代替原生宿主验证 |
 | 未迁移 | 实时固定R、复杂布局、样式刷、自定义预设、历史 |
 
-默认构建使用`npm run build`或`python3 tools/build-native.py --distribution`。安装到`~/Library/Application Support/RadiusInPptNative`，不构建.app、不运行server、不注册wef。原生架构为Ribbon/事件通知→RadiusNativeCore→PptNativeDriver。验收记录见[changelogs/v1.4.md](changelogs/v1.4.md)。
+默认构建使用`npm run build`或`python3 tools/build-native.py --distribution`。安装到`~/Library/Application Support/RadiusInPptNative`，不构建.app、不运行server、不注册wef。原生架构为Ribbon/事件通知→RadiusNativeCore、RadiusNativeRelations和RadiusNativeLayout→PptNativeDriver。父子关系管理归属并显示编号，网格布局保留厘米边距/间距，R支持same/subtract/off。原生父R操作即时联动，直接父变化在选区改变和保存前同步。验收记录见[changelogs/v1.4.md](changelogs/v1.4.md)。关系/布局及控件优化纳入本地main，沿用未发布的v1.4.0。
 
 ## 以下为历史Office.js路线记录
 

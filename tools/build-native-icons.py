@@ -46,6 +46,47 @@ class Icon:
         (DESTINATION / (name + '.svg')).write_text('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><title>' + escape(name) + '</title>' + ''.join(self.elements) + '</svg>\n')
 
 
+def build_relation_icons():
+    icon = Icon()
+    icon.rect((3, 3, 29, 29), 4)
+    icon.rect((8, 15, 14, 23), 1, fill='#ffffff', width=1.8)
+    icon.rect((18, 15, 24, 23), 1, fill='#ffffff', width=1.8)
+    icon.line([(9, 8), (23, 8)], width=2.5)
+    icon.save('relationParent')
+    icon = Icon()
+    icon.circle((9, 11), 6, width=2.3)
+    icon.circle((23, 21), 6, color=GREEN, width=2.3)
+    icon.line([(12, 13), (20, 19)], width=3)
+    icon.save('relationBind')
+    icon = Icon()
+    icon.rect((3, 3, 10, 10), 1)
+    icon.line([(6, 11), (6, 24), (15, 24)], width=1.8)
+    icon.line([(6, 16), (15, 16)], width=1.8)
+    icon.rect((16, 12, 28, 19), 1, color=GREEN, width=1.8)
+    icon.rect((16, 23, 28, 30), 1, color=GREEN, width=1.8)
+    icon.save('relationView')
+    icon = Icon()
+    icon.rect((3, 6, 29, 28), 3)
+    icon.rect((6, 2, 17, 12), 2, fill=BLUE, width=1.5)
+    icon.line([(10, 5), (12, 4), (12, 9)], color='#ffffff', width=1.5)
+    icon.rect((18, 16, 28, 26), 2, color=GREEN, fill=GREEN, width=1.5)
+    icon.line([(22, 19), (24, 19), (24, 21), (22, 23), (25, 23)], color='#ffffff', width=1.2)
+    icon.save('relationPreview')
+    icon = Icon()
+    icon.circle((9, 11), 6, width=2.3)
+    icon.circle((23, 21), 6, width=2.3)
+    icon.line([(12, 13), (14, 15)], width=2.5)
+    icon.line([(18, 18), (20, 19)], width=2.5)
+    icon.line([(14, 22), (20, 10)], color='#a8292e', width=2.8)
+    icon.save('relationDetach')
+    icon = Icon()
+    icon.rect((2, 2, 30, 30), 3)
+    for left in (7, 18):
+        for top in (7, 18):
+            icon.rect((left, top, left + 7, top + 7), 1, color=GREEN, width=1.6)
+    icon.save('layoutApply')
+
+
 def main():
     DESTINATION.mkdir(parents=True, exist_ok=True)
     for name, radius in (('presetZero',0), ('presetSmall',3), ('presetMedium',6), ('presetLarge',9)):
@@ -86,6 +127,7 @@ def main():
     icon.line([(10,21),(22,21)],PURPLE)
     icon.circle((15,24),1.3,color=PURPLE,fill=PURPLE,width=0)
     icon.save('selfTest')
+    build_relation_icons()
 
 
 if __name__ == '__main__':

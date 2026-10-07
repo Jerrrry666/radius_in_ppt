@@ -149,7 +149,7 @@ class NativePackageTests(unittest.TestCase):
         self.assertTrue(any(e.get('Extension') == 'png' and e.get('ContentType') == 'image/png' for e in types))
         images = set()
         for control in ui.iter():
-            if control.tag.split('}')[-1] not in ('button', 'toggleButton'):
+            if control.tag.split('}')[-1] not in ('button', 'toggleButton', 'menu', 'dynamicMenu'):
                 continue
             name = control.get('image')
             self.assertIsNotNone(name, control.get('id'))
@@ -162,6 +162,42 @@ class NativePackageTests(unittest.TestCase):
             self.assertEqual(payload[:8], b'\x89PNG\r\n\x1a\n')
             self.assertEqual(struct.unpack('>II', payload[16:24]), (32, 32))
         self.assertEqual(images, set(relationships))
+
+    def test_relation_controls_and_localized_dynamic_labels_are_packaged(self):
+        ui = ET.fromstring(self.archive.read('customUI/customUI.xml'))
+        controls = {e.get('id'): e for e in ui.iter() if e.get('id')}
+        expected = {'NativeRelParent', 'NativeRelBind', 'NativeRelCancel', 'NativeRelView',
+                    'NativeRelPreview', 'NativeRelDetach', 'NativeRelRemoveAll',
+                    'NativeRelStatus', 'NativeRelInfo'}
+        self.assertTrue(expected <= controls.keys())
+        self.assertEqual(controls['NativeRelView'].get('getContent'), 'NativeRelGetMenu')
+        self.assertEqual(controls['NativeRelPreview'].get('onAction'), 'NativeRelPreview')
+        self.assertIn('副本', controls['NativeRelPreview'].get('tag'))
+        for source in SOURCES:
+            source.read_text().encode('cp1252')
+
+    def test_layout_configuration_and_modes_are_exposed_in_ribbon(self):
+        ui = ET.fromstring(self.archive.read('customUI/customUI.xml'))
+        controls = {e.get('id'): e for e in ui.iter() if e.get('id')}
+        for name in ('Rows', 'Columns', 'Padding', 'Gap'):
+            field = controls['NativeLayout' + name]
+            self.assertEqual(field.tag.split('}')[-1], 'editBox')
+            self.assertEqual(field.get('getText'), 'NativeLayoutGetText')
+            self.assertEqual(field.get('onChange'), 'NativeLayoutParameter')
+            self.assertEqual(field.get('showLabel'), 'false')
+            steps = list(controls['NativeLayout' + name + 'Steps'])
+            self.assertEqual([e.get('tag') for e in steps],
+                             [field.get('tag') + '|up', field.get('tag') + '|down'])
+            for step, image in zip(steps, ('stepUp', 'stepDown')):
+                self.assertEqual(step.get('showLabel'), 'false')
+                self.assertEqual(step.get('image'), image)
+                self.assertEqual(step.get('getEnabled'), 'NativeLayoutGetStepEnabled')
+                self.assertEqual(step.get('onAction'), 'NativeLayoutStep')
+        modes = list(controls['NativeLayoutMode'])
+        self.assertEqual([e.get('id') for e in modes],
+                         ['NativeLayoutSame', 'NativeLayoutSubtract', 'NativeLayoutOff'])
+        self.assertEqual(controls['NativeLayoutAuto'].get('getPressed'), 'NativeLayoutAutoPressed')
+        self.assertEqual(controls['NativeLayoutApply'].get('onAction'), 'NativeLayoutApply')
 
     def test_missing_or_invalid_image_fails_before_packaging(self):
         with tempfile.TemporaryDirectory() as directory:

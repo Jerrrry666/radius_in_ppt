@@ -112,10 +112,10 @@ def build(path):
     presentation.save(path)
 
 
-def inspect(path):
+def inspect(path, slide_count=7):
     result = {}
     with zipfile.ZipFile(path) as archive:
-        for i in range(1, 8):
+        for i in range(1, slide_count + 1):
             slide_path = 'ppt/slides/slide%d.xml' % i
             root = ET.fromstring(archive.read(slide_path))
             rel_path = 'ppt/slides/_rels/slide%d.xml.rels' % i

@@ -22,9 +22,171 @@ Public Function SelectionRoots() As Collection
     Set SelectionRoots = result
 End Function
 
+Public Function SelectionObjects() As Collection
+    Dim result As New Collection, selected As Object, selection As Object, i As Long
+    If Not HasShapeSelection Then Err.Raise 5, , "Select shapes first."
+    Set selection = Application.ActiveWindow.Selection
+    If selection.HasChildShapeRange Then
+        Set selected = selection.ChildShapeRange
+    Else
+        Set selected = selection.ShapeRange
+    End If
+    For i = 1 To selected.Count
+        result.Add selected.Item(i)
+    Next i
+    Set SelectionObjects = result
+End Function
+
 Public Function CurrentSlide() As Object
     Set CurrentSlide = Application.ActiveWindow.View.Slide
 End Function
+
+Public Function CurrentPresentation() As Object
+    Set CurrentPresentation = Application.ActivePresentation
+End Function
+
+Public Function SlideId(ByVal slide As Object) As Long
+    SlideId = slide.SlideId
+End Function
+
+Public Function SlideRoots(ByVal slide As Object) As Collection
+    Dim result As New Collection, shape As Object
+    For Each shape In slide.Shapes
+        result.Add shape
+    Next shape
+    Set SlideRoots = result
+End Function
+
+Public Function HasPresentation() As Boolean
+    HasPresentation = (Application.Presentations.Count > 0)
+End Function
+
+Public Function HasTag(ByVal shape As Object, ByVal key As String) As Boolean
+    Dim i As Long
+    For i = 1 To shape.Tags.Count
+        If StrComp(shape.Tags.Name(i), key, vbTextCompare) = 0 Then
+            HasTag = True
+            Exit Function
+        End If
+    Next i
+End Function
+
+Public Sub SelectObject(ByVal shape As Object)
+    shape.Select
+End Sub
+
+Public Sub SelectObjects(ByVal shapes As Collection)
+    Dim shape As Object, first As Boolean
+    first = True
+    For Each shape In shapes
+        shape.Select first
+        first = False
+    Next shape
+End Sub
+
+Public Function FirstSlide(ByVal presentation As Object) As Object
+    Set FirstSlide = presentation.Slides(1)
+End Function
+
+Public Sub ActivatePresentation(ByVal presentation As Object)
+    presentation.Windows(1).Activate
+End Sub
+
+Public Function CreateSlideCopy(ByVal slide As Object) As Object
+    Dim result As Object, pasted As Object
+    Dim errorNumber As Long, errorText As String, recoveryText As String
+    On Error GoTo Failed
+    slide.Copy
+    Set result = Application.Presentations.Add
+    result.PageSetup.SlideWidth = slide.Parent.PageSetup.SlideWidth
+    result.PageSetup.SlideHeight = slide.Parent.PageSetup.SlideHeight
+    Set pasted = result.Slides.Paste(1)
+    Set CreateSlideCopy = result
+    Exit Function
+Failed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    If Not result Is Nothing Then
+        On Error Resume Next
+        result.Saved = -1
+        result.Close
+        If Err.Number <> 0 Then recoveryText = " Preview recovery failed: " & Err.Description
+        On Error GoTo 0
+    End If
+    Err.Raise errorNumber, "PptNativeDriver", errorText & recoveryText
+End Function
+
+Public Function ShapeBox(ByVal shape As Object) As Variant
+    ShapeBox = Array(CDbl(shape.Left), CDbl(shape.Top), CDbl(shape.Width), CDbl(shape.Height))
+End Function
+
+Public Sub SetShapeBox(ByVal shape As Object, ByVal box As Variant)
+    Dim locked As Long, errorNumber As Long, errorText As String, recoveryText As String
+    locked = shape.LockAspectRatio
+    On Error GoTo Failed
+    shape.LockAspectRatio = 0
+    shape.Width = CSng(box(2))
+    shape.Height = CSng(box(3))
+    shape.Left = CSng(box(0))
+    shape.Top = CSng(box(1))
+    shape.LockAspectRatio = locked
+    Exit Sub
+Failed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    On Error Resume Next
+    Err.Clear
+    shape.LockAspectRatio = locked
+    If Err.Number <> 0 Then recoveryText = " Aspect-ratio recovery failed: " & Err.Description
+    On Error GoTo 0
+    Err.Raise errorNumber, "PptNativeDriver", errorText & recoveryText
+End Sub
+
+Public Function HasTransform(ByVal shape As Object) As Boolean
+    HasTransform = (Abs(CDbl(shape.Rotation)) > 0.0001 Or shape.HorizontalFlip <> 0 Or shape.VerticalFlip <> 0)
+End Function
+
+Public Function Slides(ByVal presentation As Object) As Collection
+    Dim result As New Collection, slide As Object
+    For Each slide In presentation.Slides
+        result.Add slide
+    Next slide
+    Set Slides = result
+End Function
+
+Public Function IsCurrentSlide(ByVal slide As Object) As Boolean
+    Dim active As Object
+    If Not HasPresentation Then Exit Function
+    Set active = CurrentSlide()
+    IsCurrentSlide = (active Is slide)
+End Function
+
+Public Sub ClearSelection()
+    Application.ActiveWindow.Selection.Unselect
+End Sub
+
+Public Sub AddTextBadge(ByVal slide As Object, ByVal text As String, ByVal left As Double, ByVal top As Double, ByVal width As Double, ByVal color As Long)
+    Dim badge As Object
+    Set badge = slide.Shapes.AddShape(1, CSng(left), CSng(top), CSng(width), 17!)
+    badge.Name = "RadiusRelationPreview_" & CStr(badge.Id)
+    badge.Fill.ForeColor.RGB = color
+    badge.Line.Visible = 0
+    With badge.TextFrame
+        .MarginLeft = 4!
+        .MarginRight = 3!
+        .MarginTop = 1!
+        .MarginBottom = 0!
+        .TextRange.Text = text
+        .TextRange.Font.Size = 10!
+        .TextRange.Font.Color.RGB = RGB(255, 255, 255)
+    End With
+End Sub
+
+Public Sub CloseTemporaryPresentation(ByVal presentation As Object)
+    ' Only the caller-owned disposable copy may use this operation.
+    presentation.Saved = -1
+    presentation.Close
+End Sub
 
 Public Function ShapeType(ByVal shape As Object) As Long
     ShapeType = shape.Type

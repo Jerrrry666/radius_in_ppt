@@ -49,7 +49,7 @@ Cmd+S后运行独立保存状态校验，最终状态以表中最后一步为准
 
 ## v1.4控件宿主协议
 
-当前17项原生格式/安装测试；真实VBA算法自检10项。微调必须检查保存的实际半径，不能只看输入框变化。
+当前19项原生格式/安装测试（初始控件验收时17项、关系阶段18项）；当前真实VBA算法自检26项。以下初始控件协议记录当时的10项。微调必须检查保存的实际半径，不能只看输入框变化。
 
 | 页 | 控件操作与核对 |
 | --- | --- |
@@ -68,6 +68,94 @@ Cmd+S后运行独立保存状态校验，最终状态以表中最后一步为准
 ```
 
 [控件验收记录](native-host-validation-v1.4-20261007.json)含保存状态及中间数值快照；第5页使用独立样本，其他页使用第一文稿。第一个文稿发生的整体移动不能算作插件的几何验证通过。
+
+半径框排列统一的补验使用新的7页基线：第1页多选0.30→上0.40→下0.30cm；第2页mixed strict禁用；第4页0下限及20%→20.1%→20%、50%上限。各数值阶段保存独立OOXML快照，最终核对全部7页的ID、几何、层级、文字及标签，其余5页保持基线。见[PowerPoint16.113.4半径控件补验](native-host-validation-radius-controls-20261007.json)；它不等同于重跑上述完整组合操作协议。
+
+## 父子关系宿主协议
+
+使用已安装的真实PPAM及普通PPTX，不在用户文稿中测试。fixture生成依赖python-pptx；格式测试依赖仍单列在native/requirements-test.txt。
+
+```sh
+.venv-native/bin/pip install python-pptx
+.venv-native/bin/python test/native-relations-fixture.py build /tmp/RadiusNativeRelations.pptx
+```
+
+每页在实际画布激活选区，可用PowerPoint选择窗格按名称选形状；组内叶子须实际进入组选中，关系回调读取ChildShapeRange。切换页面时先把焦点置于缩略图窗格再用方向键，确认画布已切页。
+
+| 页 | 操作及最终预期 |
+| --- | --- |
+| 1 | 设ParentBox为父，依次绑定ChildA/B/C，其中B受strict保护；另建OtherParent/OtherChild的G02。菜单定位、选全部子及预览。尝试跨组改绑应禁用。保存bound阶段；解除ChildC并保存detached阶段；确认解除G02，最终只保留G01的父、A/C1、B/C2 |
+| 2 | 在缩放嵌套组内选GroupParent叶子，确认显示G07父；整组解除G07，再指定父，先绑NestedA，再追加strict NestedB。最终G01 P/C1/C2，箭头、组层级/名称/标签/几何及叶子ID保留；预览编号位置可读 |
+| 3 | 查看旧L2关系，解除LegacyChild这个末子，父/子旧标签均移除；显式解除OrphanChild孤立子，strict和自定义标签保留 |
+| 4 | 重复G09父元数据：显示读取失败并禁用关系操作；原稿不变 |
+| 5 | 指定SlideSwitchTarget为待绑定父，切换页6后待绑定取消，原稿无新标签 |
+| 6 | 非圆角OnlyArrow：关系/R角写入禁用，不变 |
+| 7 | RadiusSmoke应用0.30cm，算法自检10项通过 |
+
+每阶段Cmd+S，再独立读取保存结果。阶段参数分别匹配页1上述状态；final同时断言全部7页：
+
+```sh
+.venv-native/bin/python test/native-relations-fixture.py verify /tmp/RadiusNativeRelations.pptx bound
+.venv-native/bin/python test/native-relations-fixture.py verify /tmp/RadiusNativeRelations.pptx detached
+.venv-native/bin/python test/native-relations-fixture.py verify /tmp/RadiusNativeRelations.pptx final
+```
+
+批量绑定另用新单页样本，避免此前步骤已建立关系而只测到追加：
+
+```sh
+.venv-native/bin/python test/native-relations-fixture.py build-batch /tmp/RadiusNativeRelationsBatch.pptx
+```
+
+单选ParentBox指定父，再改选整个BatchChildren组，确认待绑定子3；一次点击「绑定子对象」。保存后执行：
+
+```sh
+.venv-native/bin/python test/native-relations-fixture.py verify-batch /tmp/RadiusNativeRelationsBatch.pptx
+```
+
+核对P/C1/C2/C3及完整其他tag、strict/fixed、半径、叶子ID、组层级/几何；箭头不带关系标签。最终安装包完整退出/重启后重复此单页样本，打开另一文稿确认待绑定取消，并检查混合选区的G01及未绑定3、预览控件开启/关闭和原稿返回。预览原稿保存后形状名/数量须和基线完全一致。
+
+[关系验收记录](native-host-validation-relations-20261007.json)保存7页和单页独立OOXML结果、阶段快照、最终包哈希及补验范围。当前实际宿主16.113.3/26092714；16.111、旋转/翻转组、旧布局多子部分解除和宿主故障回滚尚未完成验收。最终包通过真实回调加载/执行，未额外执行VBE的Compile命令。
+
+## 原生布局与R角联动宿主协议
+
+使用已安装PPAM和普通PPTX；所有关系已预置，仅验证布局和联动。配置修改需真实提交控件；切页先把焦点置于缩略图窗格，用方向键并确认编辑画布已切页。动态关系菜单可定位ParentBox，不要额外按Return进入形状文字编辑。
+
+```sh
+.venv-native/bin/python test/native-layout-fixture.py build /tmp/RadiusNativeLayout.pptx
+```
+
+| 页 | 操作及最终预期 |
+| --- | --- |
+| 1 | 行2自动得到列2，边距0.5/间距0.3，应用；same阶段子R=1.2。父0.5立即联动；切subtract阶段子R=0。父R=0.8，最终子R=0.3，仅R变化不改位置尺寸 |
+| 2 | 边距0.5/间距0.2，subtract，应用。用PowerPoint尺寸/位置控件把父改成12×10cm、左/上各3cm，改变选区同步；子左/上3.5cm、11×9cm，R=0.75 |
+| 3 | off模式应用；父R=0.3、宽10cm，改变选区同步；子几何跟随，原fraction和fixed tag不变 |
+| 4 | 已配置auto且末子strict：选父，父R/布局按钮禁用；PowerPoint把父宽改10cm，同步报完整保护错误；全部子几何/R/tag、父配置/基线不变。保存前同步失败会提示但允许保存 |
+| 5 | 边距10cm，点击应用：空间不足报错，整批几何/R/tag和配置不写入 |
+| 6 | 缩放两层组内定位父；行2、边距0.4/间距0.2、subtract，应用。改选完整OuterLayoutGroup，父R=1，子R=0.6；组层级/名称/其他tag、叶子ID和箭头绝对几何保留 |
+| 7 | 已配置auto=0：父R=0.5、宽11cm；保存后子几何/R/tag及配置/基线保持原值 |
+| 8 | 默认1×3/边距0.3/间距0.2/same应用；保存关闭重开，父R=0.5仍即时联动；设置持久化 |
+| 9 | 父strict，子未保护：允许应用默认1×1布局和子R=0.9，父几何/R/strict/fixed全部保留 |
+
+第1页各阶段和第2页缩放移动后保存并独立inspect，防止只看UI。最终保存后verify同时核对9页：
+
+```sh
+.venv-native/bin/python test/native-layout-fixture.py inspect /tmp/RadiusNativeLayout.pptx
+.venv-native/bin/python test/native-layout-fixture.py verify /tmp/RadiusNativeLayout.pptx
+```
+
+最终包更新须先完整退出PowerPoint，替换稳定安装文件，再重开实测自动加载、26项算法自检、无选区状态，以及关键布局/R/保护路径。[布局联动验收记录](native-host-validation-layout-20261007.json)区分第一轮业务结果和最终包补验。16.111、逐帧拖动跟随及宿主故障回滚不在本轮已验收范围；旋转/翻转路径明确拒绝。
+
+## 布局控件优化宿主补验
+
+使用新的9页布局样本，保留之前业务验收文稿。第1页通过全部八个箭头建立2×2、边距0.5cm/间距0.3cm；验证两种间距的0下限、0.05向下限0、0.123456向上得到0.223456及行列容量联动。应用前保存应与基线全部一致；应用后核对网格、same R、fixed tag和叶子ID。第2页单子时四个行列箭头均禁用；第4页strict子仍禁用应用，暂存参数不改文稿；第6页嵌套组用箭头配置2×2、边距0.4cm/间距0.2cm并保存核对。
+
+最终排列为行数/列数/子R角、边距/间距/状态两列，应用/自动联动在右侧。Mac将自定义上下箭头并排显示；不宣称图2那样的内嵌原生spinner。当前算法自检26项。补验宿主为PowerPoint16.113.4/26100421，结果见[布局控件验收](native-host-validation-layout-controls-20261007.json)，不覆盖先前16.113.3的9页联动协议未完成项。
+
+```sh
+.venv-native/bin/python test/native-layout-fixture.py verify-controls /tmp/RadiusNativeLayoutControls.pptx
+```
+
+此命令核对第1/6页的控件配置结果及其余7页未改动；不等于原`verify`的完整自动联动9页验收。
 
 ## 测试分层
 

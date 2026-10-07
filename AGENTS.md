@@ -11,7 +11,7 @@
 - 当前工作目录：`/Users/ma/Documents/minimax/radius_in_ppt`。
 - 原生实现从`codex/ribbon-vba-mac`合入，现为`main`默认产品；`codex/ribbon-officejs-mac`保留作另一条Ribbon实验路线。原生功能在`native/`修改，`src/`保留Office.js迁移对照。
 - 交付：`dist/RadiusInPptNative.ppam`和`dist/RadiusInPptNative-mac.zip`。**不要构建.app或DMG，不启动Node/server，不注册wef/manifest。**
-- 原目标：Office LTSC Standard for Mac 2021，16.111/26071325。最近实测宿主：PowerPoint16.113.3/26092714。二者的验收记录不能混为一谈。
+- 原目标：Office LTSC Standard for Mac 2021，16.111/26071325。最近布局/半径控件补验宿主：PowerPoint16.113.4/26100421；此前基础/关系记录为16.113.3/26092714。各宿主验收记录不能混为一谈。
 - 运行依赖为PowerPoint VBA与Ribbon XML；Office.js的API要求不适用于PPAM。
 
 ## 1. 授权与版本
@@ -36,14 +36,15 @@ native/customUI.xml + native/icons/
                 ↓
 RadiusNativeRibbon.bas       回调、显示值、状态、启用状态、错误提示
                 ↓
-RadiusNativeCore.bas         数值、单位、限幅、防误触、组合事务
+RadiusNativeCore.bas         数值、单位、限幅、防误触、组合/元数据事务
+RadiusNativeRelations.bas    关系归属、待绑定、成员定位、预览编排
                 ↓
 PptNativeDriver.bas          PowerPoint对象读写的薄封装
                 ↓
 PowerPoint VBA对象模型
 ```
 
-选区事件类只负责通知Ribbon失效刷新，宿主事件连接走driver。组事务生成的中间选区事件不得触发并发读取或写入，事务结束后统一刷新。
+事件类只转发选区/窗口刷新和文稿关闭通知，关闭时交由关系业务模块释放会话引用，宿主事件连接走driver。组事务生成的中间选区事件不得触发并发读取或写入，事务结束后统一刷新。
 
 - driver不认识半径/防误触/布局tag的业务含义。
 - Ribbon不得直接写形状/adjustment/tag，不复制业务规则。
@@ -76,9 +77,11 @@ PowerPoint VBA对象模型
 4. `Regroup`并恢复名称/全部tag/最终组选区。
 5. 异常尽力重组并恢复选区，报告原始错误及恢复错误。
 
-不要对已变形group的旧后代proxy就地写入，不要假设预检数组与`Ungroup`成员一一对应。进入组单选叶子时，当前原生写入要求改选完整顶层组。嵌套深度超过64层拒绝。
+不要对已变形group的旧后代proxy就地写入，不要假设预检数组与`Ungroup`成员一一对应。进入组单选叶子时，R角/保护写入要求改选完整顶层组；父子关系使用ChildShapeRange识别实际叶子，通过安全元数据事务修改其所在组。嵌套深度超过64层拒绝。
 
 tag key大小写不敏感，value必须保留原值。布局tag、父子ID和其他自定义tag不因显式R角操作丢失；重组可能产生新组ID，叶子ID、组层级和几何须验证。带布局tag的形状允许显式半径/保护操作，不能一概拦截。
+
+父子关系仅管理同页圆角矩形的一父多子归属，使用`radiusRelation_v1`及`radiusRelationRole_v1`；不自动布局或联动R角。关系操作不得改fixed/strict/半径，strict对象仍允许绑定/解除。既有关系不得静默覆盖，旧布局显式解除后重建；复制标签造成重复父/子编号时拒绝关系操作。编号预览只写临时副本，原稿不得插入标记；副本关闭时丢弃修改。跨页/文稿取消待绑定。
 
 ## 5. 构建与测试
 
@@ -99,7 +102,7 @@ npm test
 - 长VBA模块必须使用正确copy-token压缩。旧raw/literal写法虽然oletools能抽取，Mac会把长模块加载为空；压缩算法改动必须补宿主加载验证。
 - `npm test`是保留的Office.js迁移对照回归，不能证明原生VBA业务通过。测试数量随代码变化，以实际运行输出为准。
 - VBA、事件类、Ribbon XML/回调、组合或tag路径变更必须验证真实PPT加载/编译与关键动作，再保存临时PPTX独立读OOXML验证。不修改用户真实文稿。
-- 普通7页基线：`test/native-host-fixture.py`。当前控件新增验收另记在v1.4记录。自检只测算法，不等于宿主通过。
+- 普通7页半径基线：`test/native-host-fixture.py`；关系7页及单页批量绑定：`test/native-relations-fixture.py`；布局联动9页：`test/native-layout-fixture.py`。验收分别记录，不修改用户文稿。当前原生格式/安装测试19项，算法自检26项（含8项布局参数微调边界）。自检只测算法，不等于宿主通过。
 - 历史诊断source-only PPTM和临时测试PPAM曾触发宿主退出；优先普通PPTX与已安装的真实控件，不重复使用这些诊断产物。
 
 ## 6. 安装、更新与实际路径
@@ -117,7 +120,9 @@ npm test
 
 ## 7. 当前范围与历史对照
 
-原生已提供数值/cm/%、读取、常用预设、多选、半径限幅、加载项写入保护、完整顶层组合事务。v1.4新增状态反馈、全部动作按钮图标、±0.1即时微调，验收结论以changelog记录为准。
+原生已提供数值/cm/%、读取、常用预设、多选、半径限幅、加载项写入保护、完整顶层组合事务。v1.4新增状态反馈、全部动作按钮图标、±0.1即时微调，以及指定父/批量绑定子、成员菜单、解除、临时副本编号预览、行列网格和same/subtract/off R角联动。关系/布局及控件优化纳入本地main，沿用未发布的v1.4.0，验收结论以changelog记录为准。
+
+原生布局设置和父变化基线随文稿保存。本加载项修改父R立即联动；直接移动/缩放/黄色手柄修改在改变选区和保存前同步，不逐帧轮询。厘米边距/间距保持不变；off保留子fraction。任何目标子strict在父R/布局写入或解组前拒绝整批，实际写入再读strict。关系元数据仍可绑定/解除strict对象。旋转/翻转成员或组合不支持原生布局及联动，解组前拒绝。
 
 原生防误触当前只阻止本加载项写入，尚未自动纠正用户直接拖黄色手柄或缩放。实时固定R、样式刷、复杂布局联动、自定义预设库和历史尚未迁移，不能把旧task pane的完整功能列为PPAM已实现。
 

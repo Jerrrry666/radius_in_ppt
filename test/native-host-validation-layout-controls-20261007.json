@@ -1,0 +1,694 @@
+{
+  "date": "2026-10-07",
+  "version": "v1.4.0",
+  "host": "PowerPoint16.113.4 / 26100421",
+  "hostEvidence": "About PowerPoint: Office LTSC Standard for Mac2021; confirmed in the running host.",
+  "status": "passed_for_layout_control_update",
+  "scope": "Compact layout group and row/column/padding/gap arrow controls. Separate from the earlier incomplete16.113.3 nine-page auto-link protocol.",
+  "firstControlPackageSha256": "1e31b28339b514a33d69c659d628bad05581b1069dcf171a36c2e3acad951b79",
+  "builtPackageSha256": "d0b3ebc513040e3d5eb91a42debd8a860868ff57a665af247bfbcf5fdd274ace",
+  "installedPackageSha256": "d0b3ebc513040e3d5eb91a42debd8a860868ff57a665af247bfbcf5fdd274ace",
+  "distributionZipSha256": "6bef3fb2d6e2e3f5eef0443ff714e616cdaa0aa98d1ad3044c72f5f7e7d40263",
+  "tests": {
+    "nativePackage": {
+      "command": ".venv-native/bin/python test/test-native-package.py",
+      "passed": 19
+    },
+    "officejsReference": {
+      "command": "npm test",
+      "result": "passed",
+      "nativeEvidence": false
+    },
+    "hostAlgorithmSelfTest": {
+      "passed": 26,
+      "finalPackageExecuted": true
+    },
+    "savedOOXML": {
+      "command": ".venv-native/bin/python test/native-layout-fixture.py verify-controls <worked.pptx>",
+      "result": "passed",
+      "appliedSlides": [
+        1,
+        6
+      ],
+      "unchangedSlides": [
+        2,
+        3,
+        4,
+        5,
+        7,
+        8,
+        9
+      ],
+      "pendingSnapshot": "All9 slides equal baseline before Apply."
+    }
+  },
+  "completedHostChecks": [
+    "Saved existing temporary fixture, Cmd+Q exited PowerPoint, then replaced stable installed PPAM with backup retained; restarted and confirmed automatic ribbon loading.",
+    "Final Mac presentation: rows/columns/radius mode in one column, padding/gap/status in another, Apply/Automatic controls on the right. Labels beside fields without stretched label space.",
+    "All8 arrow callbacks executed in final package. Rows/columns step1 and automatically fit the other dimension; spacing steps0.1cm.",
+    "Row1 decrease and columns4 increase disabled for4 children. All4 grid arrows disabled for1 child.",
+    "Padding and gap both decrease to0 and disable further decrease. Typed gap0.05 decreases to0; typed padding0.123456 increases to0.223456.",
+    "Staged arrows show pending layout; saving does not alter any geometry, radius or tag before Apply.",
+    "Protected last child keeps Apply and parent radius writes disabled. Parameter staging/saving does not alter that relationship or protection tags.",
+    "Arrow settings applied on ordinary and scaled nested relationships; saved2x2 geometry, same radius and existing fixed tags match independent OOXML verification.",
+    "Nested hierarchy, names/custom tags, leaf IDs and non-rounded arrow geometry preserved; parent geometry/fraction and original tags preserved.",
+    "Saved document reopened after final package restart; configuration/automatic state persisted and pending parameters from previous session were discarded.",
+    "Final package26-check algorithm self-test passed; dependencies/callbacks compiled and executed on demand."
+  ],
+  "compileEvidence": {
+    "runtime": "Real callback and26 algorithm checks executed successfully.",
+    "separateVBECompileCommandExecuted": false,
+    "reason": "VBE exposed only the ordinary PPTX project; Compile was disabled. No VBA/security preference was changed."
+  },
+  "artifacts": {
+    "baseline": "test-artifacts/native-layout-controls-20261007/RadiusNativeLayoutControls-baseline.pptx",
+    "worked": "test-artifacts/native-layout-controls-20261007/RadiusNativeLayoutControls-worked.pptx",
+    "pending": "test-artifacts/native-layout-controls-20261007/phase-pending.json",
+    "applied": "test-artifacts/native-layout-controls-20261007/phase-applied.json",
+    "verification": "test-artifacts/native-layout-controls-20261007/phase-verified.json",
+    "previousInstallation": "test-artifacts/native-layout-controls-20261007/installed-before.ppam",
+    "previousDistribution": "test-artifacts/native-layout-controls-20261007/dist-before.ppam"
+  },
+  "limitations": [
+    "Mac renders custom direction buttons side by side beside each field; this is not the built-in spinner inside the reference field.",
+    "16.111 target host unverified; older16.113.3 acceptance records remain separate.",
+    "This control-specific saved-state check does not complete the original9-slide auto-link workflow.",
+    "Failure-injection rollback and live per-frame dragging not tested by this update."
+  ],
+  "savedState": {
+    "1": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          12.0,
+          8.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase",
+          "RADIUSLOCK_V1": "1.2",
+          "RADIUSRELATIONBASELINE_V1": "56.692913|56.692913|340.157471|226.771652|1.200000|3:1,4:2,5:3,6:4,",
+          "RADIUSRELATIONLAYOUT_V1": "1|2|2|0.500000|0.300000|same|1"
+        },
+        "fraction": 0.15,
+        "radiusCm": 1.2
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.5,
+          2.5,
+          5.35,
+          3.35
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "1.200000"
+        },
+        "fraction": 0.35821,
+        "radiusCm": 1.2000035
+      },
+      "ChildB": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          8.15,
+          2.5,
+          5.35,
+          3.35
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C2",
+          "CUSTOM": "KeepChild2Case",
+          "RADIUSLOCK_V1": "1.200000"
+        },
+        "fraction": 0.35821,
+        "radiusCm": 1.2000035
+      },
+      "ChildC": {
+        "id": "5",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.5,
+          6.15,
+          5.35,
+          3.35
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C3",
+          "CUSTOM": "KeepChild3Case",
+          "RADIUSLOCK_V1": "1.200000"
+        },
+        "fraction": 0.35821,
+        "radiusCm": 1.2000035
+      },
+      "ChildD": {
+        "id": "6",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          8.15,
+          6.15,
+          5.35,
+          3.35
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C4",
+          "CUSTOM": "KeepChild4Case",
+          "RADIUSLOCK_V1": "1.200000"
+        },
+        "fraction": 0.35821,
+        "radiusCm": 1.2000035
+      }
+    },
+    "2": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          10.0,
+          8.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase"
+        },
+        "fraction": 0.125,
+        "radiusCm": 1.0
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      }
+    },
+    "3": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          8.0,
+          6.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.8999999999999999
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      },
+      "ChildB": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          8.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C2",
+          "CUSTOM": "KeepChild2Case",
+          "RADIUSLOCK_V1": "0.4"
+        },
+        "fraction": 0.2,
+        "radiusCm": 0.4
+      }
+    },
+    "4": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          9.0,
+          6.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase",
+          "RADIUSRELATIONLAYOUT_V1": "1|1|2|0.300000|0.200000|same|1",
+          "RADIUSRELATIONBASELINE_V1": "56.692913|56.692913|255.118110|170.078740|0.900000|3:1,4:2,"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.8999999999999999
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      },
+      "ChildB": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          8.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C2",
+          "CUSTOM": "KeepChild2Case",
+          "RADIUSLOCK_V1": "0.4",
+          "RADIUSLOCKSTRICT_V1": "1"
+        },
+        "fraction": 0.2,
+        "radiusCm": 0.4
+      }
+    },
+    "5": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          4.0,
+          3.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.44999999999999996
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      },
+      "ChildB": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          8.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C2",
+          "CUSTOM": "KeepChild2Case",
+          "RADIUSLOCK_V1": "0.4"
+        },
+        "fraction": 0.2,
+        "radiusCm": 0.4
+      }
+    },
+    "6": {
+      "OuterLayoutGroup": {
+        "id": "11",
+        "group": true,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          16.1,
+          8.1
+        ],
+        "tags": {
+          "CUSTOMOUTER": "KeepOuterCase"
+        }
+      },
+      "ParentBox": {
+        "id": "3",
+        "group": false,
+        "parent": "OuterLayoutGroup",
+        "boxCm": [
+          2.0,
+          2.0,
+          16.1,
+          8.1
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase",
+          "RADIUSLOCK_V1": "1.35",
+          "RADIUSRELATIONLAYOUT_V1": "1|2|2|0.400000|0.200000|same|1",
+          "RADIUSRELATIONBASELINE_V1": "56.692913|56.692913|456.377960|229.606293|1.215000|5:1,6:2,7:3,8:4,"
+        },
+        "fraction": 0.15,
+        "radiusCm": 1.2149999999999999
+      },
+      "InnerLayoutGroup": {
+        "id": "10",
+        "group": true,
+        "parent": "OuterLayoutGroup",
+        "boxCm": [
+          2.4,
+          2.4,
+          15.3,
+          7.7
+        ],
+        "tags": {
+          "CUSTOMINNER": "KeepInnerCase"
+        }
+      },
+      "ChildA": {
+        "id": "5",
+        "group": false,
+        "parent": "InnerLayoutGroup",
+        "boxCm": [
+          2.4,
+          2.4,
+          7.55,
+          3.55
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "1.215000"
+        },
+        "fraction": 0.34225,
+        "radiusCm": 1.2149874999999999
+      },
+      "ChildB": {
+        "id": "6",
+        "group": false,
+        "parent": "InnerLayoutGroup",
+        "boxCm": [
+          10.15,
+          2.4,
+          7.55,
+          3.55
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C2",
+          "CUSTOM": "KeepChild2Case",
+          "RADIUSLOCK_V1": "1.215000"
+        },
+        "fraction": 0.34225,
+        "radiusCm": 1.2149874999999999
+      },
+      "ChildC": {
+        "id": "7",
+        "group": false,
+        "parent": "InnerLayoutGroup",
+        "boxCm": [
+          2.4,
+          6.15,
+          7.55,
+          3.55
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C3",
+          "CUSTOM": "KeepChild3Case",
+          "RADIUSLOCK_V1": "1.215000"
+        },
+        "fraction": 0.34225,
+        "radiusCm": 1.2149874999999999
+      },
+      "ChildD": {
+        "id": "8",
+        "group": false,
+        "parent": "InnerLayoutGroup",
+        "boxCm": [
+          10.15,
+          6.15,
+          7.55,
+          3.55
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C4",
+          "CUSTOM": "KeepChild4Case",
+          "RADIUSLOCK_V1": "1.215000"
+        },
+        "fraction": 0.34225,
+        "radiusCm": 1.2149874999999999
+      },
+      "UntouchedArrow": {
+        "id": "9",
+        "group": false,
+        "parent": "InnerLayoutGroup",
+        "boxCm": [
+          6.6,
+          9.2,
+          4.6,
+          0.9
+        ],
+        "tags": {}
+      }
+    },
+    "7": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          9.0,
+          6.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase",
+          "RADIUSRELATIONLAYOUT_V1": "1|1|1|0.300000|0.200000|same|0",
+          "RADIUSRELATIONBASELINE_V1": "56.692913|56.692913|255.118110|170.078740|0.900000|3:1,"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.8999999999999999
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      }
+    },
+    "8": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          12.0,
+          7.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase",
+          "RADIUSLOCK_V1": "1"
+        },
+        "fraction": 0.14285,
+        "radiusCm": 0.99995
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      },
+      "ChildB": {
+        "id": "4",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          8.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C2",
+          "CUSTOM": "KeepChild2Case",
+          "RADIUSLOCK_V1": "0.4"
+        },
+        "fraction": 0.2,
+        "radiusCm": 0.4
+      },
+      "ChildC": {
+        "id": "5",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          7.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C3",
+          "CUSTOM": "KeepChild3Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      }
+    },
+    "9": {
+      "ParentBox": {
+        "id": "2",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          2.0,
+          2.0,
+          10.0,
+          6.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "P",
+          "CUSTOM": "KeepParentCase",
+          "RADIUSLOCK_V1": "0.9",
+          "RADIUSLOCKSTRICT_V1": "1"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.8999999999999999
+      },
+      "ChildA": {
+        "id": "3",
+        "group": false,
+        "parent": null,
+        "boxCm": [
+          3.0,
+          4.0,
+          3.0,
+          2.0
+        ],
+        "tags": {
+          "RADIUSRELATION_V1": "G01",
+          "RADIUSRELATIONROLE_V1": "C1",
+          "CUSTOM": "KeepChild1Case",
+          "RADIUSLOCK_V1": "0.3"
+        },
+        "fraction": 0.15,
+        "radiusCm": 0.3
+      }
+    }
+  }
+}

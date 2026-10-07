@@ -221,10 +221,19 @@ End Sub
 
 Public Sub ApplySelection(ByVal value As Double, ByVal unit As String, Optional ByVal action As String = "radius")
     Dim roots As Collection, leaves As New Collection, nodes As New Collection, shape As Object, node As Collection, slide As Object
+    Dim linkedPlan As Collection
     Dim errorNumber As Long, errorText As String
+    If RadiusNativeRelations.IsPreviewContext Then Err.Raise 5, , "Close the relation preview before editing the source."
     Set roots = PptNativeDriver.SelectionRoots()
     Set slide = PptNativeDriver.CurrentSlide()
     If action <> "radius" And action <> "protect" And action <> "unprotect" Then Err.Raise 5, , "Unsupported edit operation."
+    If action = "radius" Then
+        Set linkedPlan = RadiusNativeLayout.LinkedRadiusPlan(roots, value, unit)
+        If Not linkedPlan Is Nothing Then
+            ApplyShapePlan slide, linkedPlan
+            Exit Sub
+        End If
+    End If
     For Each shape In roots
         If Not PptNativeDriver.IsTopLevel(slide, shape) Then Err.Raise 5, , "Select the complete top-level group for native editing."
         CollectLeaves shape, leaves, 0
@@ -244,6 +253,324 @@ Failed:
     PptNativeDriver.SelectShapes slide, NodeShapes(nodes)
     On Error GoTo 0
     Err.Raise errorNumber, "RadiusNativeCore", errorText
+End Sub
+
+Private Function MetadataNode(ByVal shape As Object, ByVal plan As Collection, ByVal depth As Long) As Collection
+    Dim node As New Collection, children As New Collection, child As Object, prepared As Collection, change As Variant, eligible As Long
+    If depth > 64 Then Err.Raise 5, , "Group nesting is too deep."
+    node.Add shape, "Shape"
+    node.Add PptNativeDriver.ShapeId(shape), "Id"
+    node.Add PptNativeDriver.ShapeName(shape), "Name"
+    node.Add PptNativeDriver.SnapshotTags(shape), "Tags"
+    If PptNativeDriver.ShapeType(shape) = 6 Then
+        For Each child In PptNativeDriver.Children(shape)
+            Set prepared = MetadataNode(child, plan, depth + 1)
+            eligible = eligible + CLng(prepared("Eligible"))
+            children.Add prepared
+        Next child
+    Else
+        For Each change In plan
+            If CLng(change(0)) = PptNativeDriver.ShapeId(shape) Then eligible = 1
+        Next change
+    End If
+    node.Add children, "Children"
+    node.Add eligible, "Eligible"
+    Set MetadataNode = node
+End Function
+
+Private Function MetadataRoots(ByVal slide As Object, ByVal plan As Collection) As Collection
+    Dim result As New Collection, shape As Object, node As Collection
+    For Each shape In PptNativeDriver.SlideRoots(slide)
+        Set node = MetadataNode(shape, plan, 0)
+        If CLng(node("Eligible")) > 0 Then result.Add node
+    Next shape
+    Set MetadataRoots = result
+End Function
+
+Private Sub WriteMetadataNode(ByVal node As Collection, ByVal slide As Object, ByVal plan As Collection, ByVal depth As Long)
+    Dim shape As Object, member As Object, fresh As Collection, children As Collection, child As Collection, change As Variant
+    Dim opened As Boolean, mapped As Boolean, errorNumber As Long, errorText As String, recoveryText As String
+    If CLng(node("Eligible")) = 0 Then Exit Sub
+    If depth > 64 Then Err.Raise 5, , "Group nesting is too deep."
+    Set shape = node("Shape")
+    On Error GoTo Failed
+    If PptNativeDriver.ShapeType(shape) = 6 Then
+        Set fresh = PptNativeDriver.Ungroup(shape)
+        opened = True
+        Set children = New Collection
+        For Each member In fresh
+            children.Add MetadataNode(member, plan, depth + 1)
+        Next member
+        node.Remove "Children"
+        node.Add children, "Children"
+        mapped = True
+        For Each child In children
+            WriteMetadataNode child, slide, plan, depth + 1
+        Next child
+        Set shape = PptNativeDriver.Regroup(slide, NodeShapes(children))
+        SetNodeShape node, shape
+        opened = False
+        PptNativeDriver.RestoreMetadata shape, CStr(node("Name")), node("Tags")
+    Else
+        For Each change In plan
+            If CLng(change(0)) = PptNativeDriver.ShapeId(shape) Then
+                If CBool(change(3)) Then
+                    PptNativeDriver.DeleteTag shape, CStr(change(1))
+                Else
+                    PptNativeDriver.AddTag shape, CStr(change(1)), CStr(change(2))
+                End If
+            End If
+        Next change
+    End If
+    Exit Sub
+Failed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    If opened Then
+        On Error Resume Next
+        Err.Clear
+        If mapped Then
+            Set shape = PptNativeDriver.Regroup(slide, NodeShapes(children))
+        Else
+            Set shape = PptNativeDriver.Regroup(slide, fresh)
+        End If
+        If Err.Number = 0 Then
+            SetNodeShape node, shape
+            PptNativeDriver.RestoreMetadata shape, CStr(node("Name")), node("Tags")
+        End If
+        If Err.Number <> 0 Then recoveryText = " Group recovery failed: " & Err.Description
+        On Error GoTo 0
+    End If
+    Err.Raise errorNumber, "RadiusNativeCore", errorText & recoveryText
+End Sub
+
+Public Sub ApplyMetadataPlan(ByVal slide As Object, ByVal plan As Collection)
+    Dim leaves As Collection, shape As Object, nodes As Collection, node As Collection, change As Variant, rollback As New Collection
+    Dim matches As Long, errorNumber As Long, errorText As String, recoveryText As String
+    If RadiusNativeRelations.IsPreviewContext Then Err.Raise 5, , "Close the relation preview before editing the source."
+    Set leaves = RadiusNativeRelations.SlideLeaves(slide)
+    ' Resolve every target and capture old values BEFORE any write or ungroup.
+    For Each change In plan
+        If StrComp(CStr(change(1)), STRICT_KEY, vbTextCompare) = 0 Or StrComp(CStr(change(1)), LOCK_KEY, vbTextCompare) = 0 Then Err.Raise 5, , "Relationship edits cannot change radius protection."
+        matches = 0
+        For Each shape In leaves
+            If PptNativeDriver.ShapeId(shape) = CLng(change(0)) Then
+                matches = matches + 1
+                rollback.Add Array(change(0), change(1), PptNativeDriver.ReadTag(shape, CStr(change(1))), Not PptNativeDriver.HasTag(shape, CStr(change(1))))
+            End If
+        Next shape
+        If matches <> 1 Then Err.Raise 5, , "Cannot uniquely resolve a relationship target."
+    Next change
+    Set nodes = MetadataRoots(slide, plan)
+    On Error GoTo Failed
+    For Each node In nodes
+        WriteMetadataNode node, slide, plan, 0
+    Next node
+    PptNativeDriver.SelectShapes slide, NodeShapes(nodes)
+    Exit Sub
+Failed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    On Error Resume Next
+    Err.Clear
+    Set nodes = MetadataRoots(slide, rollback)
+    If Err.Number = 0 Then
+        For Each node In nodes
+            WriteMetadataNode node, slide, rollback, 0
+            If Err.Number <> 0 Then Exit For
+        Next node
+    End If
+    If Err.Number <> 0 Then recoveryText = " Metadata recovery failed: " & Err.Description
+    Err.Clear
+    PptNativeDriver.SelectShapes slide, NodeShapes(nodes)
+    If Err.Number <> 0 Then recoveryText = recoveryText & " Selection recovery failed: " & Err.Description
+    On Error GoTo 0
+    Err.Raise errorNumber, "RadiusNativeCore", errorText & recoveryText
+End Sub
+
+Public Sub PutRadius(ByVal plan As Collection, ByVal id As Long, ByVal value As Double)
+    Dim i As Long, change As Variant
+    For i = plan.Count To 1 Step -1
+        change = plan(i)
+        If CLng(change(0)) = id And CStr(change(1)) = "radius" Then plan.Remove i
+    Next i
+    plan.Add Array(id, "radius", value)
+End Sub
+
+Private Function ShapeForId(ByVal shapes As Collection, ByVal id As Long) As Object
+    Dim shape As Object
+    For Each shape In shapes
+        If PptNativeDriver.ShapeId(shape) = id Then Set ShapeForId = shape: Exit Function
+    Next shape
+End Function
+
+Private Sub CheckSceneNodes(ByVal nodes As Collection, ByVal spatial As Boolean)
+    Dim node As Collection
+    For Each node In nodes
+        If CLng(node("Eligible")) > 0 Then
+            If spatial And PptNativeDriver.HasTransform(node("Shape")) Then Err.Raise 5, , "Layout and linked radius do not support rotated or flipped members/groups."
+            CheckSceneNodes node("Children"), spatial
+        End If
+    Next node
+End Sub
+
+Private Sub WriteSceneNode(ByVal node As Collection, ByVal slide As Object, ByVal plan As Collection, ByVal depth As Long)
+    Dim shape As Object, fresh As Collection, children As Collection, child As Collection, member As Object, change As Variant
+    Dim opened As Boolean, mapped As Boolean, errorNumber As Long, errorText As String, recoveryText As String, actualCm As Double
+    If CLng(node("Eligible")) = 0 Then Exit Sub
+    If depth > 64 Then Err.Raise 5, , "Group nesting is too deep."
+    Set shape = node("Shape")
+    On Error GoTo Failed
+    If PptNativeDriver.ShapeType(shape) = 6 Then
+        Set fresh = PptNativeDriver.Ungroup(shape)
+        opened = True
+        Set children = New Collection
+        For Each member In fresh
+            children.Add MetadataNode(member, plan, depth + 1)
+        Next member
+        node.Remove "Children"
+        node.Add children, "Children"
+        mapped = True
+        For Each child In children
+            WriteSceneNode child, slide, plan, depth + 1
+        Next child
+        Set shape = PptNativeDriver.Regroup(slide, NodeShapes(children))
+        SetNodeShape node, shape
+        opened = False
+        PptNativeDriver.RestoreMetadata shape, CStr(node("Name")), node("Tags")
+    Else
+        ' Resize before calculating the clamped radius from the fresh shape.
+        For Each change In plan
+            If CLng(change(0)) = PptNativeDriver.ShapeId(shape) And CStr(change(1)) = "box" Then
+                If PptNativeDriver.ReadTag(shape, STRICT_KEY) = "1" Then Err.Raise 5, , "Protected child; layout was not written."
+                PptNativeDriver.SetShapeBox shape, change(2)
+            End If
+        Next change
+        For Each change In plan
+            If CLng(change(0)) = PptNativeDriver.ShapeId(shape) Then
+                Select Case CStr(change(1))
+                    Case "radius", "fraction"
+                        If PptNativeDriver.ReadTag(shape, STRICT_KEY) = "1" Then Err.Raise 5, , "Protected shape; linked radius was not written."
+                        If CStr(change(1)) = "fraction" Then
+                            PptNativeDriver.WriteFraction shape, CDbl(change(2))
+                        Else
+                            actualCm = ComputeTarget(CDbl(change(2)), "cm", PptNativeDriver.ShortSidePoints(shape) / PT_PER_CM)
+                            PptNativeDriver.WriteFraction shape, actualCm * PT_PER_CM / PptNativeDriver.ShortSidePoints(shape)
+                            If PptNativeDriver.ReadTag(shape, LOCK_KEY) <> "" Then PptNativeDriver.AddTag shape, LOCK_KEY, NumberText(actualCm)
+                        End If
+                    Case "tag"
+                        If StrComp(CStr(change(2)), STRICT_KEY, vbTextCompare) = 0 Then Err.Raise 5, , "Layout cannot change strict protection."
+                        If CBool(change(4)) Then
+                            PptNativeDriver.DeleteTag shape, CStr(change(2))
+                        Else
+                            PptNativeDriver.AddTag shape, CStr(change(2)), CStr(change(3))
+                        End If
+                End Select
+            End If
+        Next change
+    End If
+    Exit Sub
+Failed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    If opened Then
+        On Error Resume Next
+        Err.Clear
+        If mapped Then Set shape = PptNativeDriver.Regroup(slide, NodeShapes(children)) Else Set shape = PptNativeDriver.Regroup(slide, fresh)
+        If Err.Number = 0 Then
+            SetNodeShape node, shape
+            PptNativeDriver.RestoreMetadata shape, CStr(node("Name")), node("Tags")
+        End If
+        If Err.Number <> 0 Then recoveryText = " Group recovery failed: " & Err.Description
+        On Error GoTo 0
+    End If
+    Err.Raise errorNumber, "RadiusNativeCore", errorText & recoveryText
+End Sub
+
+Private Sub FindNodeSelection(ByVal nodes As Collection, ByVal id As Long, ByVal result As Collection)
+    Dim node As Collection
+    For Each node In nodes
+        If CLng(node("Id")) = id Then result.Add node("Shape"): Exit Sub
+        FindNodeSelection node("Children"), id, result
+    Next node
+End Sub
+
+Private Sub RestoreSceneSelection(ByVal slide As Object, ByVal nodes As Collection, ByVal ids As Collection)
+    Dim shapes As New Collection, id As Variant, roots As Collection, shape As Object, before As Long
+    Set roots = PptNativeDriver.SlideRoots(slide)
+    For Each id In ids
+        before = shapes.Count
+        FindNodeSelection nodes, CLng(id), shapes
+        If shapes.Count = before Then
+            Set shape = ShapeForId(roots, CLng(id))
+            If shape Is Nothing Then Set shape = ShapeForId(RadiusNativeRelations.SlideLeaves(slide), CLng(id))
+            If Not shape Is Nothing Then shapes.Add shape
+        End If
+    Next id
+    If shapes.Count > 0 Then PptNativeDriver.SelectObjects shapes Else PptNativeDriver.ClearSelection
+End Sub
+
+Public Sub ApplyShapePlan(ByVal slide As Object, ByVal plan As Collection)
+    Dim leaves As Collection, shape As Object, nodes As Collection, node As Collection, change As Variant, rollback As New Collection, ids As New Collection
+    Dim spatial As Boolean, sameSlide As Boolean, errorNumber As Long, errorText As String, recoveryText As String
+    If RadiusNativeRelations.IsPreviewContext Then Err.Raise 5, , "Close the relation preview before editing the source."
+    If plan.Count = 0 Then Exit Sub
+    Set leaves = RadiusNativeRelations.SlideLeaves(slide)
+    sameSlide = PptNativeDriver.IsCurrentSlide(slide)
+    If sameSlide And PptNativeDriver.HasShapeSelection Then
+        For Each shape In PptNativeDriver.SelectionObjects()
+            ids.Add PptNativeDriver.ShapeId(shape)
+        Next shape
+    End If
+    ' All targets, live protection, geometry and old values are checked first.
+    For Each change In plan
+        Set shape = ShapeForId(leaves, CLng(change(0)))
+        If shape Is Nothing Then Err.Raise 5, , "Cannot resolve a layout/radius target."
+        Select Case CStr(change(1))
+            Case "box", "radius"
+                spatial = True
+                If PptNativeDriver.ReadTag(shape, STRICT_KEY) = "1" Then Err.Raise 5, , "Turn off protection explicitly before layout or linked radius: " & PptNativeDriver.ShapeName(shape)
+                If CStr(change(1)) = "box" Then
+                    If CDbl(change(2)(2)) <= 0 Or CDbl(change(2)(3)) <= 0 Then Err.Raise 5, , "Layout leaves no space for children."
+                    rollback.Add Array(change(0), "box", PptNativeDriver.ShapeBox(shape))
+                Else
+                    If CDbl(change(2)) < 0 Then Err.Raise 5, , "Linked radius must not be negative."
+                    rollback.Add Array(change(0), "fraction", PptNativeDriver.ReadFraction(shape))
+                    rollback.Add Array(change(0), "tag", LOCK_KEY, PptNativeDriver.ReadTag(shape, LOCK_KEY), Not PptNativeDriver.HasTag(shape, LOCK_KEY))
+                End If
+            Case "tag"
+                If StrComp(CStr(change(2)), STRICT_KEY, vbTextCompare) = 0 Or StrComp(CStr(change(2)), LOCK_KEY, vbTextCompare) = 0 Then Err.Raise 5, , "Layout metadata cannot change radius protection."
+                rollback.Add Array(change(0), "tag", change(2), PptNativeDriver.ReadTag(shape, CStr(change(2))), Not PptNativeDriver.HasTag(shape, CStr(change(2))))
+            Case Else: Err.Raise 5, , "Unsupported shape-plan operation."
+        End Select
+    Next change
+    Set nodes = MetadataRoots(slide, plan)
+    CheckSceneNodes nodes, spatial
+    On Error GoTo Failed
+    For Each node In nodes
+        WriteSceneNode node, slide, plan, 0
+    Next node
+    If sameSlide Then RestoreSceneSelection slide, nodes, ids
+    Exit Sub
+Failed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    Debug.Print "[NativeScene] " & errorText
+    On Error Resume Next
+    Err.Clear
+    Set nodes = MetadataRoots(slide, rollback)
+    If Err.Number = 0 Then
+        For Each node In nodes
+            WriteSceneNode node, slide, rollback, 0
+            If Err.Number <> 0 Then Exit For
+        Next node
+    End If
+    If Err.Number <> 0 Then recoveryText = " Shape recovery failed: " & Err.Description
+    Err.Clear
+    If sameSlide Then RestoreSceneSelection slide, nodes, ids
+    If Err.Number <> 0 Then recoveryText = recoveryText & " Selection recovery failed: " & Err.Description
+    On Error GoTo 0
+    Err.Raise errorNumber, "RadiusNativeCore", errorText & recoveryText
 End Sub
 
 Public Sub SetProtection(ByVal enabled As Boolean)
