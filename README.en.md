@@ -20,9 +20,10 @@ Edit rounded corners, manage parent–child relationships, and arrange child sha
 
 ## Install
 
-1. Extract `dist/RadiusInPptNative-mac.zip` and keep the `.ppam` in a stable location. The default folder is `~/Library/Application Support/RadiusInPptNative`. Use the included file-preparation script or copy the file manually.
-2. In PowerPoint, open **Tools → PowerPoint Add-ins**, add the `.ppam`, and leave it enabled. Allow macros for this add-in if Office prompts you.
-3. Confirm that the **R角调整 · Native** tab appears. Quit PowerPoint completely with Cmd+Q, reopen it, and confirm the add-in loads again.
+1. Download and double-click to extract the [installation ZIP](https://github.com/Jerrrry666/radius_in_ppt/releases/download/v1.4.0/RadiusInPptNative-mac.zip). You can also download the [PPAM add-in](https://github.com/Jerrrry666/radius_in_ppt/releases/download/v1.4.0/RadiusInPptNative.ppam) separately.
+2. Double-click `Install-RadiusInPptNative.command` to copy the add-in to the stable folder `~/Library/Application Support/RadiusInPptNative`.
+3. In PowerPoint, open **Tools → PowerPoint Add-ins**, add the `.ppam` from that folder, and leave it enabled. Allow macros for this add-in if Office prompts you.
+4. Confirm that the **R角调整 · Native** tab appears. Quit PowerPoint completely with Cmd+Q, reopen it, and confirm the add-in loads again. PowerPoint will load it automatically on later launches after this first registration.
 
 The file-preparation script only copies the file; PowerPoint registration is a separate step. To update the add-in, save your presentations and quit PowerPoint before replacing the installed file, then reopen PowerPoint to verify it. Do not load the add-in from the `dist` folder, which may be rebuilt. See the complete [installation guide](native/INSTALL.txt).
 

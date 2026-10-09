@@ -1,6 +1,6 @@
 # LOG
 
-> 2026-10-07：原生PPAM及v1.4.0已按用户指令合入`main`，本地与`origin/main`同步，尚未创建发布tag。当前协作规则见[AGENTS.md](AGENTS.md)。
+> 2026-10-09：原生PPAM及v1.4.0已合入`main`并发布到GitHub Release（tag `v1.4.0`）。当前协作规则见[AGENTS.md](AGENTS.md)。
 
 2026-10-09按用户要求仅在`main`优化代码。自定义参数面板的未提交改动已保存到Git stash，未合入本轮主线。版本沿用v1.4.0。`npm test`运行原生消费端检查；旧Office.js/task pane实现、manifest、启动器、构建工具和迁移说明已按用户要求从当前项目移除。历史验收记录保留，但不再作为当前产品或测试入口。
 

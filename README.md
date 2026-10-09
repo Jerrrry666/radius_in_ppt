@@ -20,9 +20,10 @@ macOS PowerPoint 原生加载项 · v1.4.0
 
 ## 安装
 
-1. 解压 `dist/RadiusInPptNative-mac.zip`，将 `.ppam` 放到长期保留的位置。默认目录为 `~/Library/Application Support/RadiusInPptNative`。可运行压缩包内的文件准备脚本，也可手动复制。
-2. 在 PowerPoint 中打开「工具 → PowerPoint 加载项」，添加该 `.ppam` 并保持勾选。按 Office 提示允许此加载项的宏。
-3. 确认顶部出现「R角调整 · Native」。完全退出 PowerPoint（Cmd+Q）后重新打开，确认加载项仍在。
+1. 下载并双击解压[安装 ZIP](https://github.com/Jerrrry666/radius_in_ppt/releases/download/v1.4.0/RadiusInPptNative-mac.zip)。也可单独下载[PPAM 插件](https://github.com/Jerrrry666/radius_in_ppt/releases/download/v1.4.0/RadiusInPptNative.ppam)。
+2. 双击 `Install-RadiusInPptNative.command`，将插件复制到稳定目录 `~/Library/Application Support/RadiusInPptNative`。
+3. 在 PowerPoint 中打开「工具 → PowerPoint 加载项」，添加上述目录中的 `.ppam` 并保持勾选。按 Office 提示允许此加载项的宏。
+4. 确认顶部出现「R角调整 · Native」。完全退出 PowerPoint（Cmd+Q）后重新打开，确认加载项仍在。首次添加后，PowerPoint 会在之后启动时自动加载。
 
 文件准备脚本只复制文件，不会替 PowerPoint 注册加载项。更新时先保存文稿并完全退出 PowerPoint，再替换安装文件并重新打开验证。不要从会被重建的 `dist` 目录加载插件。完整步骤见[安装说明](native/INSTALL.txt)。
 
