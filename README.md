@@ -1,4 +1,4 @@
-<p align="right">
+<p align="left">
   <a href="README.md"><kbd><strong>简体中文</strong></kbd></a>
   <a href="README.en.md"><kbd>English</kbd></a>
 </p>
