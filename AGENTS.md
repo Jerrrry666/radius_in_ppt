@@ -1,6 +1,6 @@
 # R角调整 — 项目协作规则
 
-> 2026-10-07更新。先确认分支和工作目录，再修改代码。
+> 2026-10-09更新。先确认分支和工作目录，再修改代码。
 > 当前版本为用户已明确批准的 **v1.4.0**；原生实现已合入本地`main`，尚未push或创建发布tag。
 
 ## 0. 当前产品与分支
@@ -19,7 +19,7 @@
 | 操作 | 默认规则 |
 | --- | --- |
 | 修改代码/文档、运行测试、构建PPAM/ZIP | 可自主执行 |
-| 本地更新已安装的本项目插件、使用临时测试文稿验证 | 在用户要求更新插件的范围内执行；保留旧包和文稿 |
+| 本地更新已安装的本项目插件、使用临时测试文稿验证 | 在用户要求更新插件的范围内执行；更新和验证后不保留旧包或临时测试文稿，保留验证记录 |
 | `git add`、commit、push | 必须有用户明确指令；完成本地工作后不要自动执行，也不必反复询问 |
 | 合并分支 | 用户明确要求后可提交该分支待合并改动并完成本地merge；不包含push/tag授权 |
 | 新建/推送/移动/删除tag、force-push | 必须有用户明确指令 |
@@ -38,6 +38,7 @@ RadiusNativeRibbon.bas       回调、显示值、状态、启用状态、错误
                 ↓
 RadiusNativeCore.bas         数值、单位、限幅、防误触、组合/元数据事务
 RadiusNativeRelations.bas    关系归属、待绑定、成员定位、预览编排
+RadiusNativeLayout.bas       网格配置、R角联动计划、父变化检测
                 ↓
 PptNativeDriver.bas          PowerPoint对象读写的薄封装
                 ↓
@@ -51,6 +52,7 @@ PowerPoint VBA对象模型
 - core通过driver访问宿主；纯数值函数不能依赖当前选区。
 - 不引入Scripting.Dictionary、COM工厂、ActiveX/MSForms、Win32定时器或Windows路径。
 - VBA错误必须记录完整`Err.Description`并向调用者传递；恢复组合失败须附带恢复错误，不能只报模糊原因。
+- `RadiusNativeQuickTest`/`RadiusNativeQuickRelations`编排隔离样本和断言，调用生产入口；测试期望不能复用被测算法求答案，不在driver复制业务规则。
 
 ## 3. 半径与防误触
 
@@ -90,8 +92,10 @@ python3 tools/build-native.py --distribution
 # 或 npm run build:native / npm run build
 python3 -m venv .venv-native
 .venv-native/bin/pip install -r native/requirements-test.txt
-.venv-native/bin/python test/test-native-package.py
 npm test
+npm run test:legacy
+# 一键项目检查也可双击tools/Run-Tests.command
+npm run test:quick
 ```
 
 - `npm run build`应指向原生构建。兼容的`tools/build-app.sh`默认也输出PPAM；名称不是.app交付承诺。
@@ -100,9 +104,11 @@ npm test
 - `.bas`为标准模块；`.cls`必须在PROJECT和dir两处都声明为类，带MODULEPRIVATE及完整类属性（尤其VB_Base），不能当标准模块塞入`WithEvents`。缺少类标识的包虽然可抽取，Mac会导致所有回调失效；2026-10-07已实测修复。
 - 当前源码按cp1252写入MS-OVBA；VBA源保持可编码文本，中文UI放UTF-8 Ribbon XML。不要静默替换不可编码字符。
 - 长VBA模块必须使用正确copy-token压缩。旧raw/literal写法虽然oletools能抽取，Mac会把长模块加载为空；压缩算法改动必须补宿主加载验证。
-- `npm test`是保留的Office.js迁移对照回归，不能证明原生VBA业务通过。测试数量随代码变化，以实际运行输出为准。
+- `npm test`/`test:native`运行原生格式、安装和OOXML读取器检查，优先使用项目`.venv-native`；不执行VBA。`npm run test:legacy`保留Office.js迁移对照，`test:all`依次运行两套。任何一套都不能替代原生VBA宿主验证。测试数量以实际运行输出为准。
 - VBA、事件类、Ribbon XML/回调、组合或tag路径变更必须验证真实PPT加载/编译与关键动作，再保存临时PPTX独立读OOXML验证。不修改用户真实文稿。
-- 普通7页半径基线：`test/native-host-fixture.py`；关系7页及单页批量绑定：`test/native-relations-fixture.py`；布局联动9页：`test/native-layout-fixture.py`。验收分别记录，不修改用户文稿。当前原生格式/安装测试19项，算法自检26项（含8项布局参数微调边界）。自检只测算法，不等于宿主通过。
+- 日常点击顶部「快速自检」：动态计数的算法检查和独立临时文稿中的真实业务用例。能稳定隔离的新缺陷补入一键病例，成功和拒绝都检查最终状态；无法可靠构造的宿主状态保留试验记录、列专项协议，不放宽断言或算作通过。组内选区必须核对真实`HasChildShapeRange`，不能把外层`ShapeRange`当作所选叶子；当前新建临时组不能可靠生成child选区，完整组联动纳入快测，真实child的读取/禁用/拒绝另行验收。自检由Ribbon持有事件guard，生产写入仍自行持有事务guard；保存/恢复原窗口、选区、Relations/Layout会话，结束仅关闭自己拥有的文稿。不得用测试开关跳过strict，不得为测试修改用户文稿或降低宏安全设置。
+- `tools/Run-Tests.command`可双击，`npm run test:quick`供终端/CI；复用`test:all`，失败保留输出，不自动安装依赖、不启动产品服务。HTTP回归可在测试进程内短暂创建本地socket并立即清理。项目检查不执行PowerPoint VBA。
+- 普通7页半径基线：`test/native-host-fixture.py`；关系7页及单页批量绑定：`test/native-relations-fixture.py`；布局联动9页：`test/native-layout-fixture.py`；无关损坏关系下的独立R角：`test/native-independent-radius-fixture.py`。验收分别记录，不修改用户文稿。当前原生消费端测试25项；算法基线26项（含8项布局参数微调边界），快速业务结果按实际报告计数。快测不替代保存OOXML、控件/事件接线、真实写失败恢复或目标宿主兼容性。
 - 历史诊断source-only PPTM和临时测试PPAM曾触发宿主退出；优先普通PPTX与已安装的真实控件，不重复使用这些诊断产物。
 
 ## 6. 安装、更新与实际路径
@@ -114,7 +120,7 @@ npm test
 - 不从会重建的`dist/`注册插件，不依赖旧app启动器。
 - PowerPoint「工具 → PowerPoint加载项」添加PPAM并保持勾选。只更新已安装插件时不降低全局宏安全设置。
 - 更新相同安装路径时，先保存文稿并Cmd+Q完全退出，再替换稳定文件，重新打开验证自动加载。更换安装路径时，须移除旧注册项后添加新路径。已打开的宿主缓存旧VBA/Ribbon，不得直接覆盖后声称生效；用户有未保存文稿时先保存或取消退出，不强制kill。
-- 文件准备脚本保留`.previous.ppam`以供恢复。不得覆盖正在加载的包后声称新版已生效。
+- 文件准备脚本先完整复制到临时文件，再替换目标；失败清理临时文件，不生成`.previous.ppam`。更新验证后清理已有旧包及临时测试文稿，不清理用户真实文稿、源码或验收记录。不得覆盖正在加载的包后声称新版已生效。
 - 安装/重启后的自动加载需实测，注册成功不代表编译或业务成功。
 - 处于iCloud Documents时不要外层整目录trash `dist`；只重建所需文件，不动用户文稿和未授权的历史产物。
 

@@ -14,6 +14,37 @@ Private menuPresentation As Object
 Private menuSlide As Long
 Private revision As Long
 
+Public Function CaptureTestSession() As Variant
+    Dim state(0 To 5) As Variant
+    Set state(0) = pendingPresentation
+    state(1) = pendingSlide
+    state(2) = pendingId
+    Set state(3) = menuPresentation
+    state(4) = menuSlide
+    state(5) = revision
+    CaptureTestSession = state
+End Function
+
+Public Sub RestoreTestSession(ByVal state As Variant)
+    If Not IsArray(state) Then Err.Raise 5, , "Invalid relationship test session."
+    If LBound(state) <> 0 Or UBound(state) <> 5 Then Err.Raise 5, , "Invalid relationship test session."
+    Set pendingPresentation = state(0)
+    pendingSlide = CLng(state(1))
+    pendingId = CLng(state(2))
+    Set menuPresentation = state(3)
+    menuSlide = CLng(state(4))
+    revision = CLng(state(5))
+End Sub
+
+Public Sub SuspendTestSession()
+    ' Preview ownership is never transferred to a test session.
+    If IsPreviewOpen Then Err.Raise 5, , "Close the relation preview before running the quick check."
+    CancelPending
+    Set menuPresentation = Nothing
+    menuSlide = 0
+    revision = 0
+End Sub
+
 Public Function IsPreviewContext() As Boolean
     Dim active As Object
     If previewPresentation Is Nothing Then Exit Function
@@ -72,12 +103,18 @@ Public Function SlideLeaves(ByVal slide As Object) As Collection
     Set SlideLeaves = result
 End Function
 
-Private Function SelectedLeaves() As Collection
+Public Function RoundedLeaves(ByVal objects As Collection) As Collection
     Dim result As New Collection, shape As Object
+    For Each shape In objects
+        CollectUnique shape, result, 0
+    Next shape
+    Set RoundedLeaves = result
+End Function
+
+Private Function SelectedLeaves() As Collection
+    Dim result As New Collection
     If PptNativeDriver.HasShapeSelection Then
-        For Each shape In PptNativeDriver.SelectionObjects()
-            CollectUnique shape, result, 0
-        Next shape
+        Set result = RoundedLeaves(PptNativeDriver.SelectionObjects())
     End If
     Set SelectedLeaves = result
 End Function
@@ -170,9 +207,12 @@ Private Function LegacyIds(ByVal value As String, ByRef first As Long, ByRef las
 End Function
 
 Public Function GroupsOnSlide(ByVal slide As Object) As Collection
-    Dim groups As New Collection, leaves As Collection, shape As Object, childShape As Object, group As Collection, child As Collection
+    Set GroupsOnSlide = GroupsFromLeaves(SlideLeaves(slide))
+End Function
+
+Public Function GroupsFromLeaves(ByVal leaves As Collection) As Collection
+    Dim groups As New Collection, shape As Object, childShape As Object, group As Collection, child As Collection
     Dim key As String, role As String, legacy As String, ids As Collection, id As Variant, first As Long, last As Long, ordinal As Long
-    Set leaves = SlideLeaves(slide)
     For Each shape In leaves
         key = UCase$(PptNativeDriver.ReadTag(shape, RELATION_KEY))
         role = UCase$(PptNativeDriver.ReadTag(shape, ROLE_KEY))
@@ -237,7 +277,23 @@ Public Function GroupsOnSlide(ByVal slide As Object) As Collection
         If CLng(group("ParentId")) = 0 Then SetProblem group, "Missing relationship parent."
         If group("Children").Count = 0 Then SetProblem group, "Relationship has no children."
     Next group
-    Set GroupsOnSlide = groups
+    Set GroupsFromLeaves = groups
+End Function
+
+Public Function IsNativeParent(ByVal shape As Object) As Boolean
+    Dim key As String, role As String, ignored As Long
+    key = UCase$(PptNativeDriver.ReadTag(shape, RELATION_KEY))
+    role = UCase$(PptNativeDriver.ReadTag(shape, ROLE_KEY))
+    If key = "" And role = "" Then Exit Function
+    If Left$(key, 1) <> "G" Then Err.Raise 5, , "Invalid native relationship key."
+    ignored = PositiveInteger(Mid$(key, 2))
+    If role = "P" Then
+        IsNativeParent = True
+    ElseIf Left$(role, 1) = "C" Then
+        ignored = PositiveInteger(Mid$(role, 2))
+    Else
+        Err.Raise 5, , "Invalid native relationship role."
+    End If
 End Function
 
 Private Function IsChild(ByVal group As Collection, ByVal id As Long) As Boolean
@@ -279,6 +335,14 @@ Failed:
 End Sub
 
 Private Function PendingValid() As Boolean
+    Dim found As Object
+    If pendingPresentation Is Nothing Or IsPreviewContext Then Exit Function
+    If Not PptNativeDriver.HasPresentation Then CancelPending: Exit Function
+    Set found = PendingParentFrom(SlideLeaves(PptNativeDriver.CurrentSlide()))
+    PendingValid = Not found Is Nothing
+End Function
+
+Private Function PendingParentFrom(ByVal leaves As Collection) As Object
     Dim current As Object, found As Object
     If pendingPresentation Is Nothing Then Exit Function
     If IsPreviewContext Then Exit Function
@@ -286,24 +350,31 @@ Private Function PendingValid() As Boolean
     Set current = PptNativeDriver.CurrentPresentation()
     If Not current Is pendingPresentation Then CancelPending: Exit Function
     If PptNativeDriver.SlideId(PptNativeDriver.CurrentSlide()) <> pendingSlide Then CancelPending: Exit Function
-    Set found = FindShape(SlideLeaves(PptNativeDriver.CurrentSlide()), pendingId)
+    Set found = FindShape(leaves, pendingId)
     If found Is Nothing Then CancelPending: Exit Function
-    PendingValid = True
+    Set PendingParentFrom = found
 End Function
 
 Public Function CanMarkParent() As Boolean
-    Dim roots As Collection, groups As Collection, group As Collection, id As Long
+    Dim roots As Collection, groups As Collection
     If IsPreviewContext Or Not PptNativeDriver.HasShapeSelection Then Exit Function
     Set roots = PptNativeDriver.SelectionObjects()
     If roots.Count <> 1 Then Exit Function
     If Not RadiusNativeCore.IsRoundRect(roots(1)) Then Exit Function
-    id = PptNativeDriver.ShapeId(roots(1))
     Set groups = GroupsOnSlide(PptNativeDriver.CurrentSlide())
+    CanMarkParent = CanMarkParentFrom(roots, groups)
+End Function
+
+Private Function CanMarkParentFrom(ByVal roots As Collection, ByVal groups As Collection) As Boolean
+    Dim group As Collection, id As Long
+    If roots.Count <> 1 Then Exit Function
+    If Not RadiusNativeCore.IsRoundRect(roots(1)) Then Exit Function
+    id = PptNativeDriver.ShapeId(roots(1))
     Set group = GroupForShape(groups, id)
     If Not group Is Nothing Then
         If CStr(group("Kind")) <> "native" Or CLng(group("ParentId")) <> id Or CStr(group("Problem")) <> "" Then Exit Function
     End If
-    CanMarkParent = True
+    CanMarkParentFrom = True
 End Function
 
 Public Sub MarkParent()
@@ -316,25 +387,32 @@ Public Sub MarkParent()
 End Sub
 
 Private Sub ValidateBinding(ByRef slide As Object, ByRef parent As Object, ByRef selected As Collection, ByRef groups As Collection)
-    Dim shape As Object, group As Collection
+    Dim problem As String
     If Not PendingValid Then Err.Raise 5, , "Choose a parent on this slide first."
     Set slide = PptNativeDriver.CurrentSlide()
     Set parent = FindShape(SlideLeaves(slide), pendingId)
     Set selected = SelectedLeaves()
     If selected.Count = 0 Then Err.Raise 5, , "Select the child rounded rectangles."
     Set groups = GroupsOnSlide(slide)
+    problem = BindingProblem(selected, groups)
+    If problem <> "" Then Err.Raise 5, , problem
+End Sub
+
+Private Function BindingProblem(ByVal selected As Collection, ByVal groups As Collection) As String
+    Dim shape As Object, group As Collection
+    If selected.Count = 0 Then BindingProblem = "Select the child rounded rectangles.": Exit Function
     Set group = GroupForShape(groups, pendingId)
     If Not group Is Nothing Then
-        If CStr(group("Kind")) <> "native" Or CLng(group("ParentId")) <> pendingId Or CStr(group("Problem")) <> "" Then Err.Raise 5, , "The pending parent has an incompatible existing relationship."
+        If CStr(group("Kind")) <> "native" Or CLng(group("ParentId")) <> pendingId Or CStr(group("Problem")) <> "" Then BindingProblem = "The pending parent has an incompatible existing relationship.": Exit Function
     End If
     For Each shape In selected
-        If PptNativeDriver.ShapeId(shape) = pendingId Then Err.Raise 5, , "A parent cannot also be its child. Select only child objects."
+        If PptNativeDriver.ShapeId(shape) = pendingId Then BindingProblem = "A parent cannot also be its child. Select only child objects.": Exit Function
         Set group = GroupForShape(groups, PptNativeDriver.ShapeId(shape))
         If Not group Is Nothing Then
-            If CStr(group("Kind")) <> "native" Or CLng(group("ParentId")) <> pendingId Or CStr(group("Problem")) <> "" Then Err.Raise 5, , "Object already belongs to " & CStr(group("Key")) & ": " & PptNativeDriver.ShapeName(shape) & ". Detach it explicitly first."
+            If CStr(group("Kind")) <> "native" Or CLng(group("ParentId")) <> pendingId Or CStr(group("Problem")) <> "" Then BindingProblem = "Object already belongs to " & CStr(group("Key")) & ": " & PptNativeDriver.ShapeName(shape) & ". Detach it explicitly first.": Exit Function
         End If
     Next shape
-End Sub
+End Function
 
 Public Function CanBind() As Boolean
     Dim slide As Object, parent As Object, selected As Collection, groups As Collection
@@ -391,16 +469,63 @@ Public Sub BindChildren()
 End Sub
 
 Public Function SelectionInfo() As Collection
-    Dim info As New Collection, groups As Collection, selected As Collection, shape As Object, group As Collection, chosen As Collection, parent As Object
+    Dim snapshot As Collection
+    Set snapshot = ReadUiSnapshot()
+    Set SelectionInfo = snapshot("Info")
+End Function
+
+' Only Ribbon display callbacks may reuse this snapshot. Actions read again.
+Public Function ReadUiSnapshot() As Collection
+    Dim snapshot As New Collection, groups As New Collection, selected As New Collection
+    Dim objects As New Collection, leaves As New Collection, parent As Object, group As Collection
+    Dim preview As Boolean
+    preview = IsPreviewContext
+    If Not preview And PptNativeDriver.HasPresentation Then
+        Set leaves = SlideLeaves(PptNativeDriver.CurrentSlide())
+        Set groups = GroupsFromLeaves(leaves)
+        If PptNativeDriver.HasShapeSelection Then Set objects = PptNativeDriver.SelectionObjects()
+        Set selected = RoundedLeaves(objects)
+        Set parent = PendingParentFrom(leaves)
+        Set group = SelectedGroupFrom(groups, selected)
+    End If
+    snapshot.Add groups, "Groups"
+    snapshot.Add selected, "Selected"
+    snapshot.Add SelectionInfoFrom(groups, selected, parent, preview), "Info"
+    snapshot.Add (Not group Is Nothing), "HasGroup"
+    If Not group Is Nothing Then snapshot.Add group, "Group"
+    snapshot.Add (Not preview And groups.Count > 0), "CanView"
+    snapshot.Add (Not preview And CanMarkParentFrom(objects, groups)), "CanMarkParent"
+    snapshot.Add (Not preview And CanBindFrom(parent, selected, groups)), "CanBind"
+    snapshot.Add (Not preview And CanDetachFrom(group, selected, False)), "CanDetachChild"
+    snapshot.Add (Not preview And Not group Is Nothing), "CanDetachWhole"
+    Set ReadUiSnapshot = snapshot
+End Function
+
+Private Function CanBindFrom(ByVal parent As Object, ByVal selected As Collection, ByVal groups As Collection) As Boolean
+    If parent Is Nothing Or selected.Count = 0 Then Exit Function
+    CanBindFrom = (BindingProblem(selected, groups) = "")
+End Function
+
+Private Function CanDetachFrom(ByVal group As Collection, ByVal selected As Collection, ByVal whole As Boolean) As Boolean
+    Dim shape As Object
+    If group Is Nothing Then Exit Function
+    If whole Then CanDetachFrom = True: Exit Function
+    If selected.Count = 0 Then Exit Function
+    For Each shape In selected
+        If Not IsChild(group, PptNativeDriver.ShapeId(shape)) Then Exit Function
+    Next shape
+    CanDetachFrom = True
+End Function
+
+Private Function SelectionInfoFrom(ByVal groups As Collection, ByVal selected As Collection, ByVal parent As Object, ByVal preview As Boolean) As Collection
+    Dim info As New Collection, shape As Object, group As Collection, chosen As Collection
     Dim state As String, key As String, role As String, name As String, parentName As String, count As Long, groupCount As Long, child As Collection, pendingStatus As String
     Dim keys As String, unboundCount As Long
     state = "empty"
-    If IsPreviewContext Then
+    If preview Then
         state = "preview"
-    ElseIf PptNativeDriver.HasPresentation Then
-        Set groups = GroupsOnSlide(PptNativeDriver.CurrentSlide())
+    Else
         groupCount = groups.Count
-        Set selected = SelectedLeaves()
         count = selected.Count
         For Each shape In selected
             Set group = GroupForShape(groups, PptNativeDriver.ShapeId(shape))
@@ -441,9 +566,8 @@ Public Function SelectionInfo() As Collection
                 End If
             End If
         End If
-        If PendingValid Then
+        If Not parent Is Nothing Then
             state = "pending"
-            Set parent = FindShape(SlideLeaves(PptNativeDriver.CurrentSlide()), pendingId)
             parentName = PptNativeDriver.ShapeName(parent)
             pendingStatus = "ready"
             If count = 0 Then pendingStatus = "select"
@@ -467,14 +591,19 @@ Public Function SelectionInfo() As Collection
     info.Add unboundCount, "Unbound"
     info.Add pendingStatus, "PendingStatus"
     If chosen Is Nothing Then info.Add 0&, "Children" Else info.Add chosen("Children").Count, "Children"
-    Set SelectionInfo = info
+    Set SelectionInfoFrom = info
 End Function
 
 Public Function SelectedGroup() As Collection
-    Dim groups As Collection, selected As Collection, shape As Object, group As Collection, found As Collection
+    Dim groups As Collection, selected As Collection
     If IsPreviewContext Or Not PptNativeDriver.HasPresentation Then Exit Function
     Set groups = GroupsOnSlide(PptNativeDriver.CurrentSlide())
     Set selected = SelectedLeaves()
+    Set SelectedGroup = SelectedGroupFrom(groups, selected)
+End Function
+
+Public Function SelectedGroupFrom(ByVal groups As Collection, ByVal selected As Collection) As Collection
+    Dim shape As Object, group As Collection, found As Collection
     For Each shape In selected
         Set group = GroupForShape(groups, PptNativeDriver.ShapeId(shape))
         If Not group Is Nothing Then
@@ -485,20 +614,16 @@ Public Function SelectedGroup() As Collection
             End If
         End If
     Next shape
-    Set SelectedGroup = found
+    Set SelectedGroupFrom = found
 End Function
 
 Public Function CanDetach(ByVal whole As Boolean) As Boolean
-    Dim group As Collection, selected As Collection, shape As Object
+    Dim group As Collection, selected As Collection
     Set group = SelectedGroup()
     If group Is Nothing Then Exit Function
     If whole Then CanDetach = True: Exit Function
     Set selected = SelectedLeaves()
-    If selected.Count = 0 Then Exit Function
-    For Each shape In selected
-        If Not IsChild(group, PptNativeDriver.ShapeId(shape)) Then Exit Function
-    Next shape
-    CanDetach = True
+    CanDetach = CanDetachFrom(group, selected, whole)
 End Function
 
 Public Function RemovalInfo() As Collection
@@ -553,9 +678,14 @@ End Sub
 
 Public Function BeginMenu() As Collection
     If IsPreviewContext Then Err.Raise 5, , "Close the preview to manage source relationships."
+    Set BeginMenu = BeginMenuFrom(GroupsOnSlide(PptNativeDriver.CurrentSlide()))
+End Function
+
+Public Function BeginMenuFrom(ByVal groups As Collection) As Collection
+    If IsPreviewContext Then Err.Raise 5, , "Close the preview to manage source relationships."
     Set menuPresentation = PptNativeDriver.CurrentPresentation()
     menuSlide = PptNativeDriver.SlideId(PptNativeDriver.CurrentSlide())
-    Set BeginMenu = GroupsOnSlide(PptNativeDriver.CurrentSlide())
+    Set BeginMenuFrom = groups
 End Function
 
 Public Function MenuToken(ByVal key As String, ByVal mode As String, ByVal id As Long) As String

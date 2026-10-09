@@ -1,0 +1,220 @@
+{
+  "date": "2026-10-09",
+  "recordedAtUtc": "2026-10-09T09:49:39.464537+00:00",
+  "branch": "main",
+  "version": "1.4.0",
+  "status": "final_package_installed_and_quick_host_cases_passed_with_declared_scope",
+  "package": {
+    "distSha256": "6c4a0d2a20221399f85a393fcb19e70bb0fe05c68c0ff5a9ae9b7ad97ef54373",
+    "installedSha256": "6c4a0d2a20221399f85a393fcb19e70bb0fe05c68c0ff5a9ae9b7ad97ef54373",
+    "distributionSha256": "cc3d6835bc61403e7a981532834e26e682cfe15f89aa0bafeac1960f6a643ae2",
+    "distributionMembers": [
+      "RadiusInPptNative-mac/RadiusInPptNative.ppam",
+      "RadiusInPptNative-mac/Install-RadiusInPptNative.command",
+      "RadiusInPptNative-mac/INSTALL.txt"
+    ],
+    "installedUpdated": true,
+    "normalQuitBeforeInstall": true,
+    "hostExitConfirmedBeforeInstall": true,
+    "stablePath": "/Users/ma/Library/Application Support/RadiusInPptNative/RadiusInPptNative.ppam",
+    "automaticLoadOnReopen": true,
+    "installedAndDistIdentical": true,
+    "distributionInstallTextVerified": true,
+    "oldPackagesRetained": false,
+    "oldPackageLocationAfterCleanup": "Permanently deleted from Finder Trash; no older PPAM remains in either installation directory."
+  },
+  "host": {
+    "version": "16.113.4",
+    "build": "26100421",
+    "license": "Office LTSC Standard for Mac 2021",
+    "observedInAboutDialog": true,
+    "target16_111Validated": false
+  },
+  "automatedChecks": {
+    "entry": "npm run test:quick",
+    "finderEntry": "tools/Run-Tests.command",
+    "nativeConsumer": {
+      "passed": 25,
+      "executesVba": false
+    },
+    "legacyOfficeJs": {
+      "passed": 287,
+      "suiteCounts": [
+        115,
+        96,
+        40,
+        36
+      ],
+      "provesNativeHostBehavior": false
+    },
+    "log": "test-artifacts/main-optimization-20261009/project-quick-check-final.log",
+    "gitDiffCheck": "passed",
+    "sourceEncoding": "cp1252 passed",
+    "reviews": {
+      "agents": "GPT-6.1 Sol, max",
+      "peerReview": "completed; final independent expectations, fresh objects, zero-write rejection, session ownership, callback references and source structure reviewed; no remaining confirmed blocking finding"
+    }
+  },
+  "newQuickTest": {
+    "ribbon": "R角调整 · Native → 快速自检",
+    "hostExecuted": true,
+    "algorithmBaseline": 26,
+    "actualAlgorithmChecks": 26,
+    "memoryCases": 13,
+    "inputCases": 1,
+    "actualPassedCases": 14,
+    "actualFailedCases": 0,
+    "actualAssertionCount": 2262,
+    "actualElapsedSeconds": [
+      0.53,
+      0.42,
+      0.41,
+      0.42
+    ],
+    "cases": [
+      "Input validation",
+      "Radius units, zero, clamps and mixed arrow",
+      "Protection, fixed radius and explicit unprotect",
+      "Late strict tag rejects a complete radius batch",
+      "Scaled two-level group and fresh direct hierarchy",
+      "Public metadata and reserved protection tags",
+      "Public shape plans, impossible box and late strict",
+      "Complete top-level group: linked %, strict and invalid layout",
+      "Parent binding, conflict and detach",
+      "Grid layout, serialization and radius links",
+      "Strict child blocks a complete layout batch",
+      "Protected parent layout rules",
+      "Invalid grid and transformed layout rejection",
+      "Independent radius with unrelated broken relation"
+    ],
+    "runs": [
+      {
+        "context": "slide 1 with no shapes selected",
+        "elapsedSeconds": 0.53,
+        "algorithmChecks": 26,
+        "passedMemoryAndInputCases": 14,
+        "failedCases": 0,
+        "assertions": 2262,
+        "cleanup": "OK; original window/selection and sessions restored."
+      },
+      {
+        "context": "slide 1 ParentBox, pending parent and unapplied rows=2/columns=2/padding=.5cm/gap=.3cm/auto=off draft",
+        "elapsedSeconds": 0.42,
+        "algorithmChecks": 26,
+        "passedMemoryAndInputCases": 14,
+        "failedCases": 0,
+        "assertions": 2262,
+        "cleanup": "OK; original window/selection and sessions restored."
+      },
+      {
+        "context": "repeat with the same pending parent, unapplied draft and source selection",
+        "elapsedSeconds": 0.41,
+        "algorithmChecks": 26,
+        "passedMemoryAndInputCases": 14,
+        "failedCases": 0,
+        "assertions": 2262,
+        "cleanup": "OK; original window/selection and sessions restored."
+      },
+      {
+        "context": "slide 6 actual nested ParentBox member selected through relationship menu; radius read as 1.215cm",
+        "elapsedSeconds": 0.42,
+        "algorithmChecks": 26,
+        "passedMemoryAndInputCases": 14,
+        "failedCases": 0,
+        "assertions": 2262,
+        "cleanup": "OK; original window/selection and sessions restored."
+      }
+    ],
+    "isolation": {
+      "onlyOwnedUnsavedPresentationWritten": true,
+      "separateBlankSlidePerMemoryCase": true,
+      "productionEntriesCalled": true,
+      "strictBypassAdded": false,
+      "coreTransactionGuardBypassAdded": false,
+      "ribbonEditingEventGuardHeld": true,
+      "usesDoEvents": false,
+      "sourceSavedStateObservedOnly": true,
+      "ownedPresentationClosedAfterEachRun": true,
+      "windowViewSelectionAndSessionsRestored": true,
+      "testPptxSavedByQuickRunner": false
+    }
+  },
+  "realChildSelectionSupplement": {
+    "fixtureSlide": 6,
+    "selected": "nested ParentBox through actual relationship member menu",
+    "roundedCount": 1,
+    "protectedCount": 0,
+    "status": "请选择完整顶层组合",
+    "radiusReadCm": 1.215,
+    "independentBaselineRadiusCm": 1.2149999999999999,
+    "radiusReadMatchesOoxml": true,
+    "radiusPresetStepProtectionAndUnprotectControlsDisabled": true,
+    "readRelationsAndLayoutRemainAvailable": true,
+    "sameChildSelectionRestoredAfterQuickRun": true,
+    "directCoreRadiusProtectUnprotectRefusalsExecuted": false,
+    "scope": "Real ChildShapeRange reading/UI boundary and restoration passed; direct Core refusal calls require the separate manual protocol."
+  },
+  "previewGuard": {
+    "quickButtonDisabledInOwnedNumberedPreview": true,
+    "previewClosedWithoutSave": true,
+    "returnedToSource": true
+  },
+  "sourcePresentationVerification": {
+    "passedSlides": 9,
+    "passedShapes": 32,
+    "passedTextRuns": 29,
+    "exactBaselineMatch": true,
+    "powerPointSaveAsUsed": true,
+    "noExtraMarkers": true,
+    "evidence": "test-artifacts/main-optimization-20261009/quick-source-final-host-verification.json",
+    "scope": "Source preservation after final quick runs and manual read/preview. In-memory business fixtures themselves are not serialized by the runner."
+  },
+  "candidateHistory": {
+    "initial13CaseHostEvidence": "test-artifacts/main-optimization-20261009/quick-initial-host-runs.json",
+    "failedChildFixtureCandidateCount": 7,
+    "failedChildFixtureEvidence": "test-artifacts/main-optimization-20261009/quick-selection-fixture-candidates.json",
+    "resolution": "Fresh groups could not reliably produce real child selection during a Ribbon callback. No false PASS or guard bypass: final case 7 exercises complete grouped linked %, late strict and invalid layout with final-state assertions; actual child refusals moved to an explicit manual protocol. Experimental selector and DoEvents removed.",
+    "initialMacLockResolved": true
+  },
+  "cleanup": {
+    "powerPointExitedNormally": true,
+    "temporaryTestDocumentsRemoved": true,
+    "oldPackageBackupsCreated": false,
+    "testArtifactBinaryFilesRemaining": [],
+    "evidence": "test-artifacts/main-optimization-20261009/quick-final-cleanup.json",
+    "sourceAndJsonLogsPreserved": true,
+    "userRealPresentationModified": false,
+    "priorContainerArtifactsMovedToTrash": true,
+    "trashEmptied": true,
+    "otherTrashItemsUntouched": true,
+    "trashDeletionMethod": "Selected and permanently deleted the four identified project entries individually; unrelated Trash items were untouched.",
+    "trashRemainingItems": 0
+  },
+  "remainingSeparateValidation": [
+    "Direct Core radius/protect/unprotect refusals from a real child selection",
+    "Text selection, multiple selected slides and multiple-window restoration",
+    "Complete controls/events and full save-close-reopen behavior of all business cases",
+    "Host write/tag-read/regroup failure injection and recovery",
+    "Office LTSC target PowerPoint 16.111/26071325"
+  ],
+  "priorMainHostEvidence": "test/native-host-validation-main-20261009.json",
+  "git": {
+    "added": false,
+    "committed": false,
+    "pushed": false,
+    "tagged": false
+  },
+  "previousVersionResidues": {
+    "foundAt": "/Users/ma/Library/Containers/com.microsoft.Powerpoint/Data/Documents",
+    "identifiedBy": "Dedicated RadiusInPptNative folder contained one RadiusInPptNative.ppam; sibling wef folder contained one Office.js manifest.xml whose SourceLocation was localhost:3000 and v1.3.2.",
+    "removedFromOldContainerPath": true,
+    "movedToTrash": [
+      "RadiusInPptNative.ppam",
+      "manifest.xml",
+      "empty RadiusInPptNative folder",
+      "empty wef folder"
+    ],
+    "permanentlyPurged": true,
+    "currentStableInstall": "/Users/ma/Library/Application Support/RadiusInPptNative/RadiusInPptNative.ppam"
+  }
+}

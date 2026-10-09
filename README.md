@@ -69,16 +69,26 @@
 
 ## 构建和验证
 
+日常想快速确认逻辑是否正常，点击PowerPoint顶部「R角调整 · Native → 快速自检」。它自动创建临时文稿，检查算法、半径、防误触、组合、关系和布局，报告通过数、失败原因及耗时，然后关闭临时文稿并返回原稿。测试不保存PPTX；编号预览打开时先关闭预览。
+
+快测的实际数量、耗时、安装包和本机验证范围见[快测记录](test/native-host-validation-quickcheck-20261009.json)。保存文件、全部控件事件和宿主故障恢复仍按独立协议验收。
+
+开发检查可双击[Run-Tests.command](tools/Run-Tests.command)，或运行`npm run test:quick`。完整清单和本轮优化经验见[test/README.md](test/README.md)。真实组内单选、控件事件、保存重开和宿主写失败恢复使用专项协议，快测报告不代表这些范围全部通过。
+
 ```sh
 npm run build
-npm test
 python3 -m venv .venv-native
 .venv-native/bin/pip install -r native/requirements-test.txt
-.venv-native/bin/python test/test-native-package.py
+npm test                     # 原生格式、安装和保存结果读取器
+npm run test:legacy          # Office.js历史对照
+npm run test:all             # 两套检查
+npm run test:quick           # 一键项目检查；可双击tools/Run-Tests.command
 ```
 
-保留的 `build-app.sh` 名称是兼容原构建入口，默认输出 `.ppam` 和安装 ZIP。ZIP 内只有插件、一次文件准备脚本和安装说明；插件使用不依赖 Python 或 Node。源码采用三层结构：Ribbon UI → RadiusNativeCore / RadiusNativeRelations / RadiusNativeLayout → PptNativeDriver。当前19项原生格式/安装测试；真实宿主操作和保存结果分别记录在[关系验收](test/native-host-validation-relations-20261007.json)及[布局联动验收](test/native-host-validation-layout-20261007.json)。
+保留的 `build-app.sh` 名称是兼容原构建入口，默认输出 `.ppam` 和安装 ZIP。ZIP 内只有插件、一次文件准备脚本和安装说明；插件使用不依赖 Python 或 Node。源码采用三层结构：Ribbon UI → RadiusNativeCore / RadiusNativeRelations / RadiusNativeLayout → PptNativeDriver。`npm test`使用具备测试依赖的Python解释器，优先选择本项目`.venv-native`；消费端检查不执行VBA。真实宿主操作和保存结果分别记录在[关系验收](test/native-host-validation-relations-20261007.json)及[布局联动验收](test/native-host-validation-layout-20261007.json)。
 
 Office.js 原实现保留为迁移对照，历史说明见 [task pane 文档](README.taskpane.md)。需要对照 app 时显式运行 `bash tools/build-app.sh --legacy-taskpane`；原 `.app`/wef 部署及 DMG 脚本不适用于原生插件的安装。
+
+2026-10-09的main代码整理与本机更新记录见[本轮验收](test/native-host-validation-main-20261009.json)，通过与待验范围分别列出。安装更新不生成旧包备份；宿主测试完成后保存记录并清理临时PPTX。
 
 [English](README.en.md) · [变更日志](changelogs/v1.4.md)

@@ -3,14 +3,19 @@
 These tests do not execute VBA or claim successful Mac Office loading.
 """
 import importlib.util
+import hashlib
 import io
 import json
+import os
 from pathlib import Path
+import pty
 import random
 import re
+import select
 import struct
 import subprocess
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 import zipfile
@@ -23,6 +28,9 @@ SOURCES = sorted([*(ROOT / 'native').glob('*.bas'), *(ROOT / 'native').glob('*.c
 spec = importlib.util.spec_from_file_location('build_native', ROOT / 'tools' / 'build-native.py')
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
+fixture_spec = importlib.util.spec_from_file_location('native_host_fixture', ROOT / 'test/native-host-fixture.py')
+host_fixture = importlib.util.module_from_spec(fixture_spec)
+fixture_spec.loader.exec_module(host_fixture)
 
 
 class NativePackageTests(unittest.TestCase):
@@ -243,7 +251,7 @@ class NativePackageTests(unittest.TestCase):
             self.assertEqual(mode & 0o777, 0o755)
         self.assertEqual(builder.distribution(self.output).read_bytes(), first)
 
-    def test_install_helper_handles_spaces_reinstall_and_preserves_previous_package(self):
+    def test_install_helper_handles_spaces_reinstall_and_updates_without_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             package = directory / 'Extracted package'
@@ -255,22 +263,21 @@ class NativePackageTests(unittest.TestCase):
             destination = directory / 'Mac Library' / '原生插件'
             command = ['bash', str(helper), '--destination', str(destination), '--no-reveal']
             target = destination / payload.name
-            previous = destination / 'RadiusInPptNative.previous.ppam'
             subprocess.run(command, check=True, capture_output=True)
             self.assertEqual(target.read_bytes(), payload.read_bytes())
-            self.assertFalse(previous.exists())
+            self.assertEqual({path.name for path in destination.iterdir()}, {payload.name})
             target_stat = target.stat()
             subprocess.run(command, check=True, capture_output=True)
             self.assertEqual(target.stat().st_mtime_ns, target_stat.st_mtime_ns)
-            self.assertFalse(previous.exists())
+            self.assertEqual({path.name for path in destination.iterdir()}, {payload.name})
             old = target.read_bytes()
             with zipfile.ZipFile(payload, 'a') as archive:
                 archive.writestr('docProps/test-update.txt', 'new package')
             subprocess.run(command, check=True, capture_output=True)
             self.assertEqual(target.read_bytes(), payload.read_bytes())
-            self.assertEqual(previous.read_bytes(), old)
+            self.assertNotEqual(target.read_bytes(), old)
             self.assertEqual(target.stat().st_mode & 0o777, 0o644)
-            self.assertFalse(list(destination.glob('.radius-install.*')))
+            self.assertEqual({path.name for path in destination.iterdir()}, {payload.name})
 
     def test_install_helper_rejects_missing_or_corrupt_payload_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -286,6 +293,87 @@ class NativePackageTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(destination.exists())
 
+    def test_install_helper_failed_update_preserves_current_package_and_cleans_staging(self):
+        # Inject filesystem failures inside this subprocess only. The current
+        # install must remain intact before and after the new copy completes,
+        # without a test hook in the installer or a separate recovery backup.
+        fault_script = r'''
+fail_phase="$1"
+shift
+fail_copy_source="$1"
+shift
+fail_replace_target="$1"
+shift
+function /bin/cp {
+  if [ "$fail_phase" = 'copy' ] && [ "$1" = "$fail_copy_source" ]; then
+    printf 'interrupted copy' > "${@: -1}"
+    echo '[test] injected filesystem failure' >&2
+    return 73
+  fi
+  command /bin/cp "$@"
+}
+function /bin/mv {
+  if [ "$fail_phase" = 'replace' ] && [ "${@: -1}" = "$fail_replace_target" ]; then
+    echo '[test] injected filesystem failure' >&2
+    return 73
+  fi
+  command /bin/mv "$@"
+}
+source "$0" "$@"
+'''
+        for phase in ('copy', 'replace'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                helper = directory / 'Install.command'
+                helper.write_bytes((ROOT / 'native/Install-RadiusInPptNative.command').read_bytes())
+                payload = directory / 'RadiusInPptNative.ppam'
+                payload.write_bytes(self.output.read_bytes())
+                with zipfile.ZipFile(payload, 'a') as archive:
+                    archive.writestr('docProps/update.txt', 'new package')
+                destination = directory / 'installed'
+                destination.mkdir()
+                target = destination / payload.name
+                target.write_bytes(self.output.read_bytes())
+                before = {path.name: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+                          for path in destination.iterdir()}
+                result = subprocess.run(['bash', '-c', fault_script, str(helper), phase, str(payload), str(target),
+                                         '--destination', str(destination), '--no-reveal'],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 73, result.stderr)
+                self.assertIn('[test] injected filesystem failure', result.stderr)
+                after = {path.name: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+                         for path in destination.iterdir()}
+                self.assertEqual(after, before)
+
+    def test_install_helper_rejects_nonregular_package_target(self):
+        for kind in ('directory', 'fifo'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                helper = directory / 'Install.command'
+                helper.write_bytes((ROOT / 'native/Install-RadiusInPptNative.command').read_bytes())
+                payload = directory / 'RadiusInPptNative.ppam'
+                payload.write_bytes(self.output.read_bytes())
+                destination = directory / 'installed'
+                destination.mkdir()
+                invalid = destination / payload.name
+                if kind == 'directory':
+                    invalid.mkdir()
+                else:
+                    os.mkfifo(invalid)
+                invalid_stat = invalid.stat()
+                other_name = 'Unrelated.txt'
+                other = destination / other_name
+                other.write_bytes(b'existing package')
+                before = other.read_bytes()
+                result = subprocess.run(['bash', str(helper), '--destination', str(destination), '--no-reveal'],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(other.read_bytes(), before)
+                self.assertEqual(invalid.stat(), invalid_stat)
+                if kind == 'directory':
+                    self.assertEqual(list(invalid.iterdir()), [])
+                self.assertEqual({path.name for path in destination.iterdir()}, {payload.name, other_name})
+
     def test_build_is_reproducible_and_missing_callback_fails(self):
         other = builder.build(Path(self.temp.name) / 'second.ppam')
         self.assertEqual(other.read_bytes(), self.output.read_bytes())
@@ -295,6 +383,123 @@ class NativePackageTests(unittest.TestCase):
         (fixture / 'customUI.xml').write_text('<customUI onLoad="Missing"/>')
         with self.assertRaisesRegex(ValueError, 'Missing callback'):
             builder.build(Path(self.temp.name) / 'bad.ppam', fixture)
+
+
+class LocalTestEntryTests(unittest.TestCase):
+    @staticmethod
+    def prepare_entry(directory, status):
+        project = Path(directory) / 'Project with spaces' / '原生插件'
+        tools = project / 'tools'
+        tools.mkdir(parents=True)
+        entry = tools / 'Run-Tests.command'
+        entry.write_bytes((ROOT / 'tools/Run-Tests.command').read_bytes())
+        entry.chmod(0o755)
+        (project / 'package.json').write_bytes((ROOT / 'package.json').read_bytes())
+        binaries = Path(directory) / 'fake-bin'
+        binaries.mkdir()
+        venv_bin = project / '.venv-native/bin'
+        venv_bin.mkdir(parents=True)
+        for executable in (binaries / 'python3', binaries / 'node', venv_bin / 'python3'):
+            executable.write_text('#!/bin/bash\nexit 0\n')
+            executable.chmod(0o755)
+        npm = binaries / 'npm'
+        npm.write_text(r'''#!/bin/bash
+printf '%s\n' "$PWD" "$*" "$(command -v python3)" > "$RADIUS_TEST_CAPTURE"
+echo '[test] local suite result'
+exit "$RADIUS_TEST_EXIT"
+''')
+        npm.chmod(0o755)
+        capture = Path(directory) / 'entry-capture.txt'
+        environment = dict(os.environ, PATH=str(binaries) + os.pathsep + os.defpath,
+                           RADIUS_TEST_CAPTURE=str(capture), RADIUS_TEST_EXIT=str(status))
+        return entry, project, capture, environment
+
+    def test_local_entry_handles_spaces_venv_and_suite_exit_status(self):
+        for status in (0, 41):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                entry, project, capture, environment = self.prepare_entry(directory, status)
+                result = subprocess.run([str(entry), '--no-pause'], cwd=directory, env=environment,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertEqual(capture.read_text().splitlines(),
+                                 [str(project), 'run test:all', str(project / '.venv-native/bin/python3')])
+                self.assertIn('全部通过' if status == 0 else '退出码 41', result.stdout + result.stderr)
+
+    def test_local_entry_keeps_failed_interactive_result_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry, _, _, environment = self.prepare_entry(directory, 41)
+            master, slave = pty.openpty()
+            process = subprocess.Popen([str(entry)], cwd=directory, env=environment,
+                                       stdin=slave, stdout=slave, stderr=slave)
+            os.close(slave)
+            try:
+                output = b''
+                deadline = time.monotonic() + 5
+                while '按回车结束检查'.encode() not in output:
+                    remaining = deadline - time.monotonic()
+                    self.assertGreater(remaining, 0, output.decode(errors='replace'))
+                    readable, _, _ = select.select([master], [], [], remaining)
+                    self.assertTrue(readable, output.decode(errors='replace'))
+                    output += os.read(master, 8192)
+                self.assertIsNone(process.poll(), 'Failed result closed before confirmation')
+                self.assertIn('退出码 41'.encode(), output)
+                os.write(master, b'\n')
+                self.assertEqual(process.wait(timeout=5), 41)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+                os.close(master)
+
+
+class NativeHostFixtureTests(unittest.TestCase):
+    @staticmethod
+    def write_inspection_fixture(path, second_name='Second', nested=False):
+        """Minimal saved OOXML, independent of PowerPoint and python-pptx."""
+        p, a = host_fixture.NS['p'], host_fixture.NS['a']
+        root = ET.Element('{%s}sld' % p)
+        tree = ET.SubElement(ET.SubElement(root, '{%s}cSld' % p), '{%s}spTree' % p)
+
+        def add_shape(parent, name, identifier, group=False):
+            shape = ET.SubElement(parent, '{%s}%s' % (p, 'grpSp' if group else 'sp'))
+            nv = ET.SubElement(shape, '{%s}%s' % (p, 'nvGrpSpPr' if group else 'nvSpPr'))
+            ET.SubElement(nv, '{%s}cNvPr' % p, id=str(identifier), name=name)
+            ET.SubElement(nv, '{%s}nvPr' % p)
+            properties = ET.SubElement(shape, '{%s}%s' % (p, 'grpSpPr' if group else 'spPr'))
+            transform = ET.SubElement(properties, '{%s}xfrm' % a)
+            ET.SubElement(transform, '{%s}off' % a, x='0', y='0')
+            ET.SubElement(transform, '{%s}ext' % a, cx='360000', cy='360000')
+            if group:
+                ET.SubElement(transform, '{%s}chOff' % a, x='0', y='0')
+                ET.SubElement(transform, '{%s}chExt' % a, cx='360000', cy='360000')
+            return shape
+
+        add_shape(tree, 'First', 2)
+        container = add_shape(tree, 'Group', 3, True) if nested else tree
+        add_shape(container, second_name, 4)
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('ppt/slides/slide1.xml', ET.tostring(root))
+            archive.writestr('ppt/slides/_rels/slide1.xml.rels',
+                             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+
+    def test_inspect_preserves_unique_shape_names_ids_and_group_hierarchy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'unique.pptx'
+            self.write_inspection_fixture(path, nested=True)
+            shapes = host_fixture.inspect(path, 1)['1']
+            self.assertEqual(set(shapes), {'First', 'Group', 'Second'})
+            self.assertEqual(shapes['First']['id'], '2')
+            self.assertEqual(shapes['Second']['id'], '4')
+            self.assertEqual(shapes['Second']['parent'], 'Group')
+            self.assertEqual(shapes['Second']['boxCm'], [0, 0, 1, 1])
+
+    def test_inspect_rejects_duplicate_names_in_top_level_and_nested_shapes(self):
+        for nested in (False, True):
+            with self.subTest(nested=nested), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'duplicate.pptx'
+                self.write_inspection_fixture(path, second_name='First', nested=nested)
+                with self.assertRaisesRegex(ValueError, "Duplicate shape name 'First' on slide 1.*IDs 2 and 4"):
+                    host_fixture.inspect(path, 1)
 
 
 if __name__ == '__main__':

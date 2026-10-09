@@ -190,8 +190,8 @@ def verify(path):
     ], 'savedState': after}
 
 
-def verify_controls(path):
-    """Saved-state checks for layout arrows; separate from the nine-page link protocol."""
+def verify_controls(path, parent_radius_roundtrip=False):
+    """Layout-arrow checks, with an explicit optional slide-one parent R roundtrip."""
     with tempfile.TemporaryDirectory() as directory:
         baseline_path = Path(directory) / 'baseline.pptx'
         build(baseline_path)
@@ -229,6 +229,9 @@ def verify_controls(path):
             if name == 'ParentBox':
                 expected_tags[SETTINGS] = saved['tags'][SETTINGS]
                 expected_tags[BASELINE] = saved['tags'][BASELINE]
+                if parent_radius_roundtrip and slide == '1' and 'RADIUSLOCK_V1' in expected_tags:
+                    close(saved['radiusCm'], original['radiusCm'], context + ' parent radius restored')
+                    expected_tags['RADIUSLOCK_V1'] = '%.6f' % original['radiusCm']
             elif name in children:
                 i = children.index(name)
                 desired = [left + padding + (i % cols) * (child_width + gap),
@@ -244,12 +247,17 @@ def verify_controls(path):
                 for x, y in zip(saved['boxCm'], original['boxCm']):
                     close(x, y, context + ' untouched geometry')
             assert saved['tags'] == expected_tags, context + ' custom/relation/protection tags'
-    return {'file': str(path), 'passedSlides': 9, 'appliedSlides': [1, 6], 'checks': [
+    checks = [
         'Arrow-configured 2x2 grids, centimeter spacing, same radius and fixed-radius tags',
         'Scaled nested hierarchy, group names/custom tags, leaf IDs and non-rounded arrow preserved',
         'Parent geometry, adjustment and original tags preserved',
         'Single-child, strict-child and other untouched slides retain all baseline data'
-    ], 'savedState': after}
+    ]
+    if parent_radius_roundtrip:
+        checks[2] = 'Parent geometry, adjustment and all tags preserved except the slide-one parent fixed-radius normalization'
+        checks.append('Explicit parent R roundtrip restores the original radius; only slide-one ParentBox fixed-radius tag updates to six decimals')
+    return {'file': str(path), 'passedSlides': 9, 'appliedSlides': [1, 6],
+            'checks': checks, 'savedState': after}
 
 
 if __name__ == '__main__':
@@ -263,5 +271,7 @@ if __name__ == '__main__':
         print(json.dumps(verify(file), indent=2, ensure_ascii=False))
     elif command == 'verify-controls':
         print(json.dumps(verify_controls(file), indent=2, ensure_ascii=False))
+    elif command == 'verify-controls-radius-roundtrip':
+        print(json.dumps(verify_controls(file, parent_radius_roundtrip=True), indent=2, ensure_ascii=False))
     else:
-        raise SystemExit('Use build, inspect, verify or verify-controls')
+        raise SystemExit('Use build, inspect, verify, verify-controls or verify-controls-radius-roundtrip')

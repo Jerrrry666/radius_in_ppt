@@ -26,13 +26,14 @@ fi
 /usr/bin/unzip -tqq "$PAYLOAD"
 mkdir -p "$DESTINATION"
 TARGET="$DESTINATION/RadiusInPptNative.ppam"
+if [ -e "$TARGET" ] && [ ! -f "$TARGET" ]; then
+  echo "Installation target is not a regular file: $TARGET" >&2
+  exit 1
+fi
 
 if [ ! -f "$TARGET" ] || ! /usr/bin/cmp -s "$PAYLOAD" "$TARGET"; then
-  if [ -f "$TARGET" ]; then
-    /bin/cp -p "$TARGET" "$DESTINATION/RadiusInPptNative.previous.ppam"
-  fi
   STAGED="$(mktemp "$DESTINATION/.radius-install.XXXXXX")"
-  trap 'rm -f "$STAGED"' EXIT
+  trap '/bin/rm -f "$STAGED"' EXIT
   /bin/cp "$PAYLOAD" "$STAGED"
   /bin/chmod 644 "$STAGED"
   /bin/mv -f "$STAGED" "$TARGET"

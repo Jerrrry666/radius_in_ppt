@@ -101,7 +101,7 @@
       </box>
     </group>
     <group id="NativeToolsGroup" label="工具">
-      <button id="NativeSelfTest" label="算法自检" image="selfTest" onAction="NativeSelfTest"/>
+      <button id="NativeSelfTest" label="快速自检" image="selfTest" getEnabled="NativeSelfTestEnabled" onAction="NativeSelfTest" screentip="一键检查算法与宿主业务" supertip="在独立临时文稿中检查半径、保护、组合、关系和布局，结束后关闭测试文稿并返回原稿。报告实际通过项与失败原因；不替代保存重开和故障恢复验收。"/>
       <labelControl id="NativeVersion" label="v1.4.0"/>
     </group>
   </tab></tabs></ribbon>

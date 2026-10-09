@@ -1,9 +1,75 @@
 # R角调整 — 原生与历史对照测试
 
+## 日常快速检查与本轮经验
+
+日常在PowerPoint顶部「R角调整 · Native → 快速自检」点击一次。它先检查数值算法，再在自己创建的临时文稿中调用生产业务入口，核对写入结果和应拒绝的操作；结束后关闭该文稿并恢复原窗口、选区、待绑定状态和布局草稿。报告显示实际检查数、失败原因和耗时。编号预览打开时先关闭预览；自检不使用用户文稿作样本，不保存测试PPTX。
+
+开发时双击项目中的`tools/Run-Tests.command`，或运行`npm run test:quick`。它检查原生包/安装与历史Office.js逻辑，失败后保留终端输出。原生业务是否能在当前PowerPoint执行，以插件里的快速自检为准。
+
+本轮项目检查25＋287项通过。最终PPAM在PowerPoint16.113.4/26100421上4次实跑均通过26项算法、14条内存/输入病例、2262次断言，耗时0.41～0.53秒；待绑定/布局草稿和真实组内叶子的源选区恢复通过。独立保存的9页、32个形状及29段文字与基线一致。安装包hash、各次结果及未验证范围见[本轮快测记录](native-host-validation-quickcheck-20261009.json)；原代码优化的业务保存验收另见[main验收](native-host-validation-main-20261009.json)。
+
+| 检查范围 | 快速自检的预期 | 额外验收 |
+| --- | --- | --- |
+| 数值与单位 | cm/%、0、短边限幅、微调精度；无效数字、单位、方向、零尺寸须拒绝 | 实际输入框、按钮和读回显示 |
+| 半径多选 | 不同短边写同一cm；%分别换算；箭头不变 | 保存OOXML的adjustment和几何 |
+| 防误触 | 末项strict使整批不写；开启保留fixed、缺失时创建，解除只删strict | 写入中新增strict、读取异常和故障恢复 |
+| 组合事务 | 缩放嵌套组的叶子ID、R、几何、组名和tag保留；用真实解组返回检查直属成员 | 保存后独立核对完整层级和全部tag |
+| 完整组内的联动父 | %写入区分父/联动子/普通成员；strict及损坏配置整批不写；显式解除保留fixed | 真实组内单选用下面的专项协议，不计入自动病例 |
+| 关系元数据 | 待绑定/取消、批量绑定、已有归属拒绝、解除；strict对象仍可改归属 | 菜单、预览、跨页/文稿和旧布局迁移 |
+| 布局与联动 | 暂存不写；2×2网格、cm间距、same/subtract/off、父R即时联动 | 控件交互、事件接线、保存关闭重开 |
+| 联动拒绝 | strict子、空间不足、旋转对象整批拒绝；受保护父仍可布局未保护子 | 真实宿主写失败/重组失败恢复 |
+| 无关关系隔离 | 重复配置父旁的独立圆角仍可改R；坏联动父拒绝，不自动修复tag | 保存后核对全页无额外修改 |
+| 生命周期 | 每个成功/拒绝后事务guard释放；临时文稿清理且源会话恢复 | 多窗口、特殊视图和宿主版本兼容 |
+| 分发与脚本 | 可重复打包、完整源码、回调/图标、安装失败不破坏现文件；双击保留结果 | 实际安装重启自动加载 |
+
+快测入口的宿主验收步骤：正常退出后更新当前包并重开，用新的普通9页布局样本，在第1页选ParentBox，暂存2行、0.5cm边距、0.3cm间距并设为待绑定父，保持未应用；点击快测，记录实际结果，确认临时文稿关闭且上述选区/会话仍在。再次运行，随后保存样本并独立比较全部9页的名称、ID、层级、几何、R、tag和文字，原稿不得新增标记。补验组内叶子、多选、文本选区与特殊视图时分别记录，结束关闭并清理样本。
+
+真实组内单选专项：在普通9页样本第6页，通过「查看关系」成员菜单选择ParentBox，确认状态只计一个圆角、提示选择完整顶层组合，读取可用而应用/微调/预设/保护/解除保护禁用。运行快速自检后应恢复同一组内叶子和状态，再保存核对全部对象不变。Core的半径、保护及解除保护入口应在联动计划和解组之前拒绝局部选区；完整顶层组允许按正常规则写入。这项与写失败故障注入一样，须单独记录具体动作，不能因一键报告无失败就宣称全覆盖。
+
+Mac在同一次Ribbon回调中新建组合后，`Shape.Select`或`GroupItems.Range.Select`未可靠形成真实`HasChildShapeRange`。测试夹具必须先验证选区模式，不能把外层组选区当成叶子。未成立的临时组内单选试验保留失败记录；最终自动用例验证完整组的生产路径，组内单选使用实际成员菜单验收，不添加选区或保护绕过开关。
+
+本轮优化形成的测试习惯：
+
+- 让快测调用生产入口并核对最终状态，不能只看按钮、返回值或日志中的“成功”。拒绝用例还须检查前面的对象未被写入。
+- 缓存只服务显示，写入仍重新读取；用“最后一个对象受保护”和“坏关系旁独立对象”检验边界，避免缓存把整个页面误禁用。
+- Mac组合必须以实际`Ungroup`返回建立写入层级；预检得到的旧代理和ID不能充当解组后的结构证据。
+- Mac组内单选要读取`ChildShapeRange`。外层`ShapeRange`不能代表用户实际选择；半径/保护入口先拒绝局部选区，再决定是否联动，关系和布局的精确ID事务保留自己的边界。
+- 测试夹具的前置状态也要验证。宿主未产生所需选区时保留真实失败证据，并明确另行验收范围；不要降低断言或将未执行路径计为通过。
+- 事务guard和Ribbon事件guard职责不同。快测屏蔽临时选区自动同步，生产入口仍自行持有并释放事务guard，不提供绕过保护的测试开关。
+- 算法、当前宿主业务、文件格式、保存OOXML和故障恢复分别给出证据。内存中重读配置不算“保存重开通过”，预检拒绝也不算“失败回滚通过”。
+- 测试器本身也需要负例：篡改半径、tag、页数必须被拒绝；合法fixed文本规范化使用显式独立协议，默认检查仍严格。
+- 每例使用独立临时样本；保留完整错误、真实数量和记录，清理旧包/测试文稿。运行失败不得清空用户的待绑定或布局草稿。
+
+## 项目一键快速检查
+
+在Finder双击项目内的[`tools/Run-Tests.command`](../tools/Run-Tests.command)。它自动切换到项目目录，依次运行原生PPAM格式/安装模拟与历史Office.js逻辑回归，结束后显示结果并等待回车。失败时保留错误和退出码；缺依赖时给出准备指引，不自动安装。
+
+终端或CI无需暂停：
+
+```sh
+npm run test:quick
+# 或 bash tools/Run-Tests.command --no-pause
+```
+
+该入口复用`npm run test:all`，优先使用项目`.venv-native`，需要Python 3及Node.js/npm。检查在临时目录构建测试PPAM并模拟安装，不更新实际插件、不打开PowerPoint、不启动产品服务；HTTP回归会短暂创建本地测试socket，结束即清理。当前实测25项原生消费端与287项历史逻辑。历史逻辑由本地Node测试执行；通过不代表原生VBA算法、编译或业务已验证。真实PowerPoint自检和保存OOXML的人工宿主验收见下文相应协议。
+
+## 原生格式与安装检查
+
+```sh
+python3 -m venv .venv-native
+.venv-native/bin/pip install -r native/requirements-test.txt
+npm test
+npm run test:all
+```
+
+`npm test`与`npm run test:native`通过`tools/test-native.py`选择测试解释器，优先使用项目`.venv-native`。检查当前源码构建的临时PPAM、分发内容、安装成功/失败以及OOXML读取器。复制中断用临时目录和子进程中的shell函数注入，不改安装脚本的运行接口，不访问实际安装目录。缺依赖时给出安装命令，不自动安装。
+
+这些消费端检查不执行VBA。原生操作必须另用普通PPTX、真实Ribbon及保存OOXML验证。历史Office.js回归使用`npm run test:legacy`；`test:all`依次运行两套。
+
 ## Office.js历史对照测试
 
 ```bash
-npm test
+npm run test:legacy
 ```
 
 只跑一个：
@@ -47,9 +113,25 @@ Cmd+S后运行独立保存状态校验，最终状态以表中最后一步为准
 
 `verify`断言7页最终半径、原始标签、叶子ID、层级、名称和几何，独立于VBA源码。第4页中间值需实机读取，必要时用`inspect`保存阶段快照。2026-10-07在PowerPoint16.113.3通过；[本机保存状态](native-host-validation-20261007.json)不代表16.111或其他宿主版本已经验收。
 
+## main重构的无关关系隔离协议
+
+此用例验证“同页存在配置过的重复父关系，未绑定普通圆角仍可显式修改R角”。它复用七页关系基线，第4页保留两个G09父对象，并新增`IndependentRadius`。
+
+```sh
+.venv-native/bin/python test/native-independent-radius-fixture.py build /tmp/RadiusNativeIndependent.pptx
+```
+
+用待验收的main PPAM打开普通PPTX，第4页只选`IndependentRadius`，点击0.30cm预设。R角写入应可用；关系读取仍应显示完整重复父错误，涉及损坏关系的操作应拒绝。其他对象不得改变，也不得自动修复重复标签。保存后运行：
+
+```sh
+.venv-native/bin/python test/native-independent-radius-fixture.py verify /tmp/RadiusNativeIndependent.pptx
+```
+
+核对七页全部名称、叶子ID、层级、几何和tag；只有独立圆角的R角变为0.30cm。该协议不替代普通半径七页、关系七页、布局九页的回归，也不证明宿主写入故障后的回滚正确。
+
 ## v1.4控件宿主协议
 
-当前19项原生格式/安装测试（初始控件验收时17项、关系阶段18项）；当前真实VBA算法自检26项。以下初始控件协议记录当时的10项。微调必须检查保存的实际半径，不能只看输入框变化。
+当前25项原生消费端测试（初始控件验收时17项、关系阶段18项、布局阶段19项、main整理阶段23项）；真实VBA算法基线26项，快速自检按实际结果计数。以下初始控件协议记录当时的10项。微调必须检查保存的实际半径，不能只看输入框变化。
 
 | 页 | 控件操作与核对 |
 | --- | --- |
@@ -147,7 +229,7 @@ Cmd+S后运行独立保存状态校验，最终状态以表中最后一步为准
 
 ## 布局控件优化宿主补验
 
-使用新的9页布局样本，保留之前业务验收文稿。第1页通过全部八个箭头建立2×2、边距0.5cm/间距0.3cm；验证两种间距的0下限、0.05向下限0、0.123456向上得到0.223456及行列容量联动。应用前保存应与基线全部一致；应用后核对网格、same R、fixed tag和叶子ID。第2页单子时四个行列箭头均禁用；第4页strict子仍禁用应用，暂存参数不改文稿；第6页嵌套组用箭头配置2×2、边距0.4cm/间距0.2cm并保存核对。
+使用新的9页布局样本；2026-10-09起验收后保存JSON记录并清理临时PPTX。第1页通过全部八个箭头建立2×2、边距0.5cm/间距0.3cm；验证两种间距的0下限、0.05向下限0、0.123456向上得到0.223456及行列容量联动。应用前保存应与基线全部一致；应用后核对网格、same R、fixed tag和叶子ID。第2页单子时四个行列箭头均禁用；第4页strict子仍禁用应用，暂存参数不改文稿；第6页嵌套组用箭头配置2×2、边距0.4cm/间距0.2cm并保存核对。
 
 最终排列为行数/列数/子R角、边距/间距/状态两列，应用/自动联动在右侧。Mac将自定义上下箭头并排显示；不宣称图2那样的内嵌原生spinner。当前算法自检26项。补验宿主为PowerPoint16.113.4/26100421，结果见[布局控件验收](native-host-validation-layout-controls-20261007.json)，不覆盖先前16.113.3的9页联动协议未完成项。
 
@@ -157,15 +239,23 @@ Cmd+S后运行独立保存状态校验，最终状态以表中最后一步为准
 
 此命令核对第1/6页的控件配置结果及其余7页未改动；不等于原`verify`的完整自动联动9页验收。
 
+若同一新样本还在第1页验证`same→subtract→off→same`及显式父R角`0.50→0.30→1.20cm`回改，使用独立的可选协议：
+
+```sh
+.venv-native/bin/python test/native-layout-fixture.py verify-controls-radius-roundtrip /tmp/RadiusNativeLayoutControls.pptx
+```
+
+该协议仍要求父R角和fraction回到基线，只允许第1页`ParentBox`已有fixed tag由`1.2`更新为`1.200000`，严格保留其他tag、几何、叶子ID和组层级，并核对布局结果。`verify-controls`默认保留原fixed字串检查，会拒绝该回改样本；不要将其改为宽松检查。最终保存状态不能单独证明中间模式和R角数值，应同时保留各阶段的独立OOXML快照。
+
 ## 测试分层
 
 | 层 | 文件 | 测什么 | 跑不跑 |
 |---|---|---|---|
-| **宿主验收** | `ppt-driver.js` + UI烟囱测试 | Mac LTSC Office.js 兼容性 | **不在 npm test 里**——在真实 PPT 跑"Driver 烟囱测试" |
-| **纯算法** | `test-radius-core.js` | `computeLayout` / `valueToCm` / 业务规则（`shouldReject*` / `syncFixedValueIfLocked`） | npm test |
-| **功能** | `test-features.js` | 业务函数（`writeRadius` / `applyLayout` / `syncLayoutChildrenR` / `readLockState` / `writeLockState` / `reapplyLock`）—— "模拟交互反馈" | npm test |
-| **组合** | `test-driver-group.js` | 分层加载、展平、布局解组/重组及异常恢复 | npm test |
-| **回归** | `test-regressions.js` | 实际dialog.js异步wiring、driver几何/tag读取、组结构恢复及HTTP错误 | npm test |
+| **宿主验收** | `ppt-driver.js` + UI烟囱测试 | Mac LTSC Office.js 兼容性 | **不在 npm run test:legacy 里**——在真实 PPT 跑"Driver 烟囱测试" |
+| **纯算法** | `test-radius-core.js` | `computeLayout` / `valueToCm` / 业务规则（`shouldReject*` / `syncFixedValueIfLocked`） | npm run test:legacy |
+| **功能** | `test-features.js` | 业务函数（`writeRadius` / `applyLayout` / `syncLayoutChildrenR` / `readLockState` / `writeLockState` / `reapplyLock`）—— "模拟交互反馈" | npm run test:legacy |
+| **组合** | `test-driver-group.js` | 分层加载、展平、布局解组/重组及异常恢复 | npm run test:legacy |
+| **回归** | `test-regressions.js` | 实际dialog.js异步wiring、driver几何/tag读取、组结构恢复及HTTP错误 | npm run test:legacy |
 
 **v1.3 重整后**：功能测试用 `assertShape` 验最终状态，**不关心 driver 内部调了哪些方法**。
 
@@ -324,7 +414,7 @@ await t.run();
 
 ## 真实 PPT 测试（**driver 层**）
 
-**driver 单元测试不在 npm test 里**——在真实 PPT 内做：
+**driver 单元测试不在 npm run test:legacy 里**——在真实 PPT 内做：
 
 - 跑 .app，在真实 PPT 里打开 task pane
 - 点「🧪 Driver 烟囱测试」按钮 → 14/14 全过即 driver verified

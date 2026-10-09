@@ -131,6 +131,10 @@ def inspect(path, slide_count=7):
                         continue
                     nv = shape.find('p:nvGrpSpPr' if group else 'p:nvSpPr', NS)
                     identity = nv.find('p:cNvPr', NS)
+                    name = identity.get('name')
+                    if name in items:
+                        raise ValueError(f'Duplicate shape name {name!r} on slide {i} in {path}: '
+                                         f'IDs {items[name]["id"]} and {identity.get("id")}')
                     xfrm = shape.find('p:grpSpPr/a:xfrm' if group else 'p:spPr/a:xfrm', NS)
                     off, ext = xfrm.find('a:off', NS), xfrm.find('a:ext', NS)
                     x, y, w, h = (int(off.get('x')), int(off.get('y')), int(ext.get('cx')), int(ext.get('cy')))
@@ -146,11 +150,11 @@ def inspect(path, slide_count=7):
                         fraction = float(adjustment.get('fmla').split()[-1]) / 100000 if adjustment is not None else 0.16667
                         entry['fraction'] = fraction
                         entry['radiusCm'] = fraction * min(box[2:])
-                    items[identity.get('name')] = entry
+                    items[name] = entry
                     if group:
                         ch_off, ch_ext = xfrm.find('a:chOff', NS), xfrm.find('a:chExt', NS)
                         gsx, gsy = w / int(ch_ext.get('cx')), h / int(ch_ext.get('cy'))
-                        visit(shape, (sx * gsx, sy * gsy, dx + sx * (x - int(ch_off.get('x')) * gsx), dy + sy * (y - int(ch_off.get('y')) * gsy)), identity.get('name'))
+                        visit(shape, (sx * gsx, sy * gsy, dx + sx * (x - int(ch_off.get('x')) * gsx), dy + sy * (y - int(ch_off.get('y')) * gsy)), name)
             visit(root.find('p:cSld/p:spTree', NS))
             result[str(i)] = items
     return result

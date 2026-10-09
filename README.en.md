@@ -48,16 +48,26 @@ A protected child rejects the entire layout/linked-radius batch and disables the
 
 ## Build and verify
 
+For a quick logic check, click “R角调整 · Native → 快速自检” in PowerPoint. It creates its own temporary presentation, checks algorithms and real radius/protection/group/relationship/layout operations, then closes the test document and returns to the source. Results show actual counts, errors and elapsed time. It does not save a test PPTX; close any numbered preview first.
+
+See the [quick-test record](test/native-host-validation-quickcheck-20261009.json) for actual counts, timing, package hashes and host coverage. Saved files, all control events and recovery from host write failures use separate validation protocols.
+
+For project checks, double-click [Run-Tests.command](tools/Run-Tests.command) or use `npm run test:quick`. See the [test checklist and lessons](test/README.md) for coverage. Actual group-child selection, control events, save/reopen and host write-failure recovery have separate validation protocols; a passing quick report does not establish all of them.
+
 ```sh
 npm run build
-npm test
 python3 -m venv .venv-native
 .venv-native/bin/pip install -r native/requirements-test.txt
-.venv-native/bin/python test/test-native-package.py
+npm test                     # Native format, installation and saved-state reader
+npm run test:legacy          # Office.js migration reference
+npm run test:all             # Both suites
+npm run test:quick           # One-click project checks; also a Finder .command entry
 ```
 
-The existing build entry point produces a PPAM and an installation ZIP. The ZIP contains only the add-in, a one-time file-preparation helper and instructions. Running the installed plugin requires neither Node nor Python. There are 19 native package/installation checks. Actual ribbon operations and saved OOXML results are recorded separately for [relationships](test/native-host-validation-relations-20261007.json) and [layout/radius links](test/native-host-validation-layout-20261007.json).
+The existing build entry point produces a PPAM and an installation ZIP. The ZIP contains only the add-in, a one-time file-preparation helper and instructions. Running the installed plugin requires neither Node nor Python. `npm test` selects a Python interpreter with the test dependencies, preferring the project's `.venv-native`; these consumer checks do not execute VBA. Actual ribbon operations and saved OOXML results are recorded separately for [relationships](test/native-host-validation-relations-20261007.json) and [layout/radius links](test/native-host-validation-layout-20261007.json).
 
 The original Office.js code remains as a migration reference: [legacy documentation](README.taskpane.en.md). To build the comparison app explicitly, use `bash tools/build-app.sh --legacy-taskpane`. Legacy app/DMG/wef deployment is not the native installation workflow.
+
+The [2026-10-09 main validation record](test/native-host-validation-main-20261009.json) distinguishes completed and pending checks for the current refactor. Updates do not create old-package backups; host test results are recorded before temporary PPTX files are removed.
 
 [中文版](README.md) · [Changelog](changelogs/v1.4.md)
