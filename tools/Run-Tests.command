@@ -39,12 +39,12 @@ export PATH
 
 printf '\nR角调整 · 项目快速检查\n目录：%s\n\n' "$PROJECT_DIR"
 printf '%s\n' \
-  '检查原生PPAM格式/安装模拟，以及Office.js历史逻辑回归。' \
+  '检查原生PPAM格式、分发内容和安装模拟。' \
   '这些检查不执行PowerPoint VBA；真实加载和原生业务需另做宿主验收。' \
   ''
 
 missing=0
-for runtime in python3 node npm; do
+for runtime in python3 npm; do
   if ! command -v "$runtime" >/dev/null 2>&1; then
     printf '缺少运行工具：%s\n' "$runtime" >&2
     missing=1
@@ -59,4 +59,4 @@ fi
 
 # Keep the package scripts as the single source of the suite list. The native
 # launcher probes olefile/oletools and prefers the project's local venv.
-npm run test:all
+npm test

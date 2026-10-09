@@ -7,8 +7,6 @@
     "build": "python3 tools/build-native.py --distribution",
     "build:native": "python3 tools/build-native.py --distribution",
     "test:native": "python3 tools/test-native.py",
-    "test:legacy": "node test/test-radius-core.js && node test/test-features.js && node test/test-driver-group.js && node test/test-regressions.js",
-    "test:all": "npm run test:native && npm run test:legacy",
     "test:quick": "bash tools/Run-Tests.command --no-pause"
   },
   "private": true

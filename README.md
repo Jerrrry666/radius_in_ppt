@@ -44,7 +44,7 @@ macOS PowerPoint 原生加载项 · v1.4.0
 
 ```sh
 npm run build          # 构建 PPAM 和 macOS 安装 ZIP
-npm run test:quick     # 项目检查：原生格式/安装检查及 Office.js 历史回归
+npm run test:quick     # 原生PPAM格式与安装检查
 ```
 
-安装后的加载项不依赖 Node 或 Python。测试清单和覆盖范围见[test/README.md](test/README.md)。原生架构、限制和验收记录见[原生方案](plans/ribbon-vba-mac.md)、[项目日志](LOG.md)及[v1.4.0 变更记录](changelogs/v1.4.md)。旧 Office.js 实现仅保留作迁移对照，见[历史文档](README.taskpane.md)。
+安装后的加载项不依赖 Node 或 Python。测试清单和覆盖范围见[test/README.md](test/README.md)。原生架构、限制和验收记录见[原生方案](plans/ribbon-vba-mac.md)、[项目日志](LOG.md)及[v1.4.0 变更记录](changelogs/v1.4.md)。

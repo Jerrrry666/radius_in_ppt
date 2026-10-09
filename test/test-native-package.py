@@ -399,7 +399,7 @@ class LocalTestEntryTests(unittest.TestCase):
         binaries.mkdir()
         venv_bin = project / '.venv-native/bin'
         venv_bin.mkdir(parents=True)
-        for executable in (binaries / 'python3', binaries / 'node', venv_bin / 'python3'):
+        for executable in (binaries / 'python3', venv_bin / 'python3'):
             executable.write_text('#!/bin/bash\nexit 0\n')
             executable.chmod(0o755)
         npm = binaries / 'npm'
@@ -422,7 +422,7 @@ exit "$RADIUS_TEST_EXIT"
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, status, result.stderr)
                 self.assertEqual(capture.read_text().splitlines(),
-                                 [str(project), 'run test:all', str(project / '.venv-native/bin/python3')])
+                                 [str(project), 'test', str(project / '.venv-native/bin/python3')])
                 self.assertIn('全部通过' if status == 0 else '退出码 41', result.stdout + result.stderr)
 
     def test_local_entry_keeps_failed_interactive_result_visible(self):

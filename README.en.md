@@ -44,7 +44,7 @@ To create a layout, select the parent and choose **设为父对象** (Set Parent
 
 ```sh
 npm run build          # Build the PPAM and macOS installation ZIP
-npm run test:quick     # Project checks: native format/installation checks and legacy Office.js regression
+npm run test:quick     # Native PPAM format and installation checks
 ```
 
-The installed add-in does not require Node or Python. See the [test guide](test/README.md) for coverage. The [native design](plans/ribbon-vba-mac.md), [project log](LOG.md), and [v1.4.0 changelog](changelogs/v1.4.md) contain architecture, limitations, and validation records. The older Office.js implementation remains as a migration reference in the [legacy documentation](README.taskpane.en.md).
+The installed add-in does not require Node or Python. See the [test guide](test/README.md) for coverage. The [native design](plans/ribbon-vba-mac.md), [project log](LOG.md), and [v1.4.0 changelog](changelogs/v1.4.md) contain architecture, limitations, and validation records.

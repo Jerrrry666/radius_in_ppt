@@ -1,7 +1,7 @@
 # R角调整 — 项目协作规则
 
 > 2026-10-09更新。先确认分支和工作目录，再修改代码。
-> 当前版本为用户已明确批准的 **v1.4.0**；原生实现已合入本地`main`，尚未push或创建发布tag。
+> 当前版本为用户已明确批准的 **v1.4.0**；原生实现已合入本地及远端`main`，尚未创建发布tag。
 
 ## 0. 当前产品与分支
 
@@ -9,10 +9,10 @@
 
 - 当前开发分支：`main`。
 - 当前工作目录：`/Users/ma/Documents/minimax/radius_in_ppt`。
-- 原生实现从`codex/ribbon-vba-mac`合入，现为`main`默认产品；`codex/ribbon-officejs-mac`保留作另一条Ribbon实验路线。原生功能在`native/`修改，`src/`保留Office.js迁移对照。
-- 交付：`dist/RadiusInPptNative.ppam`和`dist/RadiusInPptNative-mac.zip`。**不要构建.app或DMG，不启动Node/server，不注册wef/manifest。**
+- 原生实现从`codex/ribbon-vba-mac`合入，现为`main`默认产品；功能在`native/`修改。旧Office.js/task pane实现、manifest、启动器和构建工具已从当前项目移除。
+- 交付：`dist/RadiusInPptNative.ppam`和`dist/RadiusInPptNative-mac.zip`。**不要构建.app或DMG，不启动产品server。**
 - 原目标：Office LTSC Standard for Mac 2021，16.111/26071325。最近布局/半径控件补验宿主：PowerPoint16.113.4/26100421；此前基础/关系记录为16.113.3/26092714。各宿主验收记录不能混为一谈。
-- 运行依赖为PowerPoint VBA与Ribbon XML；Office.js的API要求不适用于PPAM。
+- 运行依赖为PowerPoint VBA与Ribbon XML，不引入Office.js运行时。
 
 ## 1. 授权与版本
 
@@ -23,9 +23,8 @@
 | `git add`、commit、push | 必须有用户明确指令；完成本地工作后不要自动执行，也不必反复询问 |
 | 合并分支 | 用户明确要求后可提交该分支待合并改动并完成本地merge；不包含push/tag授权 |
 | 新建/推送/移动/删除tag、force-push | 必须有用户明确指令 |
-| 旧`build-and-deploy.sh`、DMG、task pane app构建 | 当前原生流程不使用 |
 
-版本格式为`vMAJOR.MINOR.PATCH`。PATCH修复可自主递增，MINOR/MAJOR须用户明确授权。本轮已授权v1.4.0，不需要重复确认。同一个尚未发布的改动只占一个版本，不按调试次数递增。更新`package.json`、原生功能区版本文字、changelog及当前文档；不要为PPAM功能递增历史Office.js manifest。
+版本格式为`vMAJOR.MINOR.PATCH`。PATCH修复可自主递增，MINOR/MAJOR须用户明确授权。本轮已授权v1.4.0，不需要重复确认。同一个尚未发布的改动只占一个版本，不按调试次数递增。更新`package.json`、原生功能区版本文字、changelog及当前文档。
 
 默认完成顺序：实现和review → 原生格式/安装测试 → 涉及VBA或Ribbon时做宿主验证 → 更新记录 → 构建PPAM及ZIP → 说明结果和未验证范围。**构建成功、格式测试通过、宿主编译通过、保存结果正确是不同证据。**
 
@@ -57,7 +56,7 @@ PowerPoint VBA对象模型
 ## 3. 半径与防误触
 
 - 1cm = 28.3464566929134pt。
-- 原生VBA用**1-based** `Adjustments.Item(1)`，值是短边fraction。OOXML采用100000缩放。不要套用Office.js的`get(0)`、proxy/load/sync契约。
+- 原生VBA用**1-based** `Adjustments.Item(1)`，值是短边fraction。OOXML采用100000缩放。
 - 圆角矩形按真实`AutoShapeType=5`识别；不能把有adjustment的其他形状当圆角矩形。
 - cm按每个目标的相同厘米值写入；%按各自短边换算；上限为短边一半，0值有效。
 - 微调每次±0.1当前单位，立即走完整写入路径；下限0，%微调上限50。浮点运算保持精度，失败不能显示成已成功应用的新值。
@@ -93,21 +92,19 @@ python3 tools/build-native.py --distribution
 python3 -m venv .venv-native
 .venv-native/bin/pip install -r native/requirements-test.txt
 npm test
-npm run test:legacy
-# 一键项目检查也可双击tools/Run-Tests.command
 npm run test:quick
 ```
 
-- `npm run build`应指向原生构建。兼容的`tools/build-app.sh`默认也输出PPAM；名称不是.app交付承诺。
+- `npm run build`指向原生构建。
 - Python构建器运行只需标准库。`olefile/oletools`为独立消费端测试依赖。重生成本地图标需要Pillow，普通构建和插件运行不需要。
 - 原生测试检查OPC类型/关系目标、Mac项目类型、源模块逐字抽取、回调、类模块元数据、嵌入PNG、跨chunk压缩、可重复构建和安装/更新/损坏包拒绝。
 - `.bas`为标准模块；`.cls`必须在PROJECT和dir两处都声明为类，带MODULEPRIVATE及完整类属性（尤其VB_Base），不能当标准模块塞入`WithEvents`。缺少类标识的包虽然可抽取，Mac会导致所有回调失效；2026-10-07已实测修复。
 - 当前源码按cp1252写入MS-OVBA；VBA源保持可编码文本，中文UI放UTF-8 Ribbon XML。不要静默替换不可编码字符。
 - 长VBA模块必须使用正确copy-token压缩。旧raw/literal写法虽然oletools能抽取，Mac会把长模块加载为空；压缩算法改动必须补宿主加载验证。
-- `npm test`/`test:native`运行原生格式、安装和OOXML读取器检查，优先使用项目`.venv-native`；不执行VBA。`npm run test:legacy`保留Office.js迁移对照，`test:all`依次运行两套。任何一套都不能替代原生VBA宿主验证。测试数量以实际运行输出为准。
+- `npm test`/`test:native`/`npm run test:quick`运行原生格式、安装和OOXML读取器检查，优先使用项目`.venv-native`；不执行VBA，不能替代原生VBA宿主验证。测试数量以实际运行输出为准。
 - VBA、事件类、Ribbon XML/回调、组合或tag路径变更必须验证真实PPT加载/编译与关键动作，再保存临时PPTX独立读OOXML验证。不修改用户真实文稿。
 - 日常点击顶部「快速自检」：动态计数的算法检查和独立临时文稿中的真实业务用例。能稳定隔离的新缺陷补入一键病例，成功和拒绝都检查最终状态；无法可靠构造的宿主状态保留试验记录、列专项协议，不放宽断言或算作通过。组内选区必须核对真实`HasChildShapeRange`，不能把外层`ShapeRange`当作所选叶子；当前新建临时组不能可靠生成child选区，完整组联动纳入快测，真实child的读取/禁用/拒绝另行验收。自检由Ribbon持有事件guard，生产写入仍自行持有事务guard；保存/恢复原窗口、选区、Relations/Layout会话，结束仅关闭自己拥有的文稿。不得用测试开关跳过strict，不得为测试修改用户文稿或降低宏安全设置。
-- `tools/Run-Tests.command`可双击，`npm run test:quick`供终端/CI；复用`test:all`，失败保留输出，不自动安装依赖、不启动产品服务。HTTP回归可在测试进程内短暂创建本地socket并立即清理。项目检查不执行PowerPoint VBA。
+- `tools/Run-Tests.command`可双击，`npm run test:quick`供终端/CI；两者运行`npm test`中的原生格式与安装检查，失败保留输出，不自动安装依赖、不启动产品服务。项目检查不执行PowerPoint VBA。
 - 普通7页半径基线：`test/native-host-fixture.py`；关系7页及单页批量绑定：`test/native-relations-fixture.py`；布局联动9页：`test/native-layout-fixture.py`；无关损坏关系下的独立R角：`test/native-independent-radius-fixture.py`。验收分别记录，不修改用户文稿。当前原生消费端测试25项；算法基线26项（含8项布局参数微调边界），快速业务结果按实际报告计数。快测不替代保存OOXML、控件/事件接线、真实写失败恢复或目标宿主兼容性。
 - 历史诊断source-only PPTM和临时测试PPAM曾触发宿主退出；优先普通PPTX与已安装的真实控件，不重复使用这些诊断产物。
 
@@ -130,9 +127,9 @@ npm run test:quick
 
 原生布局设置和父变化基线随文稿保存。本加载项修改父R立即联动；直接拉伸父对象在尺寸调整完成事件后同步，选区无需取消；移动/黄色手柄修改在改变选区和保存前同步，不逐帧轮询。厘米边距/间距保持不变；off保留子fraction。任何目标子strict在父R/布局写入或解组前拒绝整批，实际写入再读strict。关系元数据仍可绑定/解除strict对象。旋转/翻转成员或组合不支持原生布局及联动，解组前拒绝。
 
-原生防误触当前只阻止本加载项写入，尚未自动纠正用户直接拖黄色手柄或缩放。实时固定R、样式刷、复杂布局联动、自定义预设库和历史尚未迁移，不能把旧task pane的完整功能列为PPAM已实现。
+原生防误触当前只阻止本加载项写入，尚未自动纠正用户直接拖黄色手柄或缩放。实时固定R、样式刷、复杂布局联动、自定义预设库和历史功能未包含在PPAM中。
 
-Office.js代码`src/`及相关manifest、server、app工具保留为历史对照。其集合load、0-based adjustment、wef、HTTP和轮询规则仅适用于旧路线。详细教训保留在历史changelog，不与本原生规则混用。
+旧Office.js代码、task pane文档、manifest、server及app工具已从当前工作树移除，不要恢复为当前产品依赖。版本历史和验收记录保留在changelog及`LOG.md`。
 
 | 内容 | 文档 |
 | --- | --- |
@@ -140,4 +137,4 @@ Office.js代码`src/`及相关manifest、server、app工具保留为历史对照
 | 原生方案/安装/限制 | [plans/ribbon-vba-mac.md](plans/ribbon-vba-mac.md)、[native/INSTALL.txt](native/INSTALL.txt) |
 | 当前用户说明 | [README.md](README.md)、[README.en.md](README.en.md) |
 | 测试与宿主协议 | [test/README.md](test/README.md) |
-| 旧路线和历史坑 | [README.taskpane.md](README.taskpane.md)、[changelogs/](changelogs/) |
+| 历史变更与验收 | [changelogs/](changelogs/)、[LOG.md](LOG.md) |

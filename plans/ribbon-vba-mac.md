@@ -4,7 +4,7 @@
 
 本轮新增「快速自检」使用临时文稿执行真实业务，实际数量、耗时、包hash和宿主范围见[快测记录](../test/native-host-validation-quickcheck-20261009.json)。此前版本的本机验收不覆盖新增病例。
 
-交付目标以2026-10-07用户要求为准：安装到PowerPoint中，随后只打开PowerPoint即可使用顶部控件。`main`默认交付PPAM，不再默认构建独立app。Office.js代码及实验分支保留为功能对照。
+交付目标以2026-10-07用户要求为准：安装到PowerPoint中，随后只打开PowerPoint即可使用顶部控件。`main`只交付PPAM。旧Office.js/task pane实现、清单及构建工具已从当前项目移除。
 
 ## 已实现的原型
 
@@ -88,9 +88,9 @@ python3 -m venv .venv-native
 
 构建器只依赖Python标准库，生成真正的OPC `.ppam`包、Ribbon XML和MS-CFB/MS-OVBA VBA项目，源代码随包嵌入。PROJECTSYSKIND=Macintosh；库引用按GUID解析，不包含Windows路径。无编译缓存，_VBA_PROJECT版本0xFFFF，请PowerPoint在加载时编译。
 
-原生消费端测试用独立olefile/oletools读取包、解析项目和抽取全部标准模块及事件类，并与原源码逐字比较；另检查关系目标、回调、Mac平台标识、跨chunk读写、缺失回调失败及可重复构建。覆盖关系/布局控件、三种R模式、动态菜单、本地图标、分发内容/可执行权限、空格和中文路径、重复安装/更新不生成旧包、损坏包拒绝、新包复制中断清理、文件路径被目录占用，以及保存OOXML的顶层/组内重名拒绝。长模块采用copy token压缩，含重叠复制、offset位宽边界和随机不可压缩chunk回归。文件准备测试只写临时目录，不注册插件、不运行PowerPoint。`npm test`运行这些检查，`npm run test:legacy`保留Office.js回归。
+原生消费端测试用独立olefile/oletools读取包、解析项目和抽取全部标准模块及事件类，并与原源码逐字比较；另检查关系目标、回调、Mac平台标识、跨chunk读写、缺失回调失败及可重复构建。覆盖关系/布局控件、三种R模式、动态菜单、本地图标、分发内容/可执行权限、空格和中文路径、重复安装/更新不生成旧包、损坏包拒绝、新包复制中断清理、文件路径被目录占用，以及保存OOXML的顶层/组内重名拒绝。长模块采用copy token压缩，含重叠复制、offset位宽边界和随机不可压缩chunk回归。文件准备测试只写临时目录，不注册插件、不运行PowerPoint。`npm test`运行这些检查。
 
-默认构建输出PPAM和`dist/RadiusInPptNative-mac.zip`；ZIP内仅有插件、一次文件准备脚本及说明。脚本将PPAM放到`~/Library/Application Support/RadiusInPptNative`稳定目录，不修改Office偏好或宏设置；复制文件不等于完成PowerPoint注册。使用时无需运行脚本、Node或Python。旧app构建移为`tools/build-taskpane-app.sh`，仅显式`--legacy-taskpane`时执行。
+默认构建输出PPAM和`dist/RadiusInPptNative-mac.zip`；ZIP内仅有插件、一次文件准备脚本及说明。脚本将PPAM放到`~/Library/Application Support/RadiusInPptNative`稳定目录，不修改Office偏好或宏设置；复制文件不等于完成PowerPoint注册。使用时无需运行脚本、Node或Python。
 
 格式和文件准备测试通过不代表VBA编译、Mac重启加载或宿主功能通过。
 
@@ -106,7 +106,7 @@ python3 -m venv .venv-native
 - 用户原来报错的布局子选区成功应用0.50cm并读回；移除过宽的`Use the Office.js edition for tagged layouts.`拦截，strict两道检查保留。
 - 7页普通PPTX通过真实Ribbon执行；保存后独立读取OOXML确认：布局父/子混合多选0.50cm、末项strict整批零写入、保护/解除后0.30cm、20%=0.40cm、0值、短边一半限幅1.00cm、缩放嵌套组0.30cm及组保护、含strict子组解组前拒绝、箭头不变。
 - 组名称/层级、全部原始tag值（含大小写）、叶子ID、位置尺寸保留；只有显式半径操作对应的固定值tag更新，防误触tag只由保护按钮改动。
-- `test/native-host-fixture.py verify`自动断言7页最终宿主结果；用例步骤见[test/README.md](../test/README.md)，保存状态见[验收记录](../test/native-host-validation-20261007.json)。算法自检10项通过，17项独立格式/安装测试通过，287项Office.js回归通过。
+- `test/native-host-fixture.py verify`自动断言7页最终宿主结果；用例步骤见[test/README.md](../test/README.md)，保存状态见[验收记录](../test/native-host-validation-20261007.json)。算法自检10项通过，17项独立格式/安装测试通过。287项Office.js回归属于旧实现的历史结果，不是当前测试套件。
 - 调试用source-only PPTM加载及临时测试PPAM卸载各触发一次宿主退出；这些工具已移除，验收改用不含宏的普通PPTX。旧插件备份、副本、诊断包及本分支旧app构建产物已清理。
 
 随后追加父子关系，当前18项格式/安装测试通过。7页普通关系PPTX验证建立、追加、定位、单子/整组解除、缩放嵌套组、strict子、旧布局末子和孤立子、重复父拒绝、跨页取消、非圆角以及R角预设；保存后独立核对所有关系及其他标签、半径、几何、叶子ID和层级。最终包重启后另用新单页样本一次绑定组合内3个子，核对保存结果，并验证跨文稿取消、混合选区编号/未绑定数量和预览开/关。见[关系验收记录](../test/native-host-validation-relations-20261007.json)。追加变更未commit/push，仍属未发布的v1.4.0。旋转/翻转组合、旧布局多子部分解除及异常回滚尚未做完整宿主验收。
@@ -118,6 +118,6 @@ python3 -m venv .venv-native
 3. 若出现VBA库或编译错误，打开VBE查看References，重新定位本机PowerPoint和Office库并执行Compile。原始`.bas`/`.cls`文件保存在native/，便于诊断或在宿主中新建加载项后导入。
 4. 历史「算法自检」仅验证26项算法（半径10项、布局/联动8项、参数微调8项）。2026-10-09扩展为「快速自检」，另在自己的临时文稿中调用生产入口检查实际业务；保存OOXML、全部控件交互和故障恢复仍使用独立协议，不能把快测全部通过当作这些证据。
 
-本机16.113.3加载/编译、重启加载及上述宿主回归已通过，不能据此覆盖16.111目标版本或所有Mac版本。实时固定R监测、样式刷、复杂布局、自定义预设库及历史尚未移植；输入值只在本次加载项会话保存。现有Office.js代码保持作为完整功能对照。
+本机16.113.3加载/编译、重启加载及上述宿主回归已通过，不能据此覆盖16.111目标版本或所有Mac版本。实时固定R监测、样式刷、复杂布局、自定义预设库及历史尚未移植；输入值只在本次加载项会话保存。
 
 参考：[Mac Ribbon/VBA支持](https://learn.microsoft.com/en-us/office/vba/api/overview/office-mac)、[Ribbon XML及ppam](https://learn.microsoft.com/en-us/office/vba/library-reference/concepts/overview-of-the-office-fluent-ribbon)、[MS-OVBA](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-ovba/)、[MS-CFB](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/)。
