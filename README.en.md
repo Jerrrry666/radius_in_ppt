@@ -1,73 +1,50 @@
-# RadiusInPpt v1.4.0 — Native Mac PowerPoint add-in
+<p align="right">
+  <a href="README.md"><kbd>简体中文</kbd></a>
+  <a href="README.en.md"><kbd><strong>English</strong></kbd></a>
+</p>
 
-Default branch: `main`, including the native v1.4.0 add-in. Target: Office LTSC Standard for Mac 2021.
+# Radius in PowerPoint · Native
 
-The project delivers a `.ppam` loaded by PowerPoint, with radius input, cm/% units, apply, read, presets and parent/child relationships directly on the ribbon. Daily use requires opening PowerPoint only. [Microsoft documents VBA add-ins and Ribbon XML support on Mac](https://learn.microsoft.com/en-us/office/vba/api/overview/office-mac).
+Native macOS PowerPoint add-in · v1.4.0
 
-**Loading, ribbon edits and automatic loading after a full quit were verified on this Mac with PowerPoint 16.113.3 on 2026-10-07. This remains a migration prototype; the complete feature set and the 16.111 target build still need separate validation.**
+Edit rounded corners, manage parent–child relationships, and arrange child shapes in a grid from the PowerPoint ribbon. After installing the `.ppam`, use the **R角调整 · Native** tab. Daily use does not require a separate app or server.
 
-## One-time installation
+## Features
 
-1. Extract `dist/RadiusInPptNative-mac.zip`.
-2. Keep the `.ppam` in a permanent location. The included `Install-RadiusInPptNative.command` can prepare a stable copy; manual copying also works.
-3. In PowerPoint, use Tools → PowerPoint Add-ins to add the `.ppam`, keep it selected and allow this add-in's macros when prompted.
-4. Check for the “R角调整 · Native” ribbon tab, then fully quit PowerPoint with Cmd+Q and reopen to check that the tab remains.
+- **Batch radius editing:** Set a radius in centimeters or as a percentage of each shape’s shorter side. Read the current value, apply a preset, or edit multiple shapes at once. Centimeter values apply equally to every target; percentages are calculated for each shape. The radius is capped at half the shorter side, and 0 is allowed.
+- **Write protection:** Protection status and counts update with the selection. If a selected shape is protected, the add-in disables the relevant controls and checks protection again before writing. Protection blocks radius edits made by this add-in.
+- **Quick adjustment:** The arrows beside the radius field change the value by 0.1 in the current unit and apply it immediately.
+- **Parent–child relationships:** Assign one parent rounded rectangle and bind multiple children on the same slide. View or locate members, detach them, or preview numbered members in a temporary copy that does not modify the source presentation.
+- **Grid layout and radius links:** Arrange children in rows and columns with centimeter padding and gap. Child radius can match the parent, subtract the padding, or remain independent. Relationship and layout settings are saved in the presentation.
+- **Quick check:** Run algorithm and business checks from the ribbon. Checks use a temporary presentation, which is closed without saving a test file.
 
-The target is loading with PowerPoint after installation. The helper only copies the file and reveals it in Finder; PowerPoint registration still requires step 3. It is never needed during daily use. Do not register from a build directory that will be rebuilt. To update the same path, save your documents and fully quit PowerPoint before replacing the file, then reopen and verify loading. When changing paths, remove the old entry and add the new path. The default installation directory is `~/Library/Application Support/RadiusInPptNative`. See [installation details](native/INSTALL.txt).
+## Install
 
-## Current scope
+1. Extract `dist/RadiusInPptNative-mac.zip` and keep the `.ppam` in a stable location. The default folder is `~/Library/Application Support/RadiusInPptNative`. Use the included file-preparation script or copy the file manually.
+2. In PowerPoint, open **Tools → PowerPoint Add-ins**, add the `.ppam`, and leave it enabled. Allow macros for this add-in if Office prompts you.
+3. Confirm that the **R角调整 · Native** tab appears. Quit PowerPoint completely with Cmd+Q, reopen it, and confirm the add-in loads again.
 
-Native ribbon input, selection reading, presets, batch radius, write protection, parent/child grid layout and radius links are available. Up/down arrows apply ±0.1 in the current unit immediately. Protection status and counts refresh with the selection; protected selections disable radius writes. All action icons are embedded PNGs. Live fixed-radius monitoring, style brush, custom presets and history remain unmigrated. Write protection blocks this add-in's edits; it does not undo direct manipulation of PowerPoint handles. Legacy layout-tagged shapes support explicit radius/protection edits while preserving metadata. Radius/protection edits on individually selected group children require selecting the complete top-level group. See [design and limitations](plans/ribbon-vba-mac.md).
+The file-preparation script only copies the file; PowerPoint registration is a separate step. To update the add-in, save your presentations and quit PowerPoint before replacing the installed file, then reopen PowerPoint to verify it. Do not load the add-in from the `dist` folder, which may be rebuilt. See the complete [installation guide](native/INSTALL.txt).
 
-The radius field uses the same width and arrow spacing as the layout padding/gap fields, with separate radius/unit labels to reduce unused space. Mac displays custom up/down arrows side by side to the right of the field.
-This radius control update was verified on PowerPoint16.113.4/26100421; see its [acceptance record](test/native-host-validation-radius-controls-20261007.json).
+## Use
 
-## Parent/child relationships
+Select one or more rounded rectangles, enter a centimeter value or percentage in the ribbon, and choose **应用R角** (Apply Radius). You can also read the current value, use a preset, or click an arrow to apply a small adjustment. Percentages use each selected shape’s own shorter side.
 
-1. Select one rounded rectangle and click “设为父对象” (set parent). The ribbon shows its name while binding is pending.
-2. Select the child rounded rectangles and click “绑定子对象” (bind children). A group containing the intended children can be selected in one operation; non-rounded members remain untouched. Set an existing native parent again to append children. Changing slides or documents cancels the pending parent.
-3. “查看关系” (view relationships) lists slide-local G01, G02, etc., with parent and child names. Click a member to locate it, or select all children/the whole relationship. Selection status shows group codes, roles and the number of unbound objects.
-4. “编号预览” (numbered preview) opens a disposable copy of the current slide with blue parent badges and brown numbered child badges. Click again to close it and return to the source; source saves and exports contain no badges. The preview is a static snapshot, with add-in edits disabled. Closing it discards any changes to the copy.
-5. “解除关系” (detach) removes selected children or, after confirmation, the whole relationship. Geometry, radius, protection and unrelated tags remain intact.
+To create a layout, select the parent and choose **设为父对象** (Set Parent), then select the children and choose **绑定子对象** (Bind Children). Select a member of the relationship to configure rows, columns, padding, gap, and child-radius mode, then apply the layout. Layout and radius linking are unsupported for rotated or flipped groups and members. If any child is protected, the entire layout or linked-radius write is rejected.
 
-Relationships persist in the document and apply to rounded rectangles on the same slide. Child numbers follow member order when bound; removing a child retains the other numbers. Protected shapes can still be bound or detached. Legacy layouts can be viewed and explicitly detached before rebuilding. Reparenting requires explicit detachment. Copying tagged members can create duplicate parents or child numbers; relationship operations stop on such conflicts until the tags are repaired.
+## Compatibility and limits
 
-## Automatic layout and radius links
+- The current deliverable is a PowerPoint VBA add-in (`.ppam`), loaded by PowerPoint; it is not a standalone app.
+- The target is Office LTSC Standard for Mac 2021. Current host validation includes PowerPoint 16.113.4/26100421. The target build 16.111 still requires separate validation.
+- To edit the radius or protection state of shapes inside a group, select the complete top-level group. Parent–child relationship actions support group members.
+- Write protection blocks edits made by the add-in. It does not undo direct changes made with PowerPoint’s yellow adjustment handles or by resizing a shape.
+- Live fixed-radius monitoring, the style brush, custom preset libraries, and history have not been migrated to the native add-in.
 
-After binding, select the parent or a child and configure rows, columns, padding and gap under “自动布局与R角联动”. “应用布局” distributes children in equal grid cells in child-number order. Changing rows or columns adjusts the other dimension. Padding and gap are in centimeters and stay constant when the parent is resized.
-
-Child radius modes are same as parent, parent radius minus padding (minimum zero), and off. Each child is clamped to half its own shorter side. Off preserves each child's adjustment fraction while geometry can still follow the parent.
-
-This control update was tested on PowerPoint 16.113.4/26100421; its [acceptance record](test/native-host-validation-layout-controls-20261007.json) is separate from the earlier 16.113.3 validation.
-
-The compact parameter columns group rows/columns/radius mode and padding/gap/status, with actions on the right. Arrow buttons change rows/columns by 1 and spacing by 0.1cm, bounded at zero. With “自动联动” enabled, submitting rows, columns, padding, or gap applies the layout immediately. With it disabled, parameters are staged until “应用布局” commits them. Mac displays custom up/down buttons side by side beside each field.
-
-The first layout application enables automatic linking. Add-in radius edits to the parent update children immediately. After directly resizing the parent, PowerPoint synchronizes the children when the resize completes, while the parent can remain selected. After moving the parent or dragging its yellow handle, click a blank area or change selection to synchronize; saving also synchronizes. Updates do not run on every drag frame. Disable “自动联动” to stop following parent edits; layout parameters then require manual application. Settings survive saving and reopening.
-
-A protected child rejects the entire layout/linked-radius batch and disables the related parent controls. Insufficient space rejects all writes. Scaled nested groups use safe ungroup/regroup transactions preserving names, other tags, leaf IDs and hierarchy. Rotated or flipped members/groups are currently unsupported for layout and linked radius.
-
-## Build and verify
-
-For a quick logic check, click “R角调整 · Native → 快速自检” in PowerPoint. It creates its own temporary presentation, checks algorithms and real radius/protection/group/relationship/layout operations, then closes the test document and returns to the source. Results show actual counts, errors and elapsed time. It does not save a test PPTX; close any numbered preview first.
-
-See the [quick-test record](test/native-host-validation-quickcheck-20261009.json) for actual counts, timing, package hashes and host coverage. Saved files, all control events and recovery from host write failures use separate validation protocols.
-
-For project checks, double-click [Run-Tests.command](tools/Run-Tests.command) or use `npm run test:quick`. See the [test checklist and lessons](test/README.md) for coverage. Actual group-child selection, control events, save/reopen and host write-failure recovery have separate validation protocols; a passing quick report does not establish all of them.
+## Build and checks
 
 ```sh
-npm run build
-python3 -m venv .venv-native
-.venv-native/bin/pip install -r native/requirements-test.txt
-npm test                     # Native format, installation and saved-state reader
-npm run test:legacy          # Office.js migration reference
-npm run test:all             # Both suites
-npm run test:quick           # One-click project checks; also a Finder .command entry
+npm run build          # Build the PPAM and macOS installation ZIP
+npm run test:quick     # Project checks: native format/installation checks and legacy Office.js regression
 ```
 
-The existing build entry point produces a PPAM and an installation ZIP. The ZIP contains only the add-in, a one-time file-preparation helper and instructions. Running the installed plugin requires neither Node nor Python. `npm test` selects a Python interpreter with the test dependencies, preferring the project's `.venv-native`; these consumer checks do not execute VBA. Actual ribbon operations and saved OOXML results are recorded separately for [relationships](test/native-host-validation-relations-20261007.json) and [layout/radius links](test/native-host-validation-layout-20261007.json).
-
-The original Office.js code remains as a migration reference: [legacy documentation](README.taskpane.en.md). To build the comparison app explicitly, use `bash tools/build-app.sh --legacy-taskpane`. Legacy app/DMG/wef deployment is not the native installation workflow.
-
-The [2026-10-09 main validation record](test/native-host-validation-main-20261009.json) distinguishes completed and pending checks for the current refactor. Updates do not create old-package backups; host test results are recorded before temporary PPTX files are removed.
-
-[中文版](README.md) · [Changelog](changelogs/v1.4.md)
+The installed add-in does not require Node or Python. See the [test guide](test/README.md) for coverage. The [native design](plans/ribbon-vba-mac.md), [project log](LOG.md), and [v1.4.0 changelog](changelogs/v1.4.md) contain architecture, limitations, and validation records. The older Office.js implementation remains as a migration reference in the [legacy documentation](README.taskpane.en.md).
