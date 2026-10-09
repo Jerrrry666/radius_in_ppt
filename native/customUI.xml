@@ -47,7 +47,7 @@
     <group id="NativeLayoutGroup" label="自动布局与R角联动">
       <box id="NativeLayoutRowsRow" boxStyle="horizontal">
         <labelControl id="NativeLayoutRowsLabel" label="行数"/>
-        <editBox id="NativeLayoutRows" label="行数" showLabel="false" sizeString="00" tag="rows" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="输入行数，或用旁边的箭头每次调整1；按子对象数量自动配列数，最多25行。修改后点击应用布局。"/>
+        <editBox id="NativeLayoutRows" label="行数" showLabel="false" sizeString="00" tag="rows" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="输入行数，或用旁边的箭头每次调整1；按子对象数量自动配列数，最多25行。自动联动开启时提交后立即应用，否则暂存到点击应用布局。"/>
         <box id="NativeLayoutRowsSteps" boxStyle="vertical">
           <button id="NativeLayoutRowsUp" label="行数增加1" showLabel="false" image="stepUp" tag="rows|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="行数增加1，自动调整列数"/>
           <button id="NativeLayoutRowsDown" label="行数减少1" showLabel="false" image="stepDown" tag="rows|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="行数减少1，自动调整列数"/>
@@ -55,7 +55,7 @@
       </box>
       <box id="NativeLayoutColumnsRow" boxStyle="horizontal">
         <labelControl id="NativeLayoutColumnsLabel" label="列数"/>
-        <editBox id="NativeLayoutColumns" label="列数" showLabel="false" sizeString="00" tag="columns" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="输入列数，或用旁边的箭头每次调整1；按子对象数量自动配行数，最多25列。修改后点击应用布局。"/>
+        <editBox id="NativeLayoutColumns" label="列数" showLabel="false" sizeString="00" tag="columns" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="输入列数，或用旁边的箭头每次调整1；按子对象数量自动配行数，最多25列。自动联动开启时提交后立即应用，否则暂存到点击应用布局。"/>
         <box id="NativeLayoutColumnsSteps" boxStyle="vertical">
           <button id="NativeLayoutColumnsUp" label="列数增加1" showLabel="false" image="stepUp" tag="columns|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="列数增加1，自动调整行数"/>
           <button id="NativeLayoutColumnsDown" label="列数减少1" showLabel="false" image="stepDown" tag="columns|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="列数减少1，自动调整行数"/>
@@ -69,7 +69,7 @@
       </box>
       <box id="NativeLayoutPaddingRow" boxStyle="horizontal">
         <labelControl id="NativeLayoutPaddingLabel" label="边距cm"/>
-        <editBox id="NativeLayoutPadding" label="边距cm" showLabel="false" sizeString="0.00" tag="padding" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="父框到子框的内边距，箭头每次调整0.1cm，下限0。空间不足时拒绝，不自动改小。修改后点击应用布局。"/>
+        <editBox id="NativeLayoutPadding" label="边距cm" showLabel="false" sizeString="0.00" tag="padding" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="父框到子框的内边距，箭头每次调整0.1cm，下限0。空间不足时拒绝，不自动改小。自动联动开启时提交后立即应用，否则暂存到点击应用布局。"/>
         <box id="NativeLayoutPaddingSteps" boxStyle="vertical">
           <button id="NativeLayoutPaddingUp" label="边距增加0.1cm" showLabel="false" image="stepUp" tag="padding|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="边距增加0.1cm"/>
           <button id="NativeLayoutPaddingDown" label="边距减少0.1cm" showLabel="false" image="stepDown" tag="padding|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="边距减少0.1cm，下限0"/>
@@ -77,7 +77,7 @@
       </box>
       <box id="NativeLayoutGapRow" boxStyle="horizontal">
         <labelControl id="NativeLayoutGapLabel" label="间距cm"/>
-        <editBox id="NativeLayoutGap" label="间距cm" showLabel="false" sizeString="0.00" tag="gap" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="子框之间的间距，箭头每次调整0.1cm，下限0。修改后点击应用布局。"/>
+        <editBox id="NativeLayoutGap" label="间距cm" showLabel="false" sizeString="0.00" tag="gap" getText="NativeLayoutGetText" onChange="NativeLayoutParameter" getEnabled="NativeLayoutGetEnabled" supertip="子框之间的间距，箭头每次调整0.1cm，下限0。自动联动开启时提交后立即应用，否则暂存到点击应用布局。"/>
         <box id="NativeLayoutGapSteps" boxStyle="vertical">
           <button id="NativeLayoutGapUp" label="间距增加0.1cm" showLabel="false" image="stepUp" tag="gap|up" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="间距增加0.1cm"/>
           <button id="NativeLayoutGapDown" label="间距减少0.1cm" showLabel="false" image="stepDown" tag="gap|down" getEnabled="NativeLayoutGetStepEnabled" onAction="NativeLayoutStep" screentip="间距减少0.1cm，下限0"/>
@@ -85,7 +85,7 @@
       </box>
       <labelControl id="NativeLayoutState" tag="联动已开启|联动已关闭|待应用布局|联动暂停：|请选择一组父子" getLabel="NativeLayoutStatus"/>
       <button id="NativeLayoutApply" label="应用布局" image="layoutApply" getEnabled="NativeLayoutGetEnabled" onAction="NativeLayoutApply" supertip="按父对象尺寸、行列、厘米边距和间距排列全部子对象，并应用R角模式。任何子对象受保护时整批停止。"/>
-      <toggleButton id="NativeLayoutAuto" label="自动联动" image="relationBind" getEnabled="NativeLayoutGetEnabled" getPressed="NativeLayoutAutoPressed" onAction="NativeLayoutAuto" supertip="开启时立即应用布局。之后父对象移动、缩放或调整黄色手柄后，点击空白处或其他对象即可同步，保存前也同步；本加载项修改父R角立即联动。关闭后可手动应用布局。"/>
+      <toggleButton id="NativeLayoutAuto" label="自动联动" image="relationBind" getEnabled="NativeLayoutGetEnabled" getPressed="NativeLayoutAutoPressed" onAction="NativeLayoutAuto" supertip="开启时立即应用布局；之后行列、边距或间距提交后也自动应用。父对象拉伸结束后自动同步且无需取消选中；移动或调整黄色手柄后，点击空白处或其他对象同步，保存前也同步。本加载项修改父R角立即联动。关闭后布局参数需点应用布局。"/>
     </group>
     <group id="NativeProtectionGroup" label="选区防误触状态">
       <toggleButton id="NativeProtect" label="防误触" size="large" image="protect" getPressed="NativeGetProtectionPressed" getEnabled="NativeGetProtectionEnabled" onAction="NativeToggleProtect" supertip="开启后阻止本加载项写入R角；混合选区点击可全部开启。再次点击可全部解除。"/>

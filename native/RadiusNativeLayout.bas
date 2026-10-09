@@ -154,6 +154,15 @@ Private Function ConfigForGroup(ByVal group As Collection) As Variant
     If HasPendingForGroup(group) Then ConfigForGroup = pendingConfig Else ConfigForGroup = ReadConfig(group("Parent"), group("Children").Count)
 End Function
 
+Private Function StoredAutomatic(ByVal group As Collection) As Boolean
+    Dim text As String, config As Variant
+    ' A fresh relationship's default config is not automatic until saved.
+    text = PptNativeDriver.ReadTag(group("Parent"), SETTINGS_KEY)
+    If text = "" Then Exit Function
+    config = ReadConfigText(text, group("Children").Count)
+    StoredAutomatic = CBool(config(5))
+End Function
+
 Private Function HasPendingForGroup(ByVal group As Collection) As Boolean
     Dim current As Object
     If hasPending Then
@@ -235,8 +244,9 @@ Public Function ReadUiSnapshot(ByVal group As Collection) As Collection
 End Function
 
 Public Sub SetParameter(ByVal key As String, ByVal text As String)
-    Dim group As Collection, config As Variant, count As Long, value As Long
+    Dim group As Collection, config As Variant, count As Long, value As Long, automatic As Boolean, errorNumber As Long, errorText As String
     Set group = EditableGroup()
+    automatic = StoredAutomatic(group)
     config = ConfigForGroup(group)
     count = group("Children").Count
     Select Case key
@@ -261,6 +271,23 @@ Public Sub SetParameter(ByVal key As String, ByVal text As String)
     pendingSlide = PptNativeDriver.SlideId(PptNativeDriver.CurrentSlide())
     pendingKey = CStr(group("Key"))
     hasPending = True
+    lastError = ""
+    If automatic Then
+        On Error GoTo AutomaticApplyFailed
+        If key = "mode" Then
+            ApplySelected True
+        Else
+            ApplySelected
+        End If
+        On Error GoTo 0
+    End If
+    Exit Sub
+AutomaticApplyFailed:
+    errorNumber = Err.Number
+    errorText = Err.Description
+    ResetPending
+    lastError = errorText
+    Err.Raise errorNumber, "RadiusNativeLayout", errorText
 End Sub
 
 Private Function ParameterValue(ByVal config As Variant, ByVal key As String) As Double
@@ -357,10 +384,11 @@ Public Sub ApplySelected(Optional ByVal radiusOnly As Boolean = False)
 End Sub
 
 Public Sub ChangeMode(ByVal mode As String)
-    Dim group As Collection
+    Dim group As Collection, automatic As Boolean
     Set group = EditableGroup()
+    automatic = StoredAutomatic(group)
     SetParameter "mode", mode
-    If PptNativeDriver.ReadTag(group("Parent"), SETTINGS_KEY) <> "" Then ApplySelected True
+    If Not automatic And PptNativeDriver.ReadTag(group("Parent"), SETTINGS_KEY) <> "" Then ApplySelected True
 End Sub
 
 Public Sub SetAutomatic(ByVal enabled As Boolean)

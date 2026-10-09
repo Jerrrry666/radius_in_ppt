@@ -22,6 +22,11 @@ Private Sub Host_SlideSelectionChanged(ByVal SldRange As PowerPoint.SlideRange)
     RadiusNativeRibbon.NativeHostChanged
 End Sub
 
+Private Sub Host_AfterShapeSizeChange(ByVal shp As PowerPoint.Shape)
+    ' PowerPoint raises this after resizing completes; Ribbon/Core guards ignore writes during transactions.
+    RadiusNativeRibbon.NativeHostChanged
+End Sub
+
 Private Sub Host_PresentationBeforeSave(ByVal Pres As PowerPoint.Presentation, Cancel As Boolean)
     RadiusNativeRibbon.NativeBeforeSave Pres
 End Sub

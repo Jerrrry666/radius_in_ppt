@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-09",
+  "branch": "main",
+  "version": "1.4.0",
+  "host": {
+    "product": "Microsoft PowerPoint for Mac",
+    "version": "16.113.4",
+    "build": "26100421",
+    "license": "Office LTSC Standard for Mac 2021"
+  },
+  "package": {
+    "distSha256": "dc2e638c8ef54bce45bc5a42cc50b9d46402a63ea04f96c35fb684d761e19d01",
+    "installedSha256": "dc2e638c8ef54bce45bc5a42cc50b9d46402a63ea04f96c35fb684d761e19d01",
+    "distributionSha256": "7453606b27eccc0db46d050a738fe306d080a358b94d98d91b79826d02853fad"
+  },
+  "automatedChecks": {
+    "nativeConsumer": {
+      "command": "npm test",
+      "passed": 25,
+      "executesVba": false
+    },
+    "legacyOfficeJs": {
+      "command": "npm run test:legacy",
+      "status": "passed",
+      "provesNativeHostBehavior": false
+    },
+    "gitDiffCheck": "passed"
+  },
+  "hostChecks": {
+    "automaticLoad": "passed after normal PowerPoint restart; installed package hash matches dist",
+    "scenarioDocument": "/tmp/RadiusNativeLayoutLiveResize.pptx",
+    "scenarios": {
+      "resizeParentWhileSelected": {
+        "slide": 2,
+        "steps": [
+          "Open a nine-slide layout fixture and select ParentBox while automatic linkage is enabled.",
+          "Drag the right-middle resize handle wider and release without changing the selection.",
+          "Save and independently inspect the PPTX OOXML."
+        ],
+        "result": "passed",
+        "selectionRemainedOnParent": true,
+        "savedGeometryCm": {
+          "ParentBox": [2.0, 2.0, 12.088138888888889, 8.0],
+          "ChildA": [2.3, 2.3, 11.488138888888889, 7.4]
+        },
+        "baselineComparison": "Only slide 2 ParentBox and ChildA changed; slides 1 and 3-9 remained identical."
+      },
+      "automaticParameterApply": {
+        "slide": 2,
+        "steps": [
+          "Keep ParentBox selected and submit the padding edit from 0.30 cm to 0.50 cm with Return.",
+          "Do not click Apply Layout; verify the child geometry updates while ParentBox remains selected.",
+          "Save and independently inspect the PPTX OOXML."
+        ],
+        "result": "passed",
+        "selectionRemainedOnParent": true,
+        "layoutTag": "1|1|1|0.500000|0.200000|same|1",
+        "savedGeometryCm": {
+          "ParentBox": [2.0, 2.0, 12.088138888888889, 8.0],
+          "ChildA": [2.5, 2.5, 11.088138888888889, 7.0]
+        },
+        "baselineComparison": "Only slide 2 ParentBox and ChildA geometry/tags changed."
+      },
+      "strictChildRejectsWholeLayout": {
+        "slide": 4,
+        "steps": [
+          "Select the auto-linked ParentBox with strict-protected ChildB.",
+          "Drag the parent's right-middle handle wider while keeping it selected.",
+          "Save and independently compare child geometry with the fixture baseline."
+        ],
+        "result": "passed_expected_rejection",
+        "ribbonStatus": "联动暂停：Turn off protection explicitly before layout or linked radius: ChildB",
+        "hostDialog": "R-corner Native Automatic layout/radius synchronization stopped: Turn off protection explicitly before layout or linked radius: ChildB",
+        "strictTag": "1",
+        "savedGeometryCm": {
+          "ParentBox": [1.9999972222222222, 2.0, 10.138836111111111, 6.0],
+          "ChildA": [3.0, 4.0, 3.0, 2.0],
+          "ChildB": [8.0, 4.0, 3.0, 2.0]
+        },
+        "assertion": "ParentBox reflects the user's resize; strict preflight prevented any linked child geometry write, and both children exactly match baseline."
+      }
+    },
+    "timingLimit": "The size-change event synchronizes after the resize completes; per-frame drag synchronization was not tested or claimed."
+  },
+  "notVerified": [
+    "PowerPoint 16.111 target host",
+    "Full nine-slide movement/resize protocol",
+    "Host write-failure rollback injection"
+  ],
+  "git": "No add, commit, push, or tag."
+}

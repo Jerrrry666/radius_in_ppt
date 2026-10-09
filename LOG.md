@@ -11,11 +11,11 @@
 | 交付 | 原生PPAM和一次安装ZIP，由PowerPoint加载 |
 | 2026-10-09 main优化 | 事务流程、失败恢复、Ribbon显示快照、安装失败处理已整理；新版已更新，半径、批量绑定、布局控件和独立R角保存核对通过 |
 | 功能 | cm/%、读取、预设、多选、限幅、防误触、完整顶层组合事务 |
-| v1.4新增 | 所有动作图标、自动保护状态、半径即时微调、父子关系、编号预览、网格布局/R角联动及四个布局输入微调 |
+| v1.4新增 | 所有动作图标、自动保护状态、半径即时微调、父子关系、编号预览、网格布局/R角联动及四个布局输入微调；自动联动开启时布局参数提交即应用，父对象拉伸结束时同步 |
 | 本机宿主 | 本轮16.113.4/26100421；历史基础/关系记录16.113.3/26092714；16.111目标待另行验收 |
 | 格式与安装测试 | 25项通过；不执行VBA，含复制失败、OOXML重名拒绝及一键脚本失败输出 |
 | 父子关系宿主验证 | 本轮组合内批量绑定、待绑定取消及临时副本预览通过；完整7页为历史验收 |
-| 布局联动宿主验证 | 本轮same/subtract/off和加载项父R即时联动通过；完整9页移动/缩放联动协议仍待完成 |
+| 布局联动宿主验证 | 本轮已验证父对象保持选中时拉伸后子对象同步、自动参数提交即应用及strict子整批拒绝；完整9页移动/缩放协议仍待完成 |
 | 布局控件补验 | 本轮暂存无写入、普通/嵌套2×2网格、单子行列边界及strict子禁用通过；其他箭头边界为历史补验 |
 | 半径控件补验 | 本轮七页半径、20%/20.1%及0保存核对通过；50%箭头边界和控件间距为历史补验 |
 | 框内箭头样式诉求 | 尚未实现；公开Ribbon XML未提供自定义内嵌步进框，需用户选择是否改用自定义参数面板 |
@@ -24,9 +24,11 @@
 | Office.js迁移对照 | 保留npm run test:legacy，不能代替原生宿主验证 |
 | 未迁移 | 实时固定R、复杂布局、样式刷、自定义预设、历史 |
 
-默认构建使用`npm run build`或`python3 tools/build-native.py --distribution`。安装到`~/Library/Application Support/RadiusInPptNative`，不构建.app、不运行server、不注册wef。原生架构为Ribbon/事件通知→RadiusNativeCore、RadiusNativeRelations和RadiusNativeLayout→PptNativeDriver。父子关系管理归属并显示编号，网格布局保留厘米边距/间距，R支持same/subtract/off。原生父R操作即时联动，直接父变化在选区改变和保存前同步。验收记录见[changelogs/v1.4.md](changelogs/v1.4.md)。关系/布局及控件优化纳入本地main，沿用未发布的v1.4.0。
+默认构建使用`npm run build`或`python3 tools/build-native.py --distribution`。安装到`~/Library/Application Support/RadiusInPptNative`，不构建.app、不运行server、不注册wef。原生架构为Ribbon/事件通知→RadiusNativeCore、RadiusNativeRelations和RadiusNativeLayout→PptNativeDriver。父子关系管理归属并显示编号，网格布局保留厘米边距/间距，R支持same/subtract/off。原生父R操作即时联动；父对象直接拉伸后由尺寸完成事件同步，移动和黄色手柄修改在选区改变/保存前同步。验收记录见[changelogs/v1.4.md](changelogs/v1.4.md)。关系/布局及控件优化纳入本地main，沿用未发布的v1.4.0。
 
 2026-10-09代码整理阶段的23项原生消费端和287项历史回归通过，源码可编码检查及交叉review完成。正常退出PowerPoint后替换稳定文件，重开自动加载main控件。PowerPoint16.113.4/26100421的26项自检与七页半径保存核对通过；组合内一次绑定三个子对象、取消待绑定和编号预览返回原稿通过。布局暂存后保存不写文稿；普通/缩放嵌套组2×2网格、父R即时联动和same/subtract/off分别核对。无关重复父关系旁，独立圆角0.30cm保存通过，损坏联动父仍禁用半径写入。
+
+2026-10-09追加自动布局与父尺寸事件实测：PowerPoint16.113.4/26100421中，父对象保持选中时拖宽，子对象在松开鼠标后同步；边距0.30→0.50cm提交即应用，无需取消选中或点「应用布局」。保存后独立读取OOXML，slide 2子对象为父框内缩0.50cm，其他页不变。slide 4 strict子拒绝整批联动：父尺寸保留用户拖动值，所有子几何保持基线，并显示具体保护原因。`npm test`25项通过，`npm run test:legacy`成功；验收记录见[test/native-host-validation-layout-live-resize-20261009.json](test/native-host-validation-layout-live-resize-20261009.json)。
 
 布局控件协议核对九页保存状态，仅第1、6页应用布局；额外父R修改再恢复使用独立协议，允许按规则更新已有fixed值的六位小数文本，不放宽原布局协议。本轮未重跑完整关系7页及父移动/缩放9页联动协议；真实宿主故障注入恢复、VBE全项目Compile命令及16.111仍未验证。详见[本轮宿主记录](test/native-host-validation-main-20261009.json)。
 

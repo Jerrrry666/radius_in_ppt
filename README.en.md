@@ -40,9 +40,9 @@ Child radius modes are same as parent, parent radius minus padding (minimum zero
 
 This control update was tested on PowerPoint 16.113.4/26100421; its [acceptance record](test/native-host-validation-layout-controls-20261007.json) is separate from the earlier 16.113.3 validation.
 
-The compact parameter columns group rows/columns/radius mode and padding/gap/status, with actions on the right. Arrow buttons change rows/columns by 1 and spacing by 0.1cm, bounded at zero. They stage parameters until “应用布局” commits them. Mac displays custom up/down buttons side by side beside each field.
+The compact parameter columns group rows/columns/radius mode and padding/gap/status, with actions on the right. Arrow buttons change rows/columns by 1 and spacing by 0.1cm, bounded at zero. With “自动联动” enabled, submitting rows, columns, padding, or gap applies the layout immediately. With it disabled, parameters are staged until “应用布局” commits them. Mac displays custom up/down buttons side by side beside each field.
 
-The first layout application enables automatic linking. Add-in radius edits to the parent update children immediately. After directly moving/resizing the parent or dragging its yellow handle, click a blank area or change selection to synchronize; saving also synchronizes. Updates do not run on every drag frame. Disable “自动联动” to stop following parent edits; manual application remains available. Settings survive saving and reopening.
+The first layout application enables automatic linking. Add-in radius edits to the parent update children immediately. After directly resizing the parent, PowerPoint synchronizes the children when the resize completes, while the parent can remain selected. After moving the parent or dragging its yellow handle, click a blank area or change selection to synchronize; saving also synchronizes. Updates do not run on every drag frame. Disable “自动联动” to stop following parent edits; layout parameters then require manual application. Settings survive saving and reopening.
 
 A protected child rejects the entire layout/linked-radius batch and disables the related parent controls. Insufficient space rejects all writes. Scaled nested groups use safe ungroup/regroup transactions preserving names, other tags, leaf IDs and hierarchy. Rotated or flipped members/groups are currently unsupported for layout and linked radius.
 
